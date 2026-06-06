@@ -95,3 +95,45 @@ admin-only table). Safe to re-run — already-imported photos are skipped.
 - Refresh the app → the gallery shows your pants with thumbnails; tap one to open
   the swipeable lightbox.
 - As **admin** you'll later see cost; an **editor**/**viewer** never will.
+
+---
+
+# Phase 5 — AI auto-fill (Anthropic vision)
+
+Lets the edit sheet read a photo's tag/garment and pre-fill fields. The API key
+stays server-side in a Supabase Edge Function — never in the browser.
+
+## 1. Get an Anthropic API key
+Sign in at <https://console.anthropic.com> → **API Keys** → create a key (add a
+little billing credit — usage is ~a fraction of a cent per photo with Haiku).
+
+## 2. Store the key as a Supabase secret
+Supabase dashboard → **Edge Functions → Secrets** (or **Project Settings → Edge
+Functions**) → add:
+- `ANTHROPIC_API_KEY` = your `sk-ant-...` key
+
+(You do NOT set `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`
+— the platform injects those into functions automatically.)
+
+## 3. Deploy the `ai-extract` function — pick one:
+
+**A. Dashboard (no tools needed):** Edge Functions → **Deploy a new function** →
+name it exactly `ai-extract` → paste the contents of
+[`supabase/functions/ai-extract/index.ts`](supabase/functions/ai-extract/index.ts)
+→ Deploy.
+
+**B. Supabase CLI:**
+```bash
+npm i -g supabase
+supabase login
+supabase link --project-ref rlqtnmahyryvuitaytah
+supabase functions deploy ai-extract
+supabase secrets set ANTHROPIC_API_KEY=sk-ant-...   # if not set in step 2
+```
+
+## Verifying Phase 5
+- Open an item with a photo → tap **✨ AI suggest fields from photo**.
+- Fields fill in (highlighted) with confidence dots; Low-confidence reads are
+  flagged for your check. Review, correct, and **Save**.
+- Open the browser Network tab → the request goes to `…/functions/v1/ai-extract`
+  and your `ANTHROPIC_API_KEY` never appears anywhere client-side.

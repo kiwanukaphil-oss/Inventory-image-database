@@ -76,6 +76,8 @@ export async function openEditor(itemId, role, onSaved) {
       <div class="sheet-body">
         ${imgUrl ? `<div class="sheet-img"><img src="${imgUrl}" alt=""></div>` : ""}
 
+        ${canEdit && imgUrl ? `<button class="ghost aibtn" id="aiBtn">✨ AI suggest fields from photo</button>` : ""}
+
         <div class="status-row" id="statusRow">
           ${["draft", "needs-review", "approved", "flag"]
             .map(
@@ -164,6 +166,63 @@ export async function openEditor(itemId, role, onSaved) {
       el.classList.toggle("changed", now !== initial);
     });
   });
+
+  // Apply AI-suggested values into the form (highlighted, not auto-saved).
+  function applySuggestions(values, confidence) {
+    const vocabByKey = { brand: "brand" };
+    for (const f of fields) if (f.vocab) vocabByKey[f.key] = f.vocab;
+    let n = 0;
+    for (const [key, raw] of Object.entries(values || {})) {
+      if (raw === null || raw === undefined || raw === "") continue;
+      const el = sheet.querySelector(`[data-key="${key}"]`);
+      if (!el) continue;
+      let val = String(raw);
+      if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
+      if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === val)) {
+        const o = document.createElement("option");
+        o.value = val;
+        o.textContent = val;
+        el.appendChild(o);
+      }
+      el.value = val;
+      el.classList.add("changed");
+      const lvl = confidence?.[key];
+      if (lvl) {
+        conf[key] = lvl;
+        const pill = sheet.querySelector(`[data-conf="${key}"]`);
+        if (pill) paintConfPill(pill, lvl);
+      }
+      n++;
+    }
+    return n;
+  }
+
+  const aiBtn = sheet.querySelector("#aiBtn");
+  if (aiBtn) {
+    aiBtn.onclick = async () => {
+      const label = aiBtn.textContent;
+      aiBtn.disabled = true;
+      aiBtn.textContent = "Reading photo…";
+      try {
+        const defs = [
+          { key: "brand", label: "Brand" },
+          ...fields.map((f) => ({ key: f.key, label: f.label, type: f.type, options: f.options })),
+        ];
+        const { data, error } = await supabase.functions.invoke("ai-extract", {
+          body: { item_id: itemId, category: categoryPath(item.category_id), fields: defs },
+        });
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
+        const n = applySuggestions(data.values, data.confidence);
+        toast(n ? `AI filled ${n} field${n === 1 ? "" : "s"} — review & Save` : "AI couldn't read any fields");
+      } catch (e) {
+        toast("AI failed: " + (e?.message || e));
+      } finally {
+        aiBtn.disabled = false;
+        aiBtn.textContent = label;
+      }
+    };
+  }
 
   sheet.querySelector("#saveBtn").onclick = async () => {
     if (!canEdit) return;

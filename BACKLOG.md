@@ -26,10 +26,13 @@ them up. Grouped by "deferred" (consciously skipped during a phase) and
 
 ## Planned (next phases)
 
-- **Phase 5 — AI auto-fill.** Vision model (via a Supabase Edge Function, key
-  server-side only) reads a photo's tag/garment and pre-fills fields with
-  confidence for confirmation. Key use: backfill the many blank fields (e.g.
-  the H&M fits that were never in the spreadsheet).
+- **Phase 5 — AI auto-fill.** _Per-item version done_ — the edit sheet has an
+  "✨ AI suggest" button (Anthropic vision via the `ai-extract` Edge Function).
+  Follow-ups still open:
+  - **Bulk AI fill** — run the model across many selected items / all blanks at
+    once (queue + progress), the real time-saver for backfilling 200+ fields.
+  - **AI on upload** — auto-run extraction as photos are uploaded so new stock
+    arrives pre-filled.
 - **Phase 6 — bulk ops, grouping, export, polish.** Multi-select + bulk edit,
   two-level grouping (category › subcategory, collapsible), CSV export
   (current-state + corrections-log), user-management screen, and a keep-alive

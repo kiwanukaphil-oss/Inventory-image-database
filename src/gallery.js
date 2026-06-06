@@ -2,6 +2,29 @@ import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
+import { loadRefData, resolveFields } from "./data.js";
+
+// Build the at-a-glance summary line for a card from its category's own field
+// definitions, so each category shows the fields that matter to it (a pant shows
+// colour/size/fit/style; a fragrance shows volume/concentration/gender/…).
+function summarizeItem(it) {
+  const attrs = it.attributes || {};
+  const parts = [];
+  for (const f of resolveFields(it.category_id)) {
+    const v = attrs[f.key];
+    if (v === null || v === undefined || v === "") continue;
+    if (f.type === "boolean") {
+      if (v === true || v === "true") parts.push(f.label);
+    } else {
+      // Append a unit when the field label carries one in parentheses
+      // (e.g. "Volume (ml)" -> "100 ml", "Size (EU)" -> "42 EU"). Plain-worded
+      // values (Dark Blue, Slim, EDP) stay as-is.
+      const unit = (f.label.match(/\(([^)]+)\)/) || [])[1];
+      parts.push(unit ? `${v} ${unit}` : String(v));
+    }
+  }
+  return parts.join(" · ");
+}
 
 // The authenticated app shell: top bar, bottom nav, and the gallery view with
 // search + status filtering. Tapping a card opens the category-driven editor;
@@ -90,9 +113,10 @@ const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
 // card opens the editor; tapping its photo opens the lightbox.
 async function renderGallery(view, role) {
   view.innerHTML = `<div class="spinner"></div>`;
+  await loadRefData(); // category tree + field definitions drive the card summary
   const { data, error } = await supabase
     .from("items")
-    .select("id, name, brand, sku, price, status, image_path, attributes, categories(name)")
+    .select("id, name, brand, sku, price, status, image_path, attributes, category_id, categories(name)")
     .order("created_at", { ascending: false })
     .limit(1000);
 
@@ -155,9 +179,8 @@ async function renderGallery(view, role) {
       .map((it) => {
         const url = signed[it.image_path];
         const cat = it.categories?.name || "";
-        const attrs = it.attributes || {};
-        // Richer card: show the full product picture at a glance.
-        const variant = [attrs.color, attrs.size, attrs.fit].filter(Boolean).join(" · ");
+        // Category-driven summary: shows each category's own fields.
+        const variant = summarizeItem(it);
         const brand = it.brand || it.name || "—";
         const caption = [brand, variant].filter(Boolean).join(" · ");
         let slideIdx = -1;
@@ -177,7 +200,6 @@ async function renderGallery(view, role) {
             </div>
             <div class="cbrand">${esc(brand)}</div>
             ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
-            ${attrs.style ? `<div class="cstyle">${esc(attrs.style)}</div>` : ""}
             ${it.price != null ? `<div class="cprice">${fmtPrice(it.price)}</div>` : ""}
           </div>
         </div>`;
