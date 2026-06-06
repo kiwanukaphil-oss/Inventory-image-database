@@ -1,0 +1,317 @@
+import { supabase } from "./db.js";
+import {
+  loadRefData,
+  resolveFields,
+  categoryPath,
+  vocabSuggestions,
+  normalizeValue,
+} from "./data.js";
+
+// The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
+// the item's category. Universal columns (name/brand/price/stock) plus the
+// resolved category fields (colour, size, fit, … or volume/concentration for a
+// fragrance) render automatically. Supports controlled-vocab autocomplete +
+// normalisation, per-field confidence, status workflow, admin-only cost, and
+// writes through to Supabase (SKU + audit handled by DB triggers).
+
+const CONF_CYCLE = ["", "High", "Medium", "Low"];
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
+}
+
+/**
+ * Open the editor for an item.
+ * @param {string} itemId
+ * @param {string} role     admin | editor | viewer
+ * @param {Function} onSaved called after a successful save (to refresh the grid)
+ */
+export async function openEditor(itemId, role, onSaved) {
+  await loadRefData();
+  const canEdit = role === "admin" || role === "editor";
+
+  // Fetch the item (cost lives in a separate admin-only table).
+  const { data: item, error } = await supabase
+    .from("items")
+    .select("*")
+    .eq("id", itemId)
+    .single();
+  if (error || !item) {
+    toast("Couldn't load item.");
+    return;
+  }
+
+  let cost = null;
+  if (role === "admin") {
+    const { data } = await supabase
+      .from("item_costs")
+      .select("cost_price")
+      .eq("item_id", itemId)
+      .maybeSingle();
+    cost = data?.cost_price ?? null;
+  }
+
+  const [{ data: signed }] = await Promise.all([
+    item.image_path
+      ? supabase.storage.from("product-images").createSignedUrl(item.image_path, 3600)
+      : Promise.resolve({ data: null }),
+  ]);
+  const imgUrl = signed?.signedUrl || null;
+
+  const fields = resolveFields(item.category_id);
+  const conf = { ...(item.confidence || {}) }; // working copy of per-field confidence
+
+  // ---- build the sheet ----
+  const sheet = document.createElement("div");
+  sheet.className = "sheet";
+  sheet.innerHTML = `
+    <div class="sheet-panel">
+      <header class="sheet-head">
+        <button class="ghost" id="cancelBtn">Cancel</button>
+        <div class="sheet-title">${esc(categoryPath(item.category_id))}</div>
+        <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>Save</button>
+      </header>
+      <div class="sheet-body">
+        ${imgUrl ? `<div class="sheet-img"><img src="${imgUrl}" alt=""></div>` : ""}
+
+        <div class="status-row" id="statusRow">
+          ${["draft", "needs-review", "approved", "flag"]
+            .map(
+              (s) =>
+                `<button class="status-pill ${item.status === s ? "on" : ""}" data-status="${s}">${s}</button>`
+            )
+            .join("")}
+        </div>
+
+        <div id="dupWarn" class="dup-warn" style="display:none"></div>
+
+        <div class="frow">
+          <label>Category</label>
+          <div class="fctl"><span class="readonly-val">${esc(categoryPath(item.category_id))}</span></div>
+        </div>
+        ${fieldRow({ key: "name", label: "Name", type: "text" }, item.name, conf, false)}
+        ${fieldRow({ key: "brand", label: "Brand", type: "text", vocab: "brand" }, item.brand, conf, canEdit)}
+        ${fields.map((f) => fieldRow(f, item.attributes?.[f.key], conf, canEdit)).join("")}
+
+        <div class="field-sec">Stock & pricing</div>
+        ${fieldRow({ key: "price", label: "Retail price", type: "number" }, item.price, conf, false)}
+        ${fieldRow({ key: "stock_quantity", label: "Stock qty", type: "number" }, item.stock_quantity, conf, false)}
+        ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false)}
+        ${
+          role === "admin"
+            ? `<div class="field-sec">Cost <span class="adminonly">admin only</span></div>
+               ${fieldRow({ key: "cost_price", label: "Cost price", type: "number" }, cost, conf, false)}`
+            : ""
+        }
+
+        <div class="sku-line">SKU: <span id="skuVal">${esc(item.sku || "—")}</span>
+          <span style="color:var(--muted)"> (updates automatically)</span></div>
+      </div>
+    </div>`;
+
+  // Datalists for vocab-backed fields (brand + any field with a vocab).
+  const vocabFields = new Set(["brand", ...fields.filter((f) => f.vocab).map((f) => f.vocab)]);
+  const lists = document.createElement("div");
+  for (const vf of vocabFields) {
+    const dl = document.createElement("datalist");
+    dl.id = `dl-${vf}`;
+    dl.innerHTML = vocabSuggestions(vf).map((o) => `<option value="${esc(o)}">`).join("");
+    lists.appendChild(dl);
+  }
+  sheet.appendChild(lists);
+  document.body.appendChild(sheet);
+  requestAnimationFrame(() => sheet.classList.add("open"));
+
+  // ---- interactions ----
+  const close = () => {
+    sheet.classList.remove("open");
+    setTimeout(() => sheet.remove(), 200);
+  };
+  sheet.querySelector("#cancelBtn").onclick = close;
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+
+  // Status pills
+  let status = item.status;
+  sheet.querySelector("#statusRow").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-status]");
+    if (!b || !canEdit) return;
+    status = b.dataset.status;
+    sheet.querySelectorAll(".status-pill").forEach((p) =>
+      p.classList.toggle("on", p.dataset.status === status)
+    );
+  });
+
+  // Confidence pills cycle —/High/Medium/Low
+  sheet.querySelectorAll("[data-conf]").forEach((pill) => {
+    pill.addEventListener("click", () => {
+      if (!canEdit) return;
+      const key = pill.dataset.conf;
+      const idx = CONF_CYCLE.indexOf(conf[key] || "");
+      const next = CONF_CYCLE[(idx + 1) % CONF_CYCLE.length];
+      if (next) conf[key] = next;
+      else delete conf[key];
+      paintConfPill(pill, next);
+    });
+  });
+
+  // Mark changed inputs (highlight) versus their initial value.
+  sheet.querySelectorAll("[data-key]").forEach((el) => {
+    const initial = el.type === "checkbox" ? String(el.checked) : el.value;
+    el.addEventListener("input", () => {
+      const now = el.type === "checkbox" ? String(el.checked) : el.value;
+      el.classList.toggle("changed", now !== initial);
+    });
+  });
+
+  sheet.querySelector("#saveBtn").onclick = async () => {
+    if (!canEdit) return;
+    const btn = sheet.querySelector("#saveBtn");
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    try {
+      await saveItem(sheet, item, fields, conf, status, role);
+      const newSku = await refreshSkuAndDupCheck(sheet, itemId);
+      toast(`Saved · SKU ${newSku}`);
+      onSaved?.();
+      close();
+    } catch (err) {
+      toast(err.message || "Save failed");
+      btn.disabled = false;
+      btn.textContent = "Save";
+    }
+  };
+}
+
+// Render one labelled field row with the right control + a confidence pill.
+function fieldRow(def, value, conf, showConf) {
+  const id = `f-${def.key}`;
+  let control;
+  const v = value ?? "";
+  if (def.type === "boolean") {
+    control = `<input type="checkbox" id="${id}" data-key="${def.key}" data-kind="boolean" ${
+      v === true || v === "true" ? "checked" : ""
+    }>`;
+  } else if (def.type === "select" && Array.isArray(def.options) && def.options.length) {
+    const opts = def.options.includes(v) || !v ? def.options : [v, ...def.options];
+    control = `<select id="${id}" data-key="${def.key}" data-kind="value">
+      <option value=""></option>
+      ${opts.map((o) => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}
+    </select>`;
+  } else {
+    const list = def.vocab ? ` list="dl-${def.vocab}"` : "";
+    const type = def.type === "number" ? "number" : "text";
+    control = `<input id="${id}" type="${type}"${list} data-key="${def.key}" data-kind="value"
+      data-vocab="${def.vocab || ""}" value="${esc(v)}">`;
+  }
+
+  const confPill = showConf
+    ? `<button class="conf-pill ${confClass(conf[def.key])}" data-conf="${def.key}"
+         title="confidence">${conf[def.key] ? conf[def.key][0] : "·"}</button>`
+    : "";
+
+  return `<div class="frow">
+    <label for="${id}">${esc(def.label)}</label>
+    <div class="fctl">${control}${confPill}</div>
+  </div>`;
+}
+
+function confClass(level) {
+  return level ? `conf-${level.toLowerCase()}` : "";
+}
+function paintConfPill(pill, level) {
+  pill.className = `conf-pill ${confClass(level)}`;
+  pill.textContent = level ? level[0] : "·";
+}
+
+// Collect values, normalise vocab fields, and write to Supabase.
+async function saveItem(sheet, item, fields, conf, status, role) {
+  const attributes = { ...(item.attributes || {}) };
+
+  // Resolved category fields -> attributes.
+  for (const f of fields) {
+    const el = sheet.querySelector(`[data-key="${f.key}"]`);
+    if (!el) continue;
+    let val;
+    if (f.type === "boolean") val = el.checked;
+    else {
+      val = el.value.trim();
+      if (f.vocab) val = normalizeValue(f.vocab, val); // Grey -> Gray
+    }
+    if (val === "" || val === false || val === null) delete attributes[f.key];
+    else attributes[f.key] = f.type === "number" ? Number(val) : val;
+  }
+
+  const brandEl = sheet.querySelector('[data-key="brand"]');
+  const brand = normalizeValue("brand", brandEl.value.trim()) || null;
+
+  const num = (k) => {
+    const el = sheet.querySelector(`[data-key="${k}"]`);
+    const t = el?.value.trim();
+    return t ? Number(t) : null;
+  };
+
+  const update = {
+    name: sheet.querySelector('[data-key="name"]').value.trim() || null,
+    brand,
+    price: num("price"),
+    stock_quantity: num("stock_quantity"),
+    reorder_level: num("reorder_level"),
+    status,
+    attributes,
+    confidence: conf,
+  };
+
+  const { error } = await supabase.from("items").update(update).eq("id", item.id);
+  if (error) throw error;
+
+  // Cost -> admin-only table (upsert).
+  if (role === "admin") {
+    const cost = num("cost_price");
+    const { error: cErr } = await supabase
+      .from("item_costs")
+      .upsert({ item_id: item.id, cost_price: cost }, { onConflict: "item_id" });
+    if (cErr) throw cErr;
+  }
+
+  // Persist any brand value the user typed that isn't in the vocab yet.
+  if (brand && !vocabSuggestions("brand").includes(brand)) {
+    await supabase.from("vocabularies").insert({ field: "brand", canonical: brand }).select();
+  }
+}
+
+// Re-read the (trigger-derived) SKU and warn if it collides with another item.
+async function refreshSkuAndDupCheck(sheet, itemId) {
+  const { data } = await supabase.from("items").select("sku").eq("id", itemId).single();
+  const sku = data?.sku || "—";
+  sheet.querySelector("#skuVal").textContent = sku;
+  if (sku && sku !== "—") {
+    const { data: dups } = await supabase
+      .from("items")
+      .select("id")
+      .eq("sku", sku)
+      .neq("id", itemId);
+    const warn = sheet.querySelector("#dupWarn");
+    if (dups && dups.length) {
+      warn.style.display = "block";
+      warn.textContent = `⚠ ${dups.length} other item(s) share this SKU (${sku}).`;
+    }
+  }
+  return sku;
+}
+
+// Lightweight toast.
+let toastTimer;
+function toast(msg) {
+  let t = document.getElementById("toast");
+  if (!t) {
+    t = document.createElement("div");
+    t.id = "toast";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+}

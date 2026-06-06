@@ -10,8 +10,12 @@ export async function getSession() {
 }
 
 export function onAuthChange(callback) {
-  // Fires on sign-in, sign-out, and token refresh so the UI can re-render.
-  return supabase.auth.onAuthStateChange((_event, session) => callback(session));
+  // Fires on initial load, sign-in, sign-out, and token refresh.
+  // IMPORTANT: callers must NOT run awaited Supabase calls synchronously inside
+  // this callback — supabase-js holds an auth lock during it, and doing so can
+  // deadlock on session restore (blank screen on refresh). main.js defers its
+  // work with setTimeout(…, 0) to release the lock first.
+  return supabase.auth.onAuthStateChange((event, session) => callback(event, session));
 }
 
 export async function signIn(email, password) {

@@ -109,6 +109,71 @@ a { color:var(--accent); }
 .card .thumb img { width:100%; height:100%; object-fit:contain; }
 .card .body { padding:8px 10px; }
 
+/* ---------------- filter bar + cards ---------------- */
+.filterbar { display:flex; gap:8px; margin-bottom:8px; }
+.filterbar #q { flex:1; }
+.count { color:var(--muted); font-size:12px; margin-bottom:8px; }
+.card { cursor:pointer; }
+.card .cardtop { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:2px; }
+.stbadge { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+.stbadge.st-ok { color:#86e8a0; border-color:#22643a; }
+.stbadge.st-flag { color:#ffb3b8; border-color:#6e2329; }
+.stbadge.st-review { color:#ffd479; border-color:#6b5600; }
+.stbadge.st-draft { color:var(--muted); }
+.card .cbrand { font-weight:600; line-height:1.25; }
+.card .cattr { font-size:13px; color:var(--txt); }
+.card .cstyle { font-size:12px; color:var(--muted); }
+.card .cprice { font-size:13px; color:#9ecbff; margin-top:2px; }
+.readonly-val { color:var(--txt); font-size:14px; }
+
+/* ---------------- edit sheet ---------------- */
+.sheet { position:fixed; inset:0; z-index:55; background:#0008; display:flex;
+         align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
+.sheet.open { opacity:1; }
+.sheet-panel {
+  width:100%; max-width:560px; max-height:94dvh; background:var(--bg);
+  border:1px solid var(--line); border-radius:16px 16px 0 0;
+  display:flex; flex-direction:column; transform:translateY(20px); transition:transform .2s;
+}
+.sheet.open .sheet-panel { transform:translateY(0); }
+@media (min-width:560px) { .sheet { align-items:center; } .sheet-panel { border-radius:16px; } }
+.sheet-head {
+  display:flex; align-items:center; gap:10px; padding:12px 14px;
+  border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); border-radius:16px 16px 0 0;
+}
+.sheet-title { flex:1; text-align:center; font-size:13px; color:var(--muted);
+               white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sheet-body { padding:14px; overflow-y:auto; }
+.sheet-img { aspect-ratio:1/1; max-height:38dvh; display:flex; justify-content:center; margin-bottom:12px; }
+.sheet-img img { max-width:100%; max-height:38dvh; object-fit:contain; border-radius:8px; }
+
+.status-row { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
+.status-pill { font-size:12px; padding:5px 10px; }
+.status-pill.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+.frow { display:grid; grid-template-columns:96px 1fr; gap:8px; align-items:center; margin-bottom:9px; }
+.frow label { color:var(--muted); font-size:13px; }
+.fctl { display:flex; gap:6px; align-items:center; }
+.fctl input:not([type=checkbox]), .fctl select { flex:1; width:100%; }
+.fctl input.changed, .fctl select.changed { background:var(--edit); border-color:#a98b00; }
+.field-sec { margin:16px 0 8px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.adminonly { color:#ffd479; text-transform:none; letter-spacing:0; }
+
+.conf-pill { width:26px; height:26px; padding:0; border-radius:50%; font-size:11px; color:var(--muted); flex:0 0 auto; }
+.conf-pill.conf-high { color:#86e8a0; border-color:#22643a; }
+.conf-pill.conf-medium { color:#ffd479; border-color:#6b5600; }
+.conf-pill.conf-low { color:#ffb3b8; border-color:#6e2329; }
+
+.sku-line { margin-top:14px; font-size:13px; color:var(--txt); }
+.dup-warn { background:var(--flag); border:1px solid #6e2329; color:#ffb3b8;
+            padding:8px 10px; border-radius:8px; font-size:13px; margin-bottom:12px; }
+
+/* toast */
+#toast { position:fixed; left:50%; bottom:calc(86px + var(--safe-bottom)); transform:translateX(-50%);
+  background:#000d; border:1px solid var(--line); color:var(--txt); padding:10px 16px;
+  border-radius:10px; font-size:13px; z-index:70; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; text-align:center; }
+#toast.show { opacity:1; }
+
 /* ---------------- lightbox ---------------- */
 #lb {
   position:fixed; inset:0; z-index:60; display:none;

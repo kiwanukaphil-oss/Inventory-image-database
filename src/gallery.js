@@ -1,10 +1,11 @@
 import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
+import { openEditor } from "./editor.js";
 
-// Phase 1: the authenticated app shell with a top bar, a bottom nav, and a
-// gallery view that fetches items (currently zero) to prove the end-to-end
-// authenticated read path works. Editing, upload, grouping, and bulk ops are
-// layered on in later phases.
+// The authenticated app shell: top bar, bottom nav, and the gallery view with
+// search + status filtering. Tapping a card opens the category-driven editor;
+// tapping its photo opens the lightbox. Upload, grouping, and bulk ops land
+// in later phases.
 
 const NAV = [
   { id: "gallery", label: "Gallery", ico: "▦" },
@@ -45,7 +46,7 @@ export function renderApp(mount, profile, onSignOut) {
     nav.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === id)
     );
-    if (id === "gallery") renderGallery(view);
+    if (id === "gallery") renderGallery(view, role);
     else renderComingSoon(view, id);
   }
 
@@ -70,17 +71,23 @@ function esc(v) {
   );
 }
 
-// Fetch items, resolve signed thumbnail URLs (the bucket is private), render the
-// card grid, and wire the lightbox. Editing lands in Phase 3.
-async function renderGallery(view) {
+// Format a price with thousands separators (no currency symbol assumed).
+function fmtPrice(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toLocaleString() : esc(v);
+}
+
+const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
+
+// Fetch items + signed thumbnails, render a filterable card grid. Tapping a
+// card opens the editor; tapping its photo opens the lightbox.
+async function renderGallery(view, role) {
   view.innerHTML = `<div class="spinner"></div>`;
-  const { data, error, count } = await supabase
+  const { data, error } = await supabase
     .from("items")
-    .select("id, name, brand, sku, status, image_path, attributes, categories(name)", {
-      count: "exact",
-    })
+    .select("id, name, brand, sku, price, status, image_path, attributes, categories(name)")
     .order("created_at", { ascending: false })
-    .limit(500);
+    .limit(1000);
 
   if (error) {
     view.innerHTML = `<div class="empty"><div class="big">⚠️</div>
@@ -91,9 +98,7 @@ async function renderGallery(view) {
   if (!data || data.length === 0) {
     view.innerHTML = `<div class="empty"><div class="big">📭</div>
       <div>No items yet.</div>
-      <div style="color:var(--muted);font-size:13px">
-        ${count === 0 ? "The catalogue is empty — run the seed importer or add photos." : ""}
-      </div></div>`;
+      <div style="color:var(--muted);font-size:13px">Run the seed importer or add photos.</div></div>`;
     return;
   }
 
@@ -104,46 +109,91 @@ async function renderGallery(view) {
     const { data: urls } = await supabase.storage
       .from("product-images")
       .createSignedUrls(paths, 3600);
-    (urls || []).forEach((u) => {
-      if (u.signedUrl) signed[u.path] = u.signedUrl;
-    });
+    (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
   }
 
-  // Keep an ordered list of viewable images for lightbox navigation.
-  const slides = [];
-  const cards = data
-    .map((it) => {
-      const url = signed[it.image_path];
-      const cat = it.categories?.name || "";
-      const attrs = it.attributes || {};
-      const bits = [attrs.color, attrs.size].filter(Boolean).join(" · ");
-      const title = it.name || it.brand || "—";
-      let slideIdx = -1;
-      if (url) {
-        slideIdx = slides.length;
-        slides.push({ url, caption: `${esc(title)}${bits ? " · " + esc(bits) : ""}` });
-      }
-      const thumb = url
-        ? `<div class="thumb" data-slide="${slideIdx}"><img loading="lazy" src="${url}" alt="${esc(title)}"></div>`
-        : `<div class="thumb"><span style="color:var(--muted);font-size:12px">no image</span></div>`;
-      return `<div class="card">
-        ${thumb}
-        <div class="body">
-          <div style="font-size:12px;color:var(--muted)">${esc(cat)}</div>
-          <div>${esc(title)}${bits ? " · " + esc(bits) : ""}</div>
-        </div>
-      </div>`;
-    })
-    .join("");
+  // Filter bar + containers.
+  view.innerHTML = `
+    <div class="filterbar">
+      <input id="q" type="search" placeholder="Search brand / colour / SKU / type…">
+      <select id="statusFilter">
+        ${STATUSES.map((s) => `<option value="${s}">${s === "all" ? "All statuses" : s}</option>`).join("")}
+      </select>
+    </div>
+    <div class="count" id="count"></div>
+    <div class="grid" id="grid"></div>`;
 
-  view.innerHTML = `<div style="color:var(--muted);font-size:12px;margin-bottom:8px">
-      ${count} item${count === 1 ? "" : "s"}
-    </div><div class="grid">${cards}</div>`;
+  const grid = view.querySelector("#grid");
+  const countEl = view.querySelector("#count");
+  const qEl = view.querySelector("#q");
+  const stEl = view.querySelector("#statusFilter");
 
-  // Clicking a thumbnail opens the lightbox at that slide.
-  view.querySelectorAll(".thumb[data-slide]").forEach((el) => {
-    el.addEventListener("click", () => openLightbox(slides, Number(el.dataset.slide)));
+  // Status badge colour per workflow state.
+  const stClass = { draft: "st-draft", "needs-review": "st-review", approved: "st-ok", flag: "st-flag" };
+
+  function draw() {
+    const q = qEl.value.trim().toLowerCase();
+    const st = stEl.value;
+    const rows = data.filter((it) => {
+      if (st !== "all" && it.status !== st) return false;
+      if (!q) return true;
+      const hay = [it.brand, it.name, it.sku, it.categories?.name,
+        ...Object.values(it.attributes || {})].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+
+    // Slides for the lightbox follow the currently filtered, ordered rows.
+    const slides = [];
+    grid.innerHTML = rows
+      .map((it) => {
+        const url = signed[it.image_path];
+        const cat = it.categories?.name || "";
+        const attrs = it.attributes || {};
+        // Richer card: show the full product picture at a glance.
+        const variant = [attrs.color, attrs.size, attrs.fit].filter(Boolean).join(" · ");
+        const brand = it.brand || it.name || "—";
+        const caption = [brand, variant].filter(Boolean).join(" · ");
+        let slideIdx = -1;
+        if (url) {
+          slideIdx = slides.length;
+          slides.push({ url, caption: esc(caption) });
+        }
+        const thumb = url
+          ? `<div class="thumb" data-slide="${slideIdx}"><img loading="lazy" src="${url}" alt="${esc(brand)}"></div>`
+          : `<div class="thumb"><span style="color:var(--muted);font-size:12px">no image</span></div>`;
+        return `<div class="card" data-id="${it.id}">
+          ${thumb}
+          <div class="body">
+            <div class="cardtop">
+              <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
+              <span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span>
+            </div>
+            <div class="cbrand">${esc(brand)}</div>
+            ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
+            ${attrs.style ? `<div class="cstyle">${esc(attrs.style)}</div>` : ""}
+            ${it.price != null ? `<div class="cprice">${fmtPrice(it.price)}</div>` : ""}
+          </div>
+        </div>`;
+      })
+      .join("");
+    countEl.textContent = `${rows.length} of ${data.length} item${data.length === 1 ? "" : "s"}`;
+    grid._slides = slides;
+  }
+
+  // Delegated clicks: photo -> lightbox, rest of card -> editor.
+  grid.addEventListener("click", (e) => {
+    const thumb = e.target.closest(".thumb[data-slide]");
+    if (thumb) {
+      openLightbox(grid._slides, Number(thumb.dataset.slide));
+      return;
+    }
+    const card = e.target.closest(".card[data-id]");
+    if (card) openEditor(card.dataset.id, role, () => renderGallery(view, role));
   });
+
+  qEl.addEventListener("input", draw);
+  stEl.addEventListener("change", draw);
+  draw();
 }
 
 function renderComingSoon(view, id) {
