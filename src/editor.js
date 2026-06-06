@@ -28,11 +28,14 @@ function esc(v) {
  * @param {string} role     admin | editor | viewer
  * @param {Function} onSaved called after a successful save (to refresh the grid)
  */
-export async function openEditor(itemId, role, onSaved) {
+export async function openEditor(itemId, caps, onSaved) {
   await loadRefData();
-  const canEdit = role === "admin" || role === "editor";
+  caps = caps || {};
+  const canEdit = !!caps.can_edit;
+  const canViewCost = !!caps.can_view_cost;
+  const canDelete = !!caps.can_delete;
 
-  // Fetch the item (cost lives in a separate admin-only table).
+  // Fetch the item (cost lives in a separate, capability-gated table).
   const { data: item, error } = await supabase
     .from("items")
     .select("*")
@@ -44,7 +47,7 @@ export async function openEditor(itemId, role, onSaved) {
   }
 
   let cost = null;
-  if (role === "admin") {
+  if (canViewCost) {
     const { data } = await supabase
       .from("item_costs")
       .select("cost_price")
@@ -102,14 +105,17 @@ export async function openEditor(itemId, role, onSaved) {
         ${fieldRow({ key: "stock_quantity", label: "Stock qty", type: "number" }, item.stock_quantity, conf, false)}
         ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false)}
         ${
-          role === "admin"
-            ? `<div class="field-sec">Cost <span class="adminonly">admin only</span></div>
+          canViewCost
+            ? `<div class="field-sec">Cost <span class="adminonly">restricted</span></div>
                ${fieldRow({ key: "cost_price", label: "Cost price", type: "number" }, cost, conf, false)}`
             : ""
         }
 
         <div class="sku-line">SKU: <span id="skuVal">${esc(item.sku || "—")}</span>
           <span style="color:var(--muted)"> (updates automatically)</span></div>
+        ${item.created_at ? `<div class="added-line">Added ${esc(new Date(item.created_at).toLocaleString())}</div>` : ""}
+
+        ${canDelete ? `<button class="danger del-btn" id="deleteBtn">Delete item</button>` : ""}
       </div>
     </div>`;
 
@@ -230,7 +236,7 @@ export async function openEditor(itemId, role, onSaved) {
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
-      await saveItem(sheet, item, fields, conf, status, role);
+      await saveItem(sheet, item, fields, conf, status, canViewCost);
       const newSku = await refreshSkuAndDupCheck(sheet, itemId);
       toast(`Saved · SKU ${newSku}`);
       onSaved?.();
@@ -241,6 +247,28 @@ export async function openEditor(itemId, role, onSaved) {
       btn.textContent = "Save";
     }
   };
+
+  // Delete (capability-gated): removes the item and its stored image.
+  const deleteBtn = sheet.querySelector("#deleteBtn");
+  if (deleteBtn) {
+    deleteBtn.onclick = async () => {
+      if (!confirm("Delete this item and its photo? This cannot be undone.")) return;
+      deleteBtn.disabled = true;
+      try {
+        const { error: delErr } = await supabase.from("items").delete().eq("id", itemId);
+        if (delErr) throw delErr;
+        if (item.image_path) {
+          await supabase.storage.from("product-images").remove([item.image_path]);
+        }
+        toast("Item deleted");
+        onSaved?.();
+        close();
+      } catch (err) {
+        toast(err.message || "Delete failed");
+        deleteBtn.disabled = false;
+      }
+    };
+  }
 }
 
 // Render one labelled field row with the right control + a confidence pill.
@@ -285,7 +313,7 @@ function paintConfPill(pill, level) {
 }
 
 // Collect values, normalise vocab fields, and write to Supabase.
-async function saveItem(sheet, item, fields, conf, status, role) {
+async function saveItem(sheet, item, fields, conf, status, canViewCost) {
   const attributes = { ...(item.attributes || {}) };
 
   // Resolved category fields -> attributes.
@@ -325,8 +353,8 @@ async function saveItem(sheet, item, fields, conf, status, role) {
   const { error } = await supabase.from("items").update(update).eq("id", item.id);
   if (error) throw error;
 
-  // Cost -> admin-only table (upsert).
-  if (role === "admin") {
+  // Cost -> capability-gated table (upsert).
+  if (canViewCost) {
     const cost = num("cost_price");
     const { error: cErr } = await supabase
       .from("item_costs")

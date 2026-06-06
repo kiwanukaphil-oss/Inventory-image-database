@@ -32,14 +32,34 @@ export async function signOut() {
  * Defaults to 'viewer' if no profile row is found yet, so a brand-new user
  * never accidentally gets elevated access before an admin assigns a role.
  */
+// Derive capabilities from a role — used as a fallback when the capability
+// columns don't exist yet (migration 0008 not applied), so access isn't lost.
+function capsFromRole(role) {
+  const elevated = role === "admin" || role === "editor";
+  return {
+    can_upload: elevated,
+    can_edit: elevated,
+    can_delete: role === "admin",
+    can_view_cost: role === "admin",
+    can_manage_users: role === "admin",
+  };
+}
+
 export async function getMyProfile() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
-  const { data, error } = await supabase
+
+  // Preferred: read explicit capabilities (after migration 0008).
+  const full = await supabase
     .from("profiles")
-    .select("id, email, role")
+    .select("id, email, role, can_upload, can_edit, can_delete, can_view_cost, can_manage_users")
     .eq("id", user.id)
     .single();
-  if (error || !data) return { id: user.id, email: user.email, role: "viewer" };
-  return data;
+  if (!full.error && full.data) return full.data;
+
+  // Fallback: capability columns missing → derive from role so admins/editors
+  // aren't downgraded to viewer just because the migration hasn't run yet.
+  const basic = await supabase.from("profiles").select("id, email, role").eq("id", user.id).single();
+  const role = basic.data?.role || "viewer";
+  return { id: user.id, email: user.email, role, ...capsFromRole(role) };
 }

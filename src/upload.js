@@ -27,8 +27,8 @@ function leafCategories(cache) {
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
-export async function renderUpload(view, role, onDone) {
-  if (role !== "admin" && role !== "editor") {
+export async function renderUpload(view, caps, onDone) {
+  if (!caps?.can_upload) {
     view.innerHTML = `<div class="empty"><div class="big">🔒</div>
       <div>You don't have permission to add items.</div></div>`;
     return;

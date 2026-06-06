@@ -131,6 +131,22 @@ supabase functions deploy ai-extract
 supabase secrets set ANTHROPIC_API_KEY=sk-ant-...   # if not set in step 2
 ```
 
+---
+
+# Permissions (capability model)
+
+Run [`supabase/migrations/0008_capabilities.sql`](supabase/migrations/0008_capabilities.sql)
+once. It adds per-user capability switches (upload / edit / delete / see-cost /
+manage-users), backfills them from existing roles, and rewrites RLS to enforce
+them. Your admin account keeps full access.
+
+To manage people: sign in as someone with **Manage users**, tap **Users** in the
+top bar, then per person pick a **role preset** (admin / editor / viewer) or
+toggle individual capabilities. A "worker who can upload & edit but not delete or
+see cost" = the **editor** preset.
+
+New sign-ups start with **no** capabilities until you grant them in that screen.
+
 ## Verifying Phase 5
 - Open an item with a photo → tap **✨ AI suggest fields from photo**.
 - Fields fill in (highlighted) with confidence dots; Low-confidence reads are

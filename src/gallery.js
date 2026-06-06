@@ -3,6 +3,8 @@ import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
 import { loadRefData, resolveFields } from "./data.js";
+import { openBulkAi } from "./bulkai.js";
+import { openUsers } from "./users.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -45,13 +47,17 @@ const NAV = [
  * @param {Function} onSignOut callback to re-render the login screen
  */
 export function renderApp(mount, profile, onSignOut) {
-  const role = profile?.role || "viewer";
+  // `caps` (the profile object) is the source of truth for what the UI exposes;
+  // the database independently enforces the same via RLS.
+  const caps = profile || {};
+  const role = caps.role || "viewer";
   mount.innerHTML = `
     <div class="shell">
       <header class="topbar">
         <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
         <span class="rolechip ${role}">${role}</span>
         <span class="spacer"></span>
+        ${caps.can_manage_users ? `<button class="ghost" id="usersBtn">Users</button>` : ""}
         <button class="ghost" id="signOutBtn">Sign out</button>
       </header>
       <main class="content" id="view"></main>
@@ -70,15 +76,18 @@ export function renderApp(mount, profile, onSignOut) {
     nav.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === id)
     );
-    if (id === "gallery") renderGallery(view, role);
+    if (id === "gallery") renderGallery(view, caps);
     else if (id === "add")
-      renderUpload(view, role, () => {
+      renderUpload(view, caps, () => {
         nav.querySelector('button[data-view="gallery"]').classList.add("active");
         nav.querySelector('button[data-view="add"]').classList.remove("active");
-        renderGallery(view, role);
+        renderGallery(view, caps);
       });
     else renderComingSoon(view, id);
   }
+
+  const usersBtn = mount.querySelector("#usersBtn");
+  if (usersBtn) usersBtn.onclick = () => openUsers(caps);
 
   nav.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-view]");
@@ -107,16 +116,40 @@ function fmtPrice(v) {
   return Number.isFinite(n) ? n.toLocaleString() : esc(v);
 }
 
+// Short date for display (upload/added date = created_at).
+function fmtDate(v) {
+  if (!v) return "";
+  const d = new Date(v);
+  return isNaN(d) ? "" : d.toLocaleDateString();
+}
+
+// Date-filter presets → earliest allowed date (null = no limit).
+const DATE_FILTERS = [
+  { v: "all", label: "Any date" },
+  { v: "today", label: "Today" },
+  { v: "7d", label: "Last 7 days" },
+  { v: "30d", label: "Last 30 days" },
+];
+function dateCutoff(v) {
+  if (v === "all" || !v) return null;
+  const d = new Date();
+  if (v === "today") d.setHours(0, 0, 0, 0);
+  else if (v === "7d") d.setDate(d.getDate() - 7);
+  else if (v === "30d") d.setDate(d.getDate() - 30);
+  return d;
+}
+
 const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
 
 // Fetch items + signed thumbnails, render a filterable card grid. Tapping a
 // card opens the editor; tapping its photo opens the lightbox.
-async function renderGallery(view, role) {
+async function renderGallery(view, caps) {
+  const canEdit = !!caps.can_edit;
   view.innerHTML = `<div class="spinner"></div>`;
   await loadRefData(); // category tree + field definitions drive the card summary
   const { data, error } = await supabase
     .from("items")
-    .select("id, name, brand, sku, price, status, image_path, attributes, category_id, categories(name)")
+    .select("id, name, brand, sku, price, status, image_path, attributes, confidence, category_id, created_at, categories(name)")
     .order("created_at", { ascending: false })
     .limit(1000);
 
@@ -150,6 +183,10 @@ async function renderGallery(view, role) {
       <select id="statusFilter">
         ${STATUSES.map((s) => `<option value="${s}">${s === "all" ? "All statuses" : s}</option>`).join("")}
       </select>
+      <select id="dateFilter">
+        ${DATE_FILTERS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}
+      </select>
+      ${canEdit ? `<button class="ghost aifill" id="aiFillBtn" title="AI-fill filtered items">✨ AI-fill</button>` : ""}
     </div>
     <div class="count" id="count"></div>
     <div class="grid" id="grid"></div>`;
@@ -158,6 +195,8 @@ async function renderGallery(view, role) {
   const countEl = view.querySelector("#count");
   const qEl = view.querySelector("#q");
   const stEl = view.querySelector("#statusFilter");
+  const dtEl = view.querySelector("#dateFilter");
+  let filtered = []; // current filtered rows, used by bulk AI-fill
 
   // Status badge colour per workflow state.
   const stClass = { draft: "st-draft", "needs-review": "st-review", approved: "st-ok", flag: "st-flag" };
@@ -165,13 +204,16 @@ async function renderGallery(view, role) {
   function draw() {
     const q = qEl.value.trim().toLowerCase();
     const st = stEl.value;
+    const cutoff = dateCutoff(dtEl.value);
     const rows = data.filter((it) => {
       if (st !== "all" && it.status !== st) return false;
+      if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
       if (!q) return true;
       const hay = [it.brand, it.name, it.sku, it.categories?.name,
         ...Object.values(it.attributes || {})].join(" ").toLowerCase();
       return hay.includes(q);
     });
+    filtered = rows; // expose current filtered set for bulk actions
 
     // Slides for the lightbox follow the currently filtered, ordered rows.
     const slides = [];
@@ -200,7 +242,10 @@ async function renderGallery(view, role) {
             </div>
             <div class="cbrand">${esc(brand)}</div>
             ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
-            ${it.price != null ? `<div class="cprice">${fmtPrice(it.price)}</div>` : ""}
+            <div class="cmeta">
+              ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : "<span></span>"}
+              <span class="cdate">${fmtDate(it.created_at)}</span>
+            </div>
           </div>
         </div>`;
       })
@@ -217,11 +262,19 @@ async function renderGallery(view, role) {
       return;
     }
     const card = e.target.closest(".card[data-id]");
-    if (card) openEditor(card.dataset.id, role, () => renderGallery(view, role));
+    if (card) openEditor(card.dataset.id, caps, () => renderGallery(view, caps));
   });
 
   qEl.addEventListener("input", draw);
   stEl.addEventListener("change", draw);
+  dtEl.addEventListener("change", draw);
+
+  const aiFillBtn = view.querySelector("#aiFillBtn");
+  if (aiFillBtn) {
+    aiFillBtn.onclick = () =>
+      openBulkAi(filtered, caps, () => renderGallery(view, caps));
+  }
+
   draw();
 }
 
