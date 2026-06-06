@@ -62,3 +62,36 @@ read **admin**.
 - Empty gallery renders (no errors).
 - A non-admin user cannot read `item_costs` (we'll exercise this once data is
   seeded in Phase 2, but the policy is already in force).
+
+---
+
+# Phase 2 — Seed the 242 existing pants
+
+This loads your real photos + data into the catalogue.
+
+## 1. Run migration 0004 (pant subcategories)
+SQL Editor → run [`supabase/migrations/0004_pants_subcategories.sql`](supabase/migrations/0004_pants_subcategories.sql).
+Adds Cargo / Khaki / Formal / Linen / Flat-front / Relaxed Drawstring under Pants.
+
+## 2. Add the service-role key to `.env`
+The importer needs a trusted key to write data and upload images. In Supabase:
+**Project Settings → API keys → `service_role`** (the one marked *secret*).
+Copy it into [`.env`](.env) after `SUPABASE_SERVICE_ROLE_KEY=`.
+- This key is powerful — it bypasses security. It is only used by the local
+  `npm run seed` script, is never bundled into the web app, and `.env` is
+  gitignored so it never leaves your machine.
+
+## 3. Run the importer
+```bash
+npm run seed
+```
+It reads `pants_products.xlsx` + the photo folders, compresses each image to
+WebP, uploads to Storage, and inserts an item per photo (brand → column;
+colour/size/style/material → attributes; price/stock → columns; cost → the
+admin-only table). Safe to re-run — already-imported photos are skipped.
+
+## Verifying Phase 2
+- The importer prints `Imported 242, failed 0`.
+- Refresh the app → the gallery shows your pants with thumbnails; tap one to open
+  the swipeable lightbox.
+- As **admin** you'll later see cost; an **editor**/**viewer** never will.

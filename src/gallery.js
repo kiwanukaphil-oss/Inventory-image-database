@@ -45,7 +45,7 @@ export function renderApp(mount, profile, onSignOut) {
     nav.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === id)
     );
-    if (id === "gallery") renderGallery(view, role);
+    if (id === "gallery") renderGallery(view);
     else renderComingSoon(view, id);
   }
 
@@ -62,62 +62,155 @@ export function renderApp(mount, profile, onSignOut) {
   setView("gallery");
 }
 
-// Fetch and render items. In Phase 1 this confirms an authenticated query
-// succeeds and renders the empty state; Phase 2 fills it with seeded cards.
-async function renderGallery(view, role) {
+// Escape user-provided text before injecting into innerHTML (brands/colours can
+// contain &, <, quotes — e.g. "Jery & Sluo").
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
+  );
+}
+
+// Fetch items, resolve signed thumbnail URLs (the bucket is private), render the
+// card grid, and wire the lightbox. Editing lands in Phase 3.
+async function renderGallery(view) {
   view.innerHTML = `<div class="spinner"></div>`;
-  // Select universal columns + the flexible attributes blob; category-specific
-  // values (color, size, etc.) now live inside `attributes` per the category model.
   const { data, error, count } = await supabase
     .from("items")
     .select("id, name, brand, sku, status, image_path, attributes, categories(name)", {
       count: "exact",
     })
     .order("created_at", { ascending: false })
-    .limit(60);
+    .limit(500);
 
   if (error) {
-    view.innerHTML = `<div class="empty">
-      <div class="big">⚠️</div>
+    view.innerHTML = `<div class="empty"><div class="big">⚠️</div>
       <div>Couldn't load items.</div>
-      <div style="color:var(--muted);font-size:13px">${error.message}</div>
-    </div>`;
+      <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
     return;
   }
-
   if (!data || data.length === 0) {
-    view.innerHTML = `<div class="empty">
-      <div class="big">📭</div>
+    view.innerHTML = `<div class="empty"><div class="big">📭</div>
       <div>No items yet.</div>
       <div style="color:var(--muted);font-size:13px">
-        ${count === 0 ? "The catalogue is empty — run the seed importer (Phase 2) or add photos." : ""}
-      </div>
-    </div>`;
+        ${count === 0 ? "The catalogue is empty — run the seed importer or add photos." : ""}
+      </div></div>`;
     return;
   }
 
-  // Minimal card render; full editable card (driven by category_fields) lands
-  // in Phase 3. For now show category + brand/name + a couple of attributes.
-  view.innerHTML = `<div class="grid">${data
+  // Batch-create signed URLs for all thumbnails in one request.
+  const paths = data.filter((d) => d.image_path).map((d) => d.image_path);
+  const signed = {};
+  if (paths.length) {
+    const { data: urls } = await supabase.storage
+      .from("product-images")
+      .createSignedUrls(paths, 3600);
+    (urls || []).forEach((u) => {
+      if (u.signedUrl) signed[u.path] = u.signedUrl;
+    });
+  }
+
+  // Keep an ordered list of viewable images for lightbox navigation.
+  const slides = [];
+  const cards = data
     .map((it) => {
+      const url = signed[it.image_path];
       const cat = it.categories?.name || "";
       const attrs = it.attributes || {};
       const bits = [attrs.color, attrs.size].filter(Boolean).join(" · ");
+      const title = it.name || it.brand || "—";
+      let slideIdx = -1;
+      if (url) {
+        slideIdx = slides.length;
+        slides.push({ url, caption: `${esc(title)}${bits ? " · " + esc(bits) : ""}` });
+      }
+      const thumb = url
+        ? `<div class="thumb" data-slide="${slideIdx}"><img loading="lazy" src="${url}" alt="${esc(title)}"></div>`
+        : `<div class="thumb"><span style="color:var(--muted);font-size:12px">no image</span></div>`;
       return `<div class="card">
-        <div class="thumb"></div>
+        ${thumb}
         <div class="body">
-          <div style="font-size:12px;color:var(--muted)">${cat}</div>
-          <div>${it.name || it.brand || "—"}${bits ? " · " + bits : ""}</div>
+          <div style="font-size:12px;color:var(--muted)">${esc(cat)}</div>
+          <div>${esc(title)}${bits ? " · " + esc(bits) : ""}</div>
         </div>
       </div>`;
     })
-    .join("")}</div>`;
+    .join("");
+
+  view.innerHTML = `<div style="color:var(--muted);font-size:12px;margin-bottom:8px">
+      ${count} item${count === 1 ? "" : "s"}
+    </div><div class="grid">${cards}</div>`;
+
+  // Clicking a thumbnail opens the lightbox at that slide.
+  view.querySelectorAll(".thumb[data-slide]").forEach((el) => {
+    el.addEventListener("click", () => openLightbox(slides, Number(el.dataset.slide)));
+  });
 }
 
 function renderComingSoon(view, id) {
   const labels = { add: "Add photos", groups: "Grouping", export: "CSV export" };
-  view.innerHTML = `<div class="empty">
-    <div class="big">🚧</div>
-    <div>${labels[id] || id} arrives in a later phase.</div>
-  </div>`;
+  view.innerHTML = `<div class="empty"><div class="big">🚧</div>
+    <div>${labels[id] || id} arrives in a later phase.</div></div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Lightbox — a single reusable overlay with keyboard + swipe navigation.
+// ---------------------------------------------------------------------------
+let lbState = { slides: [], i: 0, el: null };
+
+function ensureLightbox() {
+  if (lbState.el) return lbState.el;
+  const lb = document.createElement("div");
+  lb.id = "lb";
+  lb.innerHTML = `
+    <button class="lb-close" aria-label="Close">✕</button>
+    <button class="lb-nav lb-prev" aria-label="Previous">‹</button>
+    <img id="lbimg" alt="">
+    <button class="lb-nav lb-next" aria-label="Next">›</button>
+    <div class="lb-cap" id="lbcap"></div>`;
+  document.body.appendChild(lb);
+
+  lb.querySelector(".lb-close").onclick = closeLightbox;
+  lb.querySelector(".lb-prev").onclick = () => moveLightbox(-1);
+  lb.querySelector(".lb-next").onclick = () => moveLightbox(1);
+  lb.addEventListener("click", (e) => { if (e.target === lb) closeLightbox(); });
+
+  // Touch swipe (mobile) — horizontal drag to move between images.
+  let startX = 0;
+  lb.addEventListener("touchstart", (e) => { startX = e.touches[0].clientX; }, { passive: true });
+  lb.addEventListener("touchend", (e) => {
+    const dx = e.changedTouches[0].clientX - startX;
+    if (Math.abs(dx) > 50) moveLightbox(dx < 0 ? 1 : -1);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (!lb.classList.contains("open")) return;
+    if (e.key === "Escape") closeLightbox();
+    else if (e.key === "ArrowRight") moveLightbox(1);
+    else if (e.key === "ArrowLeft") moveLightbox(-1);
+  });
+
+  lbState.el = lb;
+  return lb;
+}
+
+function openLightbox(slides, i) {
+  ensureLightbox();
+  lbState.slides = slides;
+  lbState.i = i;
+  paintLightbox();
+  lbState.el.classList.add("open");
+}
+function closeLightbox() { lbState.el?.classList.remove("open"); }
+function moveLightbox(d) {
+  const n = lbState.slides.length;
+  if (!n) return;
+  lbState.i = (lbState.i + d + n) % n;
+  paintLightbox();
+}
+function paintLightbox() {
+  const s = lbState.slides[lbState.i];
+  if (!s) return;
+  lbState.el.querySelector("#lbimg").src = s.url;
+  lbState.el.querySelector("#lbcap").innerHTML =
+    `${s.caption} <span style="color:var(--muted)">· ${lbState.i + 1}/${lbState.slides.length}</span>`;
 }
