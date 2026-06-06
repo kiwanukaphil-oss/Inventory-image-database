@@ -104,14 +104,34 @@ a { color:var(--accent); }
 }
 .card .thumb {
   aspect-ratio:1/1; background:#000; display:flex; align-items:center; justify-content:center;
-  overflow:hidden; cursor:zoom-in;
+  overflow:hidden; cursor:zoom-in; position:relative;
 }
+/* selection mode */
+.card .selcheck {
+  position:absolute; top:6px; left:6px; width:24px; height:24px; border-radius:50%;
+  border:2px solid #fff9; background:#0006; color:transparent;
+  display:none; align-items:center; justify-content:center; font-size:14px; font-weight:700;
+}
+.grid.selecting .card .selcheck { display:flex; }
+.grid.selecting .card { cursor:pointer; }
+.card.selected { outline:2px solid var(--accent); outline-offset:-2px; }
+.card.selected .selcheck { background:var(--accent); border-color:var(--accent); color:#fff; }
+
+.selbar {
+  position:fixed; left:0; right:0; bottom:calc(60px + var(--safe-bottom)); z-index:28;
+  display:flex; align-items:center; gap:6px; padding:8px 10px;
+  background:var(--panel); border-top:1px solid var(--line);
+}
+.selbar .spacer { flex:1; }
+.selbar #selCount { font-size:13px; color:var(--muted); white-space:nowrap; }
+.selbar button { padding:8px 10px; font-size:13px; }
 .card .thumb img { width:100%; height:100%; object-fit:contain; }
 .card .body { padding:8px 10px; }
 
 /* ---------------- filter bar + cards ---------------- */
-.filterbar { display:flex; gap:8px; margin-bottom:8px; }
-.filterbar #q { flex:1; }
+.filterbar { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+.filterbar #q { flex:1 1 200px; }
+.filterbar select, .filterbar button { flex:0 0 auto; }
 .filterbar .aifill { white-space:nowrap; border-color:#3a3f73; color:#c3c9ff; }
 .filterbar .aifill:hover { border-color:var(--accent); }
 
@@ -147,7 +167,11 @@ a { color:var(--accent); }
 .user-caps label { display:flex; align-items:center; gap:5px; font-size:13px; color:var(--muted); }
 .users-status { color:#86e8a0; font-size:13px; min-height:18px; margin-top:8px; text-align:right; }
 .count { color:var(--muted); font-size:12px; margin-bottom:8px; }
-.card { cursor:pointer; }
+.card { cursor:pointer;
+  /* Stop the browser's long-press callout / text selection so our long-press
+     + slide-to-select gesture works on touch. */
+  -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
+.card img { pointer-events:none; -webkit-user-drag:none; }
 .card .cardtop { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:2px; }
 .stbadge { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
 .stbadge.st-ok { color:#86e8a0; border-color:#22643a; }

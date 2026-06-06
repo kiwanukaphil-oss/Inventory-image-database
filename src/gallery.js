@@ -186,10 +186,19 @@ async function renderGallery(view, caps) {
       <select id="dateFilter">
         ${DATE_FILTERS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}
       </select>
+      ${canEdit ? `<button class="ghost" id="selectBtn" title="Select items">Select</button>` : ""}
       ${canEdit ? `<button class="ghost aifill" id="aiFillBtn" title="AI-fill filtered items">✨ AI-fill</button>` : ""}
     </div>
     <div class="count" id="count"></div>
-    <div class="grid" id="grid"></div>`;
+    <div class="grid" id="grid"></div>
+    ${canEdit ? `<div class="selbar" id="selbar" hidden>
+      <span id="selCount">0 selected</span>
+      <span class="spacer"></span>
+      <button class="ghost" id="selAll">All</button>
+      <button class="ghost" id="selClear">Clear</button>
+      <button class="primary" id="selAi">✨ AI-fill</button>
+      <button class="ghost" id="selDone">Done</button>
+    </div>` : ""}`;
 
   const grid = view.querySelector("#grid");
   const countEl = view.querySelector("#count");
@@ -197,6 +206,37 @@ async function renderGallery(view, caps) {
   const stEl = view.querySelector("#statusFilter");
   const dtEl = view.querySelector("#dateFilter");
   let filtered = []; // current filtered rows, used by bulk AI-fill
+
+  // ---- selection mode (phone-gallery style multi-select) ----
+  const byId = Object.fromEntries(data.map((d) => [d.id, d]));
+  const selected = new Set();
+  let selectionMode = false;
+  const selbar = view.querySelector("#selbar");
+
+  function updateSelBar() {
+    if (!selbar) return;
+    const n = selected.size;
+    view.querySelector("#selCount").textContent = `${n} selected`;
+    view.querySelector("#selAi").disabled = n === 0;
+  }
+  function enterSelection() {
+    selectionMode = true;
+    grid.classList.add("selecting");
+    if (selbar) selbar.hidden = false;
+    updateSelBar();
+  }
+  function exitSelection() {
+    selectionMode = false;
+    selected.clear();
+    grid.classList.remove("selecting");
+    grid.querySelectorAll(".card.selected").forEach((c) => c.classList.remove("selected"));
+    if (selbar) selbar.hidden = true;
+  }
+  function toggleSelect(id, cardEl) {
+    if (selected.has(id)) { selected.delete(id); cardEl?.classList.remove("selected"); }
+    else { selected.add(id); cardEl?.classList.add("selected"); }
+    updateSelBar();
+  }
 
   // Status badge colour per workflow state.
   const stClass = { draft: "st-draft", "needs-review": "st-review", approved: "st-ok", flag: "st-flag" };
@@ -230,10 +270,12 @@ async function renderGallery(view, caps) {
           slideIdx = slides.length;
           slides.push({ url, caption: esc(caption) });
         }
-        const thumb = url
-          ? `<div class="thumb" data-slide="${slideIdx}"><img loading="lazy" src="${url}" alt="${esc(brand)}"></div>`
-          : `<div class="thumb"><span style="color:var(--muted);font-size:12px">no image</span></div>`;
-        return `<div class="card" data-id="${it.id}">
+        const inner = url
+          ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
+          : `<span style="color:var(--muted);font-size:12px">no image</span>`;
+        const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
+          ${inner}<span class="selcheck">✓</span></div>`;
+        return `<div class="card${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
           ${thumb}
           <div class="body">
             <div class="cardtop">
@@ -254,16 +296,119 @@ async function renderGallery(view, caps) {
     grid._slides = slides;
   }
 
-  // Delegated clicks: photo -> lightbox, rest of card -> editor.
+  // ---- selection interactions: tap, shift-click range, drag/slide sweep ----
+  const cardIndex = (card) => [...grid.querySelectorAll(".card[data-id]")].indexOf(card);
+  let anchorIndex = null;      // last single-selected card, for shift-range
+  let suppressClick = false;   // swallow the click that ends a long-press / drag
+  let drag = null;             // { action:'add'|'remove', processed:Set }
+  let lpTimer = null;
+  const cancelLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+
+  function setSelected(card, on) {
+    const id = card.dataset.id;
+    if (on) { selected.add(id); card.classList.add("selected"); }
+    else { selected.delete(id); card.classList.remove("selected"); }
+  }
+  function rangeSelect(toIndex) {
+    const cards = [...grid.querySelectorAll(".card[data-id]")];
+    let [a, b] = [anchorIndex ?? toIndex, toIndex].sort((x, y) => x - y);
+    for (let i = a; i <= b; i++) cards[i] && setSelected(cards[i], true);
+    updateSelBar();
+  }
+  const preventScroll = (e) => { if (drag) e.preventDefault(); };
+  function applyDrag(card) {
+    const id = card.dataset.id;
+    if (drag.processed.has(id)) return;
+    drag.processed.add(id);
+    setSelected(card, drag.action === "add");
+    updateSelBar();
+  }
+  function docMove(e) {
+    if (!drag) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const card = el && el.closest && el.closest(".card[data-id]");
+    if (card) applyDrag(card);
+  }
+  function startDrag(card) {
+    if (!selectionMode) enterSelection();
+    const willSelect = !selected.has(card.dataset.id);
+    drag = { action: willSelect ? "add" : "remove", processed: new Set() };
+    anchorIndex = cardIndex(card);
+    applyDrag(card);
+    // Document-scoped so a sweep keeps working past the grid edge, and these are
+    // removed on drag end (no per-render listener buildup).
+    document.addEventListener("touchmove", preventScroll, { passive: false });
+    document.addEventListener("pointermove", docMove);
+    document.addEventListener("pointerup", endDrag);
+  }
+  function endDrag() {
+    if (!drag) return;
+    drag = null;
+    document.removeEventListener("touchmove", preventScroll, { passive: false });
+    document.removeEventListener("pointermove", docMove);
+    document.removeEventListener("pointerup", endDrag);
+    suppressClick = true;
+  }
+
   grid.addEventListener("click", (e) => {
-    const thumb = e.target.closest(".thumb[data-slide]");
-    if (thumb) {
-      openLightbox(grid._slides, Number(thumb.dataset.slide));
+    if (suppressClick) { suppressClick = false; return; }
+    const card = e.target.closest(".card[data-id]");
+    if (selectionMode) {
+      if (!card) return;
+      if (e.shiftKey && anchorIndex !== null) rangeSelect(cardIndex(card));
+      else { toggleSelect(card.dataset.id, card); anchorIndex = cardIndex(card); }
       return;
     }
-    const card = e.target.closest(".card[data-id]");
+    const thumb = e.target.closest(".thumb[data-slide]");
+    if (thumb) { openLightbox(grid._slides, Number(thumb.dataset.slide)); return; }
     if (card) openEditor(card.dataset.id, caps, () => renderGallery(view, caps));
   });
+
+  let lpStart = null;
+  grid.addEventListener("pointerdown", (e) => {
+    if (!canEdit) return;
+    const card = e.target.closest(".card[data-id]");
+    if (!card) return;
+    if (e.pointerType === "mouse") {
+      // Mouse in selection mode: shift = range (let click handle it); else drag.
+      if (selectionMode && !e.shiftKey) { e.preventDefault(); startDrag(card); }
+    } else {
+      // Touch/pen: long-press to begin selection + sweep (so scrolling still works).
+      lpStart = { x: e.clientX, y: e.clientY };
+      lpTimer = setTimeout(() => { lpTimer = null; startDrag(card); }, 380);
+    }
+  });
+  // Cancel the long-press only on real movement (tolerate finger jitter); a held
+  // finger that barely moves still triggers selection.
+  grid.addEventListener("pointermove", (e) => {
+    if (drag || !lpTimer || !lpStart) return;
+    if (Math.hypot(e.clientX - lpStart.x, e.clientY - lpStart.y) > 12) cancelLp();
+  });
+  grid.addEventListener("pointerup", cancelLp);
+  grid.addEventListener("pointercancel", () => { cancelLp(); endDrag(); });
+  // Suppress the browser long-press context menu inside the grid.
+  grid.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // Toolbar Select button + selection action bar.
+  const selectBtn = view.querySelector("#selectBtn");
+  if (selectBtn) selectBtn.onclick = () => (selectionMode ? exitSelection() : enterSelection());
+  if (selbar) {
+    view.querySelector("#selDone").onclick = exitSelection;
+    view.querySelector("#selClear").onclick = () => {
+      selected.clear();
+      grid.querySelectorAll(".card.selected").forEach((c) => c.classList.remove("selected"));
+      updateSelBar();
+    };
+    view.querySelector("#selAll").onclick = () => {
+      for (const it of filtered) selected.add(it.id);
+      grid.querySelectorAll(".card[data-id]").forEach((c) => c.classList.add("selected"));
+      updateSelBar();
+    };
+    view.querySelector("#selAi").onclick = () => {
+      const items = [...selected].map((id) => byId[id]).filter(Boolean);
+      if (items.length) openBulkAi(items, caps, () => renderGallery(view, caps));
+    };
+  }
 
   qEl.addEventListener("input", draw);
   stEl.addEventListener("change", draw);
