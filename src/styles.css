@@ -129,9 +129,11 @@ a { color:var(--accent); }
 /* ---------------- uploader ---------------- */
 .uploader { max-width:560px; margin:0 auto; }
 .up-h { font-size:16px; margin:4px 0 14px; }
+.pickrow { display:flex; gap:10px; }
+.pickrow .pickbtn { flex:1; }
 .pickbtn {
   display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
-  border:1.5px dashed var(--line); border-radius:14px; padding:34px 16px; cursor:pointer;
+  border:1.5px dashed var(--line); border-radius:14px; padding:28px 16px; cursor:pointer;
   color:var(--muted); text-align:center;
 }
 .pickbtn:hover { border-color:var(--accent); color:var(--txt); }

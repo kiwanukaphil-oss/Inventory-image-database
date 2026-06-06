@@ -41,10 +41,16 @@ export async function renderUpload(view, role, onDone) {
   view.innerHTML = `
     <div class="uploader">
       <h2 class="up-h">Add photos</h2>
-      <label class="pickbtn">
-        <input id="fileInput" type="file" accept="image/*" multiple hidden>
-        <span class="big">＋</span><span>Take or choose photos</span>
-      </label>
+      <div class="pickrow">
+        <label class="pickbtn">
+          <input id="camInput" type="file" accept="image/*" capture="environment" hidden>
+          <span class="big">📷</span><span>Take photo</span>
+        </label>
+        <label class="pickbtn">
+          <input id="libInput" type="file" accept="image/*" multiple hidden>
+          <span class="big">🖼️</span><span>Choose photos</span>
+        </label>
+      </div>
       <div id="picked" class="picked"></div>
 
       <div id="batchForm" style="display:none">
@@ -75,7 +81,8 @@ export async function renderUpload(view, role, onDone) {
       <datalist id="dl-brand">${vocabSuggestions("brand").map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
     </div>`;
 
-  const fileInput = view.querySelector("#fileInput");
+  const camInput = view.querySelector("#camInput");
+  const libInput = view.querySelector("#libInput");
   const picked = view.querySelector("#picked");
   const batchForm = view.querySelector("#batchForm");
   const catSel = view.querySelector("#catSel");
@@ -83,14 +90,24 @@ export async function renderUpload(view, role, onDone) {
   const uploadBtn = view.querySelector("#uploadBtn");
   const progress = view.querySelector("#progress");
 
-  fileInput.addEventListener("change", () => {
-    state.files = [...fileInput.files];
-    picked.textContent = state.files.length
-      ? `${state.files.length} photo${state.files.length === 1 ? "" : "s"} selected`
-      : "";
+  // Both pickers accumulate into the same batch, so you can take several photos
+  // one at a time and/or add some from the library before uploading.
+  function addFiles(list) {
+    state.files.push(...list);
+    renderPicked();
     batchForm.style.display = state.files.length ? "block" : "none";
     refreshUploadEnabled();
-  });
+  }
+  function renderPicked() {
+    picked.innerHTML = state.files.length
+      ? `${state.files.length} photo${state.files.length === 1 ? "" : "s"} selected ·
+         <a href="#" id="clearPick">clear</a>`
+      : "";
+    const c = view.querySelector("#clearPick");
+    if (c) c.onclick = (e) => { e.preventDefault(); state.files = []; renderPicked(); batchForm.style.display = "none"; refreshUploadEnabled(); };
+  }
+  camInput.addEventListener("change", () => { addFiles([...camInput.files]); camInput.value = ""; });
+  libInput.addEventListener("change", () => { addFiles([...libInput.files]); libInput.value = ""; });
 
   // When a category is chosen, render its (optional) common fields + brand.
   catSel.addEventListener("change", () => {
