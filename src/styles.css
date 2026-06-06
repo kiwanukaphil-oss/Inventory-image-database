@@ -1,0 +1,110 @@
+/* ---------------------------------------------------------------------------
+   Inventory Image Review — global styles.
+   Palette and card/lightbox language carried over verbatim from the original
+   review.html so the app keeps the look the user liked, plus a mobile-first
+   app shell (top bar, scroll area, bottom nav) and an auth screen.
+---------------------------------------------------------------------------- */
+:root {
+  --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --txt:#e6e9ef; --muted:#9aa3b2;
+  --accent:#4f8cff; --edit:#3a2f00; --flag:#3a0f12; --ok:#13351c;
+  --danger:#d04b53;
+  --radius:10px;
+  /* Safe-area insets so the bottom nav clears the iPhone home indicator. */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+* { box-sizing:border-box; }
+html, body { height:100%; }
+body {
+  margin:0; background:var(--bg); color:var(--txt);
+  font:15px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust:100%;
+}
+#app { min-height:100%; }
+
+button, input, select, textarea {
+  background:#0d0f14; color:var(--txt); border:1px solid var(--line);
+  border-radius:8px; padding:9px 11px; font:inherit;
+}
+button { cursor:pointer; }
+button:active { transform:translateY(1px); }
+button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+button.ghost:hover { border-color:var(--accent); }
+button.danger { border-color:var(--danger); color:#ffb3b8; }
+a { color:var(--accent); }
+
+/* ---------------- app shell ---------------- */
+.shell { display:flex; flex-direction:column; min-height:100dvh; }
+.topbar {
+  position:sticky; top:0; z-index:20; background:var(--panel);
+  border-bottom:1px solid var(--line);
+  padding:calc(10px + var(--safe-top)) 14px 10px;
+  display:flex; align-items:center; gap:10px;
+}
+.topbar h1 { font-size:16px; margin:0; font-weight:650; }
+.topbar .spacer { flex:1; }
+.rolechip {
+  font-size:11px; padding:2px 8px; border-radius:10px;
+  border:1px solid var(--line); color:var(--muted);
+}
+.rolechip.admin { color:#ffd479; border-color:#6b5600; }
+.rolechip.editor { color:#9ecbff; border-color:#274a73; }
+.rolechip.viewer { color:var(--muted); }
+
+.content { flex:1; padding:12px 12px calc(78px + var(--safe-bottom)); }
+
+/* Bottom navigation — primary mobile navigation. */
+.bottomnav {
+  position:fixed; left:0; right:0; bottom:0; z-index:30;
+  background:var(--panel); border-top:1px solid var(--line);
+  display:flex; padding-bottom:var(--safe-bottom);
+}
+.bottomnav button {
+  flex:1; background:transparent; border:none; border-radius:0;
+  color:var(--muted); padding:10px 4px; font-size:11px;
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+}
+.bottomnav button .ico { font-size:20px; line-height:1; }
+.bottomnav button.active { color:var(--accent); }
+
+/* ---------------- empty / loading states ---------------- */
+.empty {
+  text-align:center; color:var(--muted); padding:64px 20px;
+  display:flex; flex-direction:column; align-items:center; gap:10px;
+}
+.empty .big { font-size:40px; }
+.spinner {
+  width:26px; height:26px; border:3px solid var(--line); border-top-color:var(--accent);
+  border-radius:50%; animation:spin 0.8s linear infinite; margin:40px auto;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+
+/* ---------------- auth screen ---------------- */
+.auth { min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px; }
+.auth .card {
+  width:100%; max-width:360px; background:var(--panel);
+  border:1px solid var(--line); border-radius:14px; padding:22px;
+}
+.auth h1 { font-size:18px; margin:0 0 4px; }
+.auth p.sub { color:var(--muted); margin:0 0 18px; font-size:13px; }
+.auth label { display:block; font-size:12px; color:var(--muted); margin:12px 0 5px; }
+.auth input { width:100%; }
+.auth button.primary { width:100%; margin-top:18px; padding:11px; }
+.auth .msg { margin-top:14px; font-size:13px; min-height:18px; }
+.auth .msg.err { color:#ffb3b8; }
+.auth .msg.ok { color:#86e8a0; }
+
+/* ---------------- card grid (ported from review.html) ---------------- */
+.grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
+@media (min-width:700px) { .grid { grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); } }
+.card {
+  background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+  overflow:hidden; display:flex; flex-direction:column;
+}
+.card .thumb {
+  aspect-ratio:1/1; background:#000; display:flex; align-items:center; justify-content:center;
+  overflow:hidden; cursor:zoom-in;
+}
+.card .thumb img { width:100%; height:100%; object-fit:contain; }
+.card .body { padding:8px 10px; }

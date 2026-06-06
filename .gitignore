@@ -1,0 +1,32 @@
+# Dependencies & build output
+node_modules/
+dist/
+
+# Local environment (Supabase keys live here; never commit)
+.env
+.env.local
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
+
+# Excel lock files
+~$*.xlsx
+
+# Generated review artifact from the old local tool
+review.html
+
+# --- Local-only seed/source data (NOT committed) ---------------------------
+# The spreadsheet holds cost_price (admin-only data) and must never be pushed.
+# The photo folders are bulky raw inventory imagery; the seed script reads them
+# locally. CSVs are working artifacts. All stay on your machine only.
+pants_products.xlsx
+corrections_for_approval.csv
+applied_changes_log.csv
+Cargo Pants/
+Flat_front/
+Formal_pants/
+Khaki/
+Linen/
+Relaxed_Draw string/
