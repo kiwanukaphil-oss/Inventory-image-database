@@ -33,9 +33,12 @@ them up. Grouped by "deferred" (consciously skipped during a phase) and
     once (queue + progress), the real time-saver for backfilling 200+ fields.
   - **AI on upload** — auto-run extraction as photos are uploaded so new stock
     arrives pre-filled.
-- **Phase 6 — bulk ops, grouping, export, polish.** Multi-select + bulk edit,
-  two-level grouping (category › subcategory, collapsible), CSV export
-  (current-state + corrections-log), user-management screen, and a keep-alive
-  cron to avoid Supabase's 7-day inactivity pause.
+- **Phase 6 — bulk ops, grouping, export, polish.**
+  - ✅ Multi-select (long-press / shift-range / slide-sweep) + bulk AI-fill.
+  - ✅ User-management screen (capabilities).
+  - ✅ Keep-alive cron (`.github/workflows/keepalive.yml`, pings Supabase every 3 days).
+  - ⬜ Two-level grouping (category › subcategory, collapsible).
+  - ⬜ CSV export (current-state + corrections-log).
+  - ⬜ Bulk status change / bulk delete on the selection bar.
 
 _Last updated: 2026-06-06 (after Phase 4)._

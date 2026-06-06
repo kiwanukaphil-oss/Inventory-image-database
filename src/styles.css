@@ -129,9 +129,18 @@ a { color:var(--accent); }
 .card .body { padding:8px 10px; }
 
 /* ---------------- filter bar + cards ---------------- */
-.filterbar { display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
-.filterbar #q { flex:1 1 200px; }
-.filterbar select, .filterbar button { flex:0 0 auto; }
+/* Mobile-first: search on its own row, controls grouped below and wrapping. */
+.filterbar { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
+.fb-search { width:100%; }
+.fb-controls { display:flex; gap:8px; flex-wrap:wrap; }
+.fb-controls select { flex:1 1 130px; min-width:0; }
+.fb-controls button { flex:0 0 auto; }
+@media (min-width:700px) {
+  /* On wider screens keep it to a single tidy row. */
+  .filterbar { flex-direction:row; align-items:center; }
+  .fb-search { flex:1 1 240px; width:auto; }
+  .fb-controls { flex:0 0 auto; }
+}
 .filterbar .aifill { white-space:nowrap; border-color:#3a3f73; color:#c3c9ff; }
 .filterbar .aifill:hover { border-color:var(--accent); }
 

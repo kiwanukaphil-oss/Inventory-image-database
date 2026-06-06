@@ -179,15 +179,17 @@ async function renderGallery(view, caps) {
   // Filter bar + containers.
   view.innerHTML = `
     <div class="filterbar">
-      <input id="q" type="search" placeholder="Search brand / colour / SKU / type…">
-      <select id="statusFilter">
-        ${STATUSES.map((s) => `<option value="${s}">${s === "all" ? "All statuses" : s}</option>`).join("")}
-      </select>
-      <select id="dateFilter">
-        ${DATE_FILTERS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}
-      </select>
-      ${canEdit ? `<button class="ghost" id="selectBtn" title="Select items">Select</button>` : ""}
-      ${canEdit ? `<button class="ghost aifill" id="aiFillBtn" title="AI-fill filtered items">✨ AI-fill</button>` : ""}
+      <input id="q" class="fb-search" type="search" placeholder="Search brand / colour / SKU / type…">
+      <div class="fb-controls">
+        <select id="statusFilter">
+          ${STATUSES.map((s) => `<option value="${s}">${s === "all" ? "All statuses" : s}</option>`).join("")}
+        </select>
+        <select id="dateFilter">
+          ${DATE_FILTERS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}
+        </select>
+        ${canEdit ? `<button class="ghost" id="selectBtn" title="Select items">Select</button>` : ""}
+        ${canEdit ? `<button class="ghost aifill" id="aiFillBtn" title="AI-fill filtered items">✨ AI-fill</button>` : ""}
+      </div>
     </div>
     <div class="count" id="count"></div>
     <div class="grid" id="grid"></div>
