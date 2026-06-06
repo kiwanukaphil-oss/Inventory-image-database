@@ -5,6 +5,7 @@ import { renderUpload } from "./upload.js";
 import { loadRefData, resolveFields } from "./data.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
+import { renderExport } from "./exportcsv.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -83,6 +84,7 @@ export function renderApp(mount, profile, onSignOut) {
         nav.querySelector('button[data-view="add"]').classList.remove("active");
         renderGallery(view, caps);
       });
+    else if (id === "export") renderExport(view, caps);
     else renderComingSoon(view, id);
   }
 
@@ -145,6 +147,7 @@ const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
 // card opens the editor; tapping its photo opens the lightbox.
 async function renderGallery(view, caps) {
   const canEdit = !!caps.can_edit;
+  const canDelete = !!caps.can_delete;
   view.innerHTML = `<div class="spinner"></div>`;
   await loadRefData(); // category tree + field definitions drive the card summary
   const { data, error } = await supabase
@@ -195,10 +198,14 @@ async function renderGallery(view, caps) {
     <div class="grid" id="grid"></div>
     ${canEdit ? `<div class="selbar" id="selbar" hidden>
       <span id="selCount">0 selected</span>
-      <span class="spacer"></span>
       <button class="ghost" id="selAll">All</button>
       <button class="ghost" id="selClear">Clear</button>
+      <select id="selStatus" title="Set status for selected">
+        <option value="">Set status…</option>
+        ${["draft", "needs-review", "approved", "flag"].map((s) => `<option value="${s}">${s}</option>`).join("")}
+      </select>
       <button class="primary" id="selAi">✨ AI-fill</button>
+      ${canDelete ? `<button class="danger" id="selDel">Delete</button>` : ""}
       <button class="ghost" id="selDone">Done</button>
     </div>` : ""}`;
 
@@ -219,7 +226,10 @@ async function renderGallery(view, caps) {
     if (!selbar) return;
     const n = selected.size;
     view.querySelector("#selCount").textContent = `${n} selected`;
-    view.querySelector("#selAi").disabled = n === 0;
+    ["selAi", "selStatus", "selDel"].forEach((id) => {
+      const el = view.querySelector("#" + id);
+      if (el) el.disabled = n === 0;
+    });
   }
   function enterSelection() {
     selectionMode = true;
@@ -409,6 +419,31 @@ async function renderGallery(view, caps) {
     view.querySelector("#selAi").onclick = () => {
       const items = [...selected].map((id) => byId[id]).filter(Boolean);
       if (items.length) openBulkAi(items, caps, () => renderGallery(view, caps));
+    };
+
+    // Bulk status change for all selected.
+    const selStatus = view.querySelector("#selStatus");
+    if (selStatus) selStatus.onchange = async () => {
+      const st = selStatus.value;
+      const ids = [...selected];
+      selStatus.value = "";
+      if (!st || !ids.length) return;
+      const { error } = await supabase.from("items").update({ status: st }).in("id", ids);
+      if (error) { alert("Status update failed: " + error.message); return; }
+      renderGallery(view, caps);
+    };
+
+    // Bulk delete (capability-gated) — removes items + their stored images.
+    const selDel = view.querySelector("#selDel");
+    if (selDel) selDel.onclick = async () => {
+      const ids = [...selected];
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} item(s) and their photos? This cannot be undone.`)) return;
+      const paths = ids.map((id) => byId[id]?.image_path).filter(Boolean);
+      const { error } = await supabase.from("items").delete().in("id", ids);
+      if (error) { alert("Delete failed: " + error.message); return; }
+      if (paths.length) await supabase.storage.from("product-images").remove(paths);
+      renderGallery(view, caps);
     };
   }
 

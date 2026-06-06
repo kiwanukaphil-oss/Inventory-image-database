@@ -37,8 +37,8 @@ them up. Grouped by "deferred" (consciously skipped during a phase) and
   - ✅ Multi-select (long-press / shift-range / slide-sweep) + bulk AI-fill.
   - ✅ User-management screen (capabilities).
   - ✅ Keep-alive cron (`.github/workflows/keepalive.yml`, pings Supabase every 3 days).
-  - ⬜ Two-level grouping (category › subcategory, collapsible).
-  - ⬜ CSV export (current-state + corrections-log).
-  - ⬜ Bulk status change / bulk delete on the selection bar.
+  - ✅ CSV export (current catalogue + change log) — Export tab.
+  - ✅ Bulk status change + bulk delete on the selection bar.
+  - ⬜ Two-level grouping (category › subcategory, collapsible) — last Phase 6 item.
 
 _Last updated: 2026-06-06 (after Phase 4)._
