@@ -1,6 +1,7 @@
 import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
+import { renderUpload } from "./upload.js";
 
 // The authenticated app shell: top bar, bottom nav, and the gallery view with
 // search + status filtering. Tapping a card opens the category-driven editor;
@@ -47,6 +48,12 @@ export function renderApp(mount, profile, onSignOut) {
       b.classList.toggle("active", b.dataset.view === id)
     );
     if (id === "gallery") renderGallery(view, role);
+    else if (id === "add")
+      renderUpload(view, role, () => {
+        nav.querySelector('button[data-view="gallery"]').classList.add("active");
+        nav.querySelector('button[data-view="add"]').classList.remove("active");
+        renderGallery(view, role);
+      });
     else renderComingSoon(view, id);
   }
 

@@ -1,5 +1,9 @@
 import "./styles.css";
+import { registerSW } from "virtual:pwa-register";
 import { isConfigured } from "./db.js";
+
+// Register the service worker (auto-updates on new deploys). No-op in dev.
+registerSW({ immediate: true });
 import { onAuthChange, getMyProfile, signOut } from "./auth.js";
 import { renderLogin } from "./login.js";
 import { renderApp } from "./gallery.js";

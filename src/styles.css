@@ -126,6 +126,20 @@ a { color:var(--accent); }
 .card .cprice { font-size:13px; color:#9ecbff; margin-top:2px; }
 .readonly-val { color:var(--txt); font-size:14px; }
 
+/* ---------------- uploader ---------------- */
+.uploader { max-width:560px; margin:0 auto; }
+.up-h { font-size:16px; margin:4px 0 14px; }
+.pickbtn {
+  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px;
+  border:1.5px dashed var(--line); border-radius:14px; padding:34px 16px; cursor:pointer;
+  color:var(--muted); text-align:center;
+}
+.pickbtn:hover { border-color:var(--accent); color:var(--txt); }
+.pickbtn .big { font-size:34px; line-height:1; }
+.picked { color:var(--muted); font-size:13px; margin:10px 0; text-align:center; }
+.up-go { width:100%; margin-top:16px; padding:12px; }
+.progress { text-align:center; color:var(--muted); font-size:13px; margin-top:12px; min-height:18px; }
+
 /* ---------------- edit sheet ---------------- */
 .sheet { position:fixed; inset:0; z-index:55; background:#0008; display:flex;
          align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
