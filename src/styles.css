@@ -45,6 +45,9 @@ button, input, select, textarea {
 }
 button { cursor:pointer; }
 button:active { transform:translateY(1px); }
+/* Disabled buttons must look inactive (otherwise they invite a dead click). */
+button:disabled { opacity:.45; cursor:not-allowed; }
+button:disabled:active { transform:none; }
 button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
 button.ghost:hover { border-color:var(--accent); }
 button.danger { border-color:var(--danger); color:#ffb3b8; }
@@ -127,6 +130,9 @@ a { color:var(--accent); }
 .auth .msg { margin-top:14px; font-size:13px; min-height:18px; }
 .auth .msg.err { color:#ffb3b8; }
 .auth .msg.ok { color:#86e8a0; }
+.auth .forgot { display:block; margin-top:10px; padding:4px 0; font-size:13px; }
+.auth .forgot-help { margin-top:8px; font-size:12.5px; color:var(--muted); line-height:1.45;
+  background:#0d0f14; border:1px solid var(--line); border-radius:8px; padding:10px; }
 
 /* ---------------- card grid (ported from review.html) ---------------- */
 .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
@@ -361,6 +367,7 @@ a { color:var(--accent); }
 .pickbtn .big { font-size:34px; line-height:1; }
 .picked { color:var(--muted); font-size:13px; margin:10px 0; text-align:center; }
 .up-go { width:100%; margin-top:16px; padding:12px; }
+.up-hint { font-size:12px; text-align:center; margin-top:8px; }
 .progress { text-align:center; color:var(--muted); font-size:13px; margin-top:12px; min-height:18px; }
 
 /* upload preview grid + progress */

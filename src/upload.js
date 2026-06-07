@@ -127,6 +127,7 @@ export async function renderUpload(view, caps, onDone) {
           </div>
           ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"> ✨ Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost)</span></label>` : ""}
           <button class="primary up-go" id="uploadBtn" disabled>Upload</button>
+          <div class="up-hint muted" id="upHint"></div>
         </div>
       </div>
 
@@ -288,6 +289,8 @@ export async function renderUpload(view, caps, onDone) {
   function refreshEnabled() {
     uploadBtn.disabled = !(entries.length && catSel.value);
     uploadBtn.textContent = entries.length ? `Upload ${entries.length}` : "Upload";
+    const hintEl = $("#upHint");
+    if (hintEl) hintEl.textContent = entries.length && !catSel.value ? "Choose a category to enable upload." : "";
   }
 
   // Gather the batch-common values once.
