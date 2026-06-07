@@ -634,12 +634,7 @@ async function renderGallery(view, caps) {
 }
 
 // ---- Find tab: faceted finder (AND across facets / OR within), group-by, saved views ----
-const SAVED_VIEWS_KEY = "kline_saved_views_v1";
-function loadSavedViews() {
-  try { return JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY)) || []; } catch { return []; }
-}
-function storeSavedViews(v) { localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(v)); }
-
+// Saved views live in the `saved_views` table (per-user), so they sync across devices.
 async function renderFind(view, caps) {
   view.innerHTML = `<div class="spinner"></div>`;
   await loadRefData();
@@ -653,6 +648,10 @@ async function renderFind(view, caps) {
       <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
     return;
   }
+
+  // This user's saved views (empty if the table isn't there yet).
+  const { data: svData } = await supabase.from("saved_views").select("id, name, payload").order("created_at");
+  let savedViews = svData || [];
 
   // Signed thumbnails (batched).
   const paths = data.filter((d) => d.image_path).map((d) => d.image_path);
@@ -820,9 +819,8 @@ async function renderFind(view, caps) {
   }
 
   function renderSavedViews() {
-    const views = loadSavedViews();
-    savedEl.innerHTML = views
-      .map((v, i) => `<span class="sview" data-i="${i}">${esc(v.name)}<span class="sx" data-del="${i}">✕</span></span>`)
+    savedEl.innerHTML = savedViews
+      .map((v) => `<span class="sview" data-apply="${v.id}">${esc(v.name)}<span class="sx" data-del="${v.id}">✕</span></span>`)
       .join("");
   }
 
@@ -870,38 +868,42 @@ async function renderFind(view, caps) {
   pMax.addEventListener("input", () => { priceMax = pMax.value.trim(); refresh(); });
   dPreset.addEventListener("change", () => { datePreset = dPreset.value; refresh(); });
 
-  // Saved views (per-device, localStorage).
-  view.querySelector("#saveViewBtn").onclick = () => {
+  // Saved views (cloud-synced via the saved_views table; per-user).
+  view.querySelector("#saveViewBtn").onclick = async () => {
     const name = prompt("Name this saved view:");
     if (!name) return;
     const serial = {};
     for (const k in active) serial[k] = [...active[k]];
-    const views = loadSavedViews();
-    views.push({ name: name.trim(), active: serial, q, groupBy, priceMin, priceMax, datePreset });
-    storeSavedViews(views);
+    const payload = { active: serial, q, groupBy, priceMin, priceMax, datePreset };
+    const { data, error } = await supabase.from("saved_views")
+      .insert({ name: name.trim(), payload }).select("id, name, payload").single();
+    if (error) { alert("Couldn't save view: " + error.message); return; }
+    savedViews.push(data);
     renderSavedViews();
   };
-  savedEl.addEventListener("click", (e) => {
+  savedEl.addEventListener("click", async (e) => {
     const del = e.target.closest("[data-del]");
     if (del) {
       e.stopPropagation();
-      const views = loadSavedViews();
-      views.splice(Number(del.dataset.del), 1);
-      storeSavedViews(views);
+      const id = del.dataset.del;
+      const { error } = await supabase.from("saved_views").delete().eq("id", id);
+      if (error) { alert("Couldn't delete view: " + error.message); return; }
+      savedViews = savedViews.filter((v) => v.id !== id);
       renderSavedViews();
       return;
     }
-    const sv = e.target.closest(".sview[data-i]");
+    const sv = e.target.closest(".sview[data-apply]");
     if (!sv) return;
-    const v = loadSavedViews()[Number(sv.dataset.i)];
+    const v = savedViews.find((x) => x.id === sv.dataset.apply);
     if (!v) return;
+    const p = v.payload || {};
     for (const k in active) delete active[k];
-    for (const k in (v.active || {})) active[k] = new Set(v.active[k]);
-    q = v.q || ""; fq.value = q;
-    groupBy = v.groupBy || "none"; groupSel.value = facetByKey[groupBy] ? groupBy : "none";
-    priceMin = v.priceMin || ""; pMin.value = priceMin;
-    priceMax = v.priceMax || ""; pMax.value = priceMax;
-    datePreset = v.datePreset || "all"; dPreset.value = datePreset;
+    for (const k in (p.active || {})) active[k] = new Set(p.active[k]);
+    q = p.q || ""; fq.value = q;
+    groupBy = p.groupBy || "none"; groupSel.value = facetByKey[groupBy] ? groupBy : "none";
+    priceMin = p.priceMin || ""; pMin.value = priceMin;
+    priceMax = p.priceMax || ""; pMax.value = priceMax;
+    datePreset = p.datePreset || "all"; dPreset.value = datePreset;
     refresh();
   });
 
