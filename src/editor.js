@@ -212,6 +212,7 @@ export async function openEditor(itemId, caps, onSaved) {
       try {
         const defs = [
           { key: "brand", label: "Brand" },
+          { key: "name", label: "Product name" },
           ...fields.map((f) => ({ key: f.key, label: f.label, type: f.type, options: f.options })),
         ];
         const { data, error } = await supabase.functions.invoke("ai-extract", {

@@ -111,8 +111,13 @@ Deno.serve(async (req) => {
       `brand, ${fieldList}. Rules:\n` +
       `- Use the brand name EXACTLY as printed on the tag. Keep look-alike/knock-off names as printed; ` +
       `do NOT normalise toward a famous brand.\n` +
+      `- "Product name" (name) is the product's line/model name WITHOUT the variant ` +
+      `(e.g. a fragrance like "Stronger With You" or "Diamonds"). Omit it for generic ` +
+      `garments that have no model name.\n` +
+      `- "Edition" is the specific variant / flanker (e.g. "Intensely", "Absolutely", ` +
+      `"Intense", "Elixir", "Parfum"). If the product has no such variant, use "Standard".\n` +
       `- Treat stylised brand logos (not printed text) as Low confidence.\n` +
-      `- If the garment shows an overlay/handwritten colour caption, that colour wins.\n` +
+      `- If the item shows an overlay/handwritten colour caption, that colour wins.\n` +
       `- Only report a field if you can actually see it; omit fields you cannot determine. ` +
       `Prefer omitting over guessing.\n` +
       `- Give per-field confidence: High / Medium / Low. Call record_fields with the result.`;

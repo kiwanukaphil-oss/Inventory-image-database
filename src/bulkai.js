@@ -109,6 +109,7 @@ async function runBatch(modal, items, onlyEmpty, onDone) {
     try {
       const defs = [
         { key: "brand", label: "Brand" },
+        { key: "name", label: "Product name" },
         ...resolveFields(it.category_id).map((f) => ({
           key: f.key, label: f.label, type: f.type, options: f.options, vocab: f.vocab,
         })),
@@ -128,6 +129,7 @@ async function runBatch(modal, items, onlyEmpty, onDone) {
       const confidence = { ...(it.confidence || {}) };
       let changed = 0;
       let newBrand = it.brand;
+      let newName = it.name;
 
       for (const [key, raw] of Object.entries(data.values || {})) {
         if (raw === null || raw === undefined || raw === "") continue;
@@ -138,6 +140,12 @@ async function runBatch(modal, items, onlyEmpty, onDone) {
           if (onlyEmpty && it.brand) continue;
           if (val !== (it.brand || "")) { newBrand = val; changed++; }
           if (data.confidence?.brand) confidence.brand = data.confidence.brand;
+          continue;
+        }
+        if (key === "name") {
+          if (onlyEmpty && it.name) continue;
+          if (val !== (it.name || "")) { newName = val; changed++; }
+          if (data.confidence?.name) confidence.name = data.confidence.name;
           continue;
         }
         const existing = attributes[key];
@@ -151,7 +159,7 @@ async function runBatch(modal, items, onlyEmpty, onDone) {
       }
 
       if (changed > 0) {
-        const update = { attributes, confidence, brand: newBrand };
+        const update = { attributes, confidence, brand: newBrand, name: newName };
         // Surface freshly AI-touched drafts for review.
         if (it.status === "draft") update.status = "needs-review";
         const { error: upErr } = await supabase.from("items").update(update).eq("id", it.id);
