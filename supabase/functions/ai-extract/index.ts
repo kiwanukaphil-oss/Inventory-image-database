@@ -120,6 +120,11 @@ Deno.serve(async (req) => {
       `e.g. "Polo Red", "Stronger With You Intensely", "Sauvage Elixir", "Diamonds". ` +
       `It is usually the largest text after the brand; read it in full. Omit only for generic garments with no model name.\n` +
       `- For fragrances the brand, product name, concentration (EDT/EDP/Parfum) and size (in ml) are almost always clearly printed — read and fill them.\n` +
+      `- scent_family is a CLASSIFICATION that is NOT printed on the box (e.g. Woody, Amber/Oriental, ` +
+      `Fresh, Citrus, Aromatic/Fougère, Floral, Gourmand, Leather, Chypre, Aquatic). Once you've ` +
+      `identified the exact fragrance from its brand + product name, infer its scent family from your ` +
+      `general knowledge of that fragrance. If you don't recognise the specific fragrance, leave it ` +
+      `blank — do not guess. Mark any inferred scent_family as Medium or Low confidence.\n` +
       `- If the item has an overlay/handwritten colour caption, that colour wins.\n` +
       `- Only leave a field blank if it genuinely is not shown; when unsure, fill it with Low confidence rather than omitting.\n` +
       `- Treat stylised logos as lower confidence. Give per-field confidence High / Medium / Low. Call record_fields.`;
