@@ -9,6 +9,7 @@ import { renderExport } from "./exportcsv.js";
 import { openCategoryManager } from "./categories_admin.js";
 import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen } from "./ui.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
+import { getThemePref, setThemePref } from "./theme.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -139,12 +140,14 @@ export function renderApp(mount, profile, onSignOut) {
     const sh = openBottomSheet(caps.email || "Account",
       `<div class="menu-sub">Signed in as ${esc(role)}</div>
        ${admin}
+       <button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
        ${install}
        <button class="menu-item danger" data-m="signout">Sign out</button>`);
     sh.body.addEventListener("click", async (e) => {
       const b = e.target.closest("[data-m]");
       if (!b) return;
       if (b.dataset.m === "install") { sh.close(); installApp(); return; }
+      if (b.dataset.m === "theme") { sh.close(); openAppearance(); return; }
       sh.close();
       if (b.dataset.m === "users") openUsers(caps);
       else if (b.dataset.m === "cats") openCategoryManager(caps);
@@ -152,6 +155,30 @@ export function renderApp(mount, profile, onSignOut) {
       else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
     });
   };
+
+  // Appearance picker — light / dark / follow-the-device. Applies instantly on
+  // tap (no Save button) so the user sees the theme change behind the sheet,
+  // which is the whole point. The active row carries a check.
+  function openAppearance() {
+    const render = () => {
+      const cur = getThemePref();
+      return THEME_OPTIONS.map(
+        (o) => `<button class="menu-item theme-opt${o.v === cur ? " on" : ""}" data-t="${o.v}">
+          <span class="ico">${ICON[o.ico] || ""}</span>
+          <span class="theme-opt-txt"><span class="theme-opt-name">${o.label}</span>
+            <span class="menu-sub">${o.sub}</span></span>
+          <span class="theme-check">${o.v === cur ? ICON.check : ""}</span>
+        </button>`
+      ).join("");
+    };
+    const sh = openBottomSheet("Appearance", render());
+    sh.body.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-t]");
+      if (!b) return;
+      setThemePref(b.dataset.t);
+      sh.body.innerHTML = render(); // refresh the checkmark in place
+    });
+  }
 
   // Install to home screen: use the native prompt where available, otherwise
   // (iOS Safari) show the manual Share-sheet instructions.
@@ -192,6 +219,18 @@ export function renderApp(mount, profile, onSignOut) {
   onScroll();
 
   setView("gallery");
+}
+
+// Appearance options shown in the account menu's "Appearance" picker. "system"
+// follows the device; light/dark pin it. Order matches the menu top-to-bottom.
+const THEME_OPTIONS = [
+  { v: "light",  label: "Light",  sub: "Bright, daytime palette", ico: "sun" },
+  { v: "dark",   label: "Dark",   sub: "Dim, low-light palette",  ico: "moon" },
+  { v: "system", label: "System", sub: "Match this device",       ico: "auto" },
+];
+// Short label for the current preference, shown on the menu row's right edge.
+function themeLabel() {
+  return (THEME_OPTIONS.find((o) => o.v === getThemePref()) || THEME_OPTIONS[2]).label;
 }
 
 // Escape user-provided text before injecting into innerHTML (brands/colours can
@@ -295,6 +334,10 @@ const ICON = {
   x: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
   kebab: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>`,
   up: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>`,
+  // ---- appearance picker glyphs ----
+  sun: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/></svg>`,
+  moon: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 7.2 7.2 0 1 0 20 14.5z"/></svg>`,
+  auto: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`,
   // ---- bottom-nav glyphs (one consistent line-icon set, replacing emoji) ----
   navGallery: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`,
   navAdd: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,

@@ -7,7 +7,10 @@
 :root {
   /* Dark theme built as an elevation ladder so layers read clearly instead of
      blending into one black mass: bg (deepest) < panel (cards/bars) < elevated
-     (sheets/menus). Controls sit just above bg and are defined by a crisp line. */
+     (sheets/menus). Controls sit just above bg and are defined by a crisp line.
+     Light mode lives in the [data-theme="light"] block at the end of this group;
+     theme.js sets that attribute on <html>. Everything below is the dark default
+     so the app still renders fully if JS is slow to resolve the preference. */
   --bg:#10131a;        /* app background — deep, not flat black */
   --panel:#1b212c;     /* cards, top bar, bottom nav — clearly lifted off bg */
   --elevated:#242b38;  /* sheets, dialogs, menus — float above the panel layer */
@@ -24,19 +27,96 @@
   --on-accent:#04222a;         /* dark ink on the teal button */
   --accent-soft:#10303a;       /* tinted background for selected chips/pills */
   --accent-soft-txt:#8fe6f5;   /* light-cyan text for selected chips + prices */
-  --edit:#3a2f00; --flag:#3a0f12; --ok:#13351c;
+  --edit:#3a2f00; --edit-border:#a98b00; --flag:#3a0f12; --ok:#13351c;
   --danger:#d04b53;
+
+  /* --- Semantic tokens ---------------------------------------------------
+     Status, notice, and effect colors that used to be hardcoded throughout the
+     sheet. Pulling them up here is what lets light mode re-tint everything from
+     one place instead of hunting down inline hexes. */
+  --ok-txt:#86e8a0;     --ok-border:#22643a;   /* approved badge / success */
+  --flag-txt:#ffb3b8;   --flag-border:#6e2329; /* flagged / errors / danger text */
+  --review-txt:#ffd479; --review-border:#6b5600;/* needs-review / admin chip */
+  --warn:#ffb020;       --warn-ink:#1a1206;     /* low-conf dot, review nav badge */
+  --ai-border:#3a3f73;  --ai-txt:#c3c9ff;       /* AI action buttons (indigo) */
+  --editor-chip-border:#274a73;                 /* editor role chip outline */
+  /* Amber notice strips (offline banner, edit-mode note). */
+  --notice-bg:#3a2a12;  --notice-txt:#ffcf8a;  --notice-border:#6e4a1f;
+  /* Scrims behind modals / sheets. */
+  --scrim:rgba(0,0,0,.55);
+  /* Skeleton shimmer stops + the matte behind contained product photos. */
+  --shimmer-1:#14161c;  --shimmer-2:#1b1e26;  --thumb-bg:#000;
+  --body-grad-top:#161b26;       /* top stop of the subtle backdrop gradient */
+  /* Toast deliberately stays a dark "snackbar" on both themes. */
+  --toast-bg:#000d; --toast-txt:var(--txt); --toast-line:var(--line);
+  /* Color reported to the OS for the status-bar tint (synced by theme.js). */
+  --theme-color:#10131a;
+
   /* Depth on dark surfaces: a faint top-edge highlight (light from above) plus a
      soft drop shadow makes panels feel physically raised — the signature detail
      of premium dark UIs. */
   --hi:inset 0 1px 0 rgba(255,255,255,.05);          /* lit top edge */
   --shadow-card:var(--hi), 0 1px 2px rgba(0,0,0,.4);
   --shadow-pop:var(--hi), 0 14px 38px rgba(0,0,0,.6);
+  --shadow-bar:0 2px 10px rgba(0,0,0,.3);            /* sticky top bar */
+  --shadow-nav:0 -1px 0 rgba(255,255,255,.04), 0 -6px 20px rgba(0,0,0,.3); /* bottom nav */
   --accent-glow:0 2px 12px rgba(34,199,224,.38);     /* soft halo for primary CTAs */
   --radius:12px;
   /* Safe-area insets so the bottom nav clears the iPhone home indicator. */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
+}
+
+/* ---------------------------------------------------------------------------
+   Light theme — a premium, warm-neutral take rather than a flat #fff wash.
+   The elevation ladder inverts (soft off-white bg < pure-white panels), the
+   teal accent deepens so links/active states stay legible on white, and the
+   dark UI's black drop shadows become soft slate shadows so cards float rather
+   than smudge. Status colors switch to dark-text-on-pale-tint pairs for AA
+   contrast. theme.js sets data-theme="light" on <html>.
+---------------------------------------------------------------------------- */
+:root[data-theme="light"] {
+  --bg:#f4f6f9;        /* soft cool off-white, never glaring */
+  --panel:#ffffff;     /* cards / bars sit crisp and bright above the bg */
+  --elevated:#ffffff;  /* sheets — separated from panels by shadow, not color */
+  --control:#eef1f6;   /* inputs read as gently recessed */
+  --line:#e4e8ef;      /* hairlines — visible but quiet */
+  --line-strong:#cfd6e0;
+  --txt:#19212e; --muted:#5e6976;
+  /* Deepen the teal to petrol: the bright brand cyan can't carry white ink or
+     read as link text on white (it fails WCAG AA), so on light we drop to a
+     deep teal. accent (links/active) hits ~5.5:1 on white; the slightly lighter
+     gradient top still clears AA-large for the bold button label. */
+  --accent:#0a7385;            /* links, active states — ~5.5:1 on white */
+  --accent-hi:#0d8a9f;         /* lighter top of the primary-button gradient */
+  --accent-press:#075e6d;
+  --on-accent:#ffffff;         /* white ink reads crisp on the petrol fill */
+  --accent-soft:#e1f4f8;       /* pale teal tint for selected chips/pills */
+  --accent-soft-txt:#0a6c7e;   /* deep teal text on the tint + prices */
+  --accent-glow:0 2px 14px rgba(10,115,133,.28);
+  --edit:#fff7dc; --edit-border:#e0c14e; --flag:#fdecee; --ok:#e7f6ec;
+  --danger:#cf4d55;
+
+  --ok-txt:#1c7a3e;     --ok-border:#a8dcb9;
+  --flag-txt:#c23842;   --flag-border:#f0bcc0;
+  --review-txt:#8a6200; --review-border:#ead08a;
+  --warn:#dd8500;       --warn-ink:#3a2600;
+  --ai-border:#c6c9ee;  --ai-txt:#4a4fc4;
+  --editor-chip-border:#aebfd8;
+  --notice-bg:#fdf3dd;  --notice-txt:#8a5a00;  --notice-border:#ecd39c;
+  --scrim:rgba(20,27,40,.38);
+  --shimmer-1:#eef1f6;  --shimmer-2:#e1e6ee;  --thumb-bg:#f1f3f7;
+  --body-grad-top:#ffffff;
+  --toast-bg:#1d232e;   --toast-txt:#f2f5fa;  --toast-line:#2f3845;
+  --theme-color:#ffffff;
+
+  /* Soft slate shadows instead of black; the lit top edge is nearly invisible
+     on white so we lean on the drop shadow for elevation. */
+  --hi:inset 0 1px 0 rgba(255,255,255,.6);
+  --shadow-card:0 1px 2px rgba(20,27,40,.06), 0 2px 6px rgba(20,27,40,.05);
+  --shadow-pop:0 12px 40px rgba(20,27,40,.16);
+  --shadow-bar:0 1px 3px rgba(20,27,40,.07);
+  --shadow-nav:0 -1px 0 rgba(20,27,40,.04), 0 -8px 22px rgba(20,27,40,.07);
 }
 
 * { box-sizing:border-box; }
@@ -61,7 +141,7 @@ body {
   margin:0; color:var(--txt);
   /* Subtle top-lit gradient backdrop instead of a flat fill — adds quiet depth
      behind the content. Fixed so it doesn't scroll with the grid. */
-  background:linear-gradient(180deg, #161b26 0%, var(--bg) 55%) fixed, var(--bg);
+  background:linear-gradient(180deg, var(--body-grad-top) 0%, var(--bg) 55%) fixed, var(--bg);
   font:15px/1.45 "Inter Variable", system-ui, "Segoe UI", Roboto, sans-serif;
   -webkit-text-size-adjust:100%;
   -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
@@ -90,14 +170,14 @@ button.primary {
 button.primary:active { background:linear-gradient(180deg, var(--accent), var(--accent-press)); }
 button.primary:disabled { box-shadow:none; }
 button.ghost:hover { border-color:var(--accent); }
-button.danger { border-color:var(--danger); color:#ffb3b8; }
+button.danger { border-color:var(--danger); color:var(--flag-txt); }
 a { color:var(--accent); }
 
 /* ---------------- app shell ---------------- */
 .shell { display:flex; flex-direction:column; min-height:100dvh; }
 .topbar {
   position:sticky; top:0; z-index:20; background:var(--panel);
-  border-bottom:1px solid var(--line); box-shadow:0 2px 10px rgba(0,0,0,.3);
+  border-bottom:1px solid var(--line); box-shadow:var(--shadow-bar);
   padding:calc(10px + var(--safe-top)) 14px 10px;
   display:flex; align-items:center; gap:10px;
 }
@@ -107,18 +187,18 @@ a { color:var(--accent); }
   font-size:11px; padding:2px 8px; border-radius:10px;
   border:1px solid var(--line); color:var(--muted);
 }
-.rolechip.admin { color:#ffd479; border-color:#6b5600; }
-.rolechip.editor { color:var(--accent-soft-txt); border-color:#274a73; }
+.rolechip.admin { color:var(--review-txt); border-color:var(--review-border); }
+.rolechip.editor { color:var(--accent-soft-txt); border-color:var(--editor-chip-border); }
 .rolechip.viewer { color:var(--muted); }
 
 .content { flex:1; padding:12px 12px calc(78px + var(--safe-bottom)); }
 
 /* Offline banner (thin bar under the top bar). */
 .offline-banner { position:sticky; top:0; z-index:21; text-align:center; font-size:12.5px;
-  padding:6px 10px; background:#3a2a12; color:#ffcf8a; border-bottom:1px solid #6e4a1f; }
+  padding:6px 10px; background:var(--notice-bg); color:var(--notice-txt); border-bottom:1px solid var(--notice-border); }
 /* Inline offline note inside the editor sheet. */
 .ed-offline { font-size:12.5px; padding:8px 10px; border-radius:8px;
-  background:#3a2a12; color:#ffcf8a; border:1px solid #6e4a1f; }
+  background:var(--notice-bg); color:var(--notice-txt); border:1px solid var(--notice-border); }
 
 /* Back-to-top floating button (sits above the bottom bar). */
 .fab-top {
@@ -126,7 +206,7 @@ a { color:var(--accent); }
   width:46px; height:46px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
   background:var(--panel); color:var(--txt); border:1px solid var(--line);
-  box-shadow:0 4px 14px #0007;
+  box-shadow:var(--shadow-pop);
 }
 .fab-top:active { transform:translateY(1px); }
 
@@ -134,7 +214,7 @@ a { color:var(--accent); }
 .bottomnav {
   position:fixed; left:0; right:0; bottom:0; z-index:30;
   background:var(--panel); border-top:1px solid var(--line);
-  box-shadow:0 -1px 0 rgba(255,255,255,.04), 0 -6px 20px rgba(0,0,0,.3);
+  box-shadow:var(--shadow-nav);
   display:flex; padding-bottom:var(--safe-bottom);
 }
 .bottomnav button {
@@ -169,8 +249,8 @@ a { color:var(--accent); }
 .auth input { width:100%; }
 .auth button.primary { width:100%; margin-top:18px; padding:11px; }
 .auth .msg { margin-top:14px; font-size:13px; min-height:18px; }
-.auth .msg.err { color:#ffb3b8; }
-.auth .msg.ok { color:#86e8a0; }
+.auth .msg.err { color:var(--flag-txt); }
+.auth .msg.ok { color:var(--ok-txt); }
 /* Editor "what the labels mean" legend. */
 .legend-btn { display:block; margin-top:8px; font-size:13px; }
 .legend { display:flex; flex-direction:column; gap:2px; }
@@ -193,10 +273,10 @@ a { color:var(--accent); }
   aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
   overflow:hidden; cursor:zoom-in; position:relative;
   /* shimmer placeholder until the photo loads (prevents the grid from jumping) */
-  background:linear-gradient(110deg, #14161c 30%, #1b1e26 50%, #14161c 70%);
+  background:linear-gradient(110deg, var(--shimmer-1) 30%, var(--shimmer-2) 50%, var(--shimmer-1) 70%);
   background-size:200% 100%; animation:shimmer 1.4s linear infinite;
 }
-.card .thumb.loaded { background:#000; animation:none; }
+.card .thumb.loaded { background:var(--thumb-bg); animation:none; }
 @keyframes shimmer { to { background-position:-200% 0; } }
 /* selection mode */
 .card .selcheck {
@@ -210,7 +290,7 @@ a { color:var(--accent); }
 .card.selected .selcheck { background:var(--accent); border-color:var(--accent); color:#fff; }
 /* low-confidence triage dot */
 .card .lowdot { position:absolute; top:6px; right:6px; width:11px; height:11px; border-radius:50%;
-  background:#ffb020; box-shadow:0 0 0 2px #0009; }
+  background:var(--warn); box-shadow:0 0 0 2px #0009; }
 
 /* Skeleton loading cards — reuse the card shell + thumb shimmer so the grid
    doesn't jump when real data arrives. The thumb shimmers for free (no .loaded);
@@ -218,7 +298,7 @@ a { color:var(--accent); }
 .grid > .empty { grid-column:1 / -1; } /* let an empty/zero state span all columns */
 .sk-card .thumb { cursor:default; }
 .sk-line { height:10px; border-radius:5px; margin-top:8px;
-  background:linear-gradient(110deg, #14161c 30%, #1b1e26 50%, #14161c 70%);
+  background:linear-gradient(110deg, var(--shimmer-1) 30%, var(--shimmer-2) 50%, var(--shimmer-1) 70%);
   background-size:200% 100%; animation:shimmer 1.4s linear infinite; }
 .sk-line.w70 { width:70%; }
 .sk-line.w45 { width:45%; }
@@ -249,11 +329,11 @@ a { color:var(--accent); }
   .fb-search { flex:1 1 240px; width:auto; }
   .fb-controls { flex:0 0 auto; }
 }
-.filterbar .aifill { white-space:nowrap; border-color:#3a3f73; color:#c3c9ff; }
+.filterbar .aifill { white-space:nowrap; border-color:var(--ai-border); color:var(--ai-txt); }
 .filterbar .aifill:hover { border-color:var(--accent); }
 
 /* ---------------- bulk AI modal ---------------- */
-.bulkai { position:fixed; inset:0; z-index:65; background:#0009; display:flex;
+.bulkai { position:fixed; inset:0; z-index:65; background:var(--scrim); display:flex;
   align-items:center; justify-content:center; padding:18px; }
 .bulkai-panel { width:100%; max-width:460px; background:var(--elevated);
   border:1px solid var(--line); box-shadow:var(--shadow-pop); border-radius:14px; padding:18px; }
@@ -261,7 +341,7 @@ a { color:var(--accent); }
 .bulkai-panel .sub { color:var(--muted); font-size:13px; margin:0 0 12px; }
 .bulkai-panel .note { color:var(--muted); font-size:12px; margin:10px 0 0; }
 .bulkai-panel .chk { display:flex; gap:8px; align-items:center; font-size:14px; margin-top:8px; }
-.bulkai-warn { background:var(--flag); border:1px solid #6e2329; color:#ffd0d3;
+.bulkai-warn { background:var(--flag); border:1px solid var(--flag-border); color:var(--flag-txt);
   padding:9px 11px; border-radius:8px; font-size:13px; margin-top:12px; }
 .bulkai-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
 .bulkai-bar { height:8px; background:var(--control); border:1px solid var(--line);
@@ -281,7 +361,7 @@ a { color:var(--accent); }
 .user-row.inactive { opacity:.6; }
 .user-top { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
 .user-email { font-weight:600; word-break:break-all; }
-.user-off { font-size:11px; color:#ffb3b8; border:1px solid #6e2329; border-radius:10px; padding:0 6px; margin-left:4px; }
+.user-off { font-size:11px; color:var(--flag-txt); border:1px solid var(--flag-border); border-radius:10px; padding:0 6px; margin-left:4px; }
 .user-actions { margin-top:8px; display:flex; justify-content:flex-end; }
 .user-actions .user-deact { font-size:13px; padding:6px 10px; }
 
@@ -292,7 +372,7 @@ a { color:var(--accent); }
 .user-add-row select { flex:0 0 auto; }
 .user-caps { display:flex; flex-wrap:wrap; gap:10px; }
 .user-caps label { display:flex; align-items:center; gap:5px; font-size:13px; color:var(--muted); }
-.users-status { color:#86e8a0; font-size:13px; min-height:18px; margin-top:8px; text-align:right; }
+.users-status { color:var(--ok-txt); font-size:13px; min-height:18px; margin-top:8px; text-align:right; }
 .count { color:var(--muted); font-size:12px; margin-bottom:8px; }
 .card { cursor:pointer;
   /* Stop the browser's long-press callout / text selection so our long-press
@@ -301,9 +381,9 @@ a { color:var(--accent); }
 .card img { pointer-events:none; -webkit-user-drag:none; }
 .card .cardtop { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:2px; }
 .stbadge { font-size:10px; padding:1px 6px; border-radius:10px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
-.stbadge.st-ok { color:#86e8a0; border-color:#22643a; }
-.stbadge.st-flag { color:#ffb3b8; border-color:#6e2329; }
-.stbadge.st-review { color:#ffd479; border-color:#6b5600; }
+.stbadge.st-ok { color:var(--ok-txt); border-color:var(--ok-border); }
+.stbadge.st-flag { color:var(--flag-txt); border-color:var(--flag-border); }
+.stbadge.st-review { color:var(--review-txt); border-color:var(--review-border); }
 .stbadge.st-draft { color:var(--muted); }
 .card .cbrand { font-weight:600; line-height:1.25; }
 .card .cattr { font-size:13px; color:var(--txt); }
@@ -346,7 +426,7 @@ a { color:var(--accent); }
 .ab-ico { font-size:20px; line-height:1; }
 
 /* bottom sheets (filters / status / more) */
-.msheet { position:fixed; inset:0; z-index:60; background:#0009; display:flex;
+.msheet { position:fixed; inset:0; z-index:60; background:var(--scrim); display:flex;
   align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
 .msheet.open { opacity:1; }
 .msheet-panel { width:100%; max-width:520px; max-height:88dvh; display:flex; flex-direction:column;
@@ -368,8 +448,22 @@ a { color:var(--accent); }
 .sheet-clear { margin-top:14px; }
 .menu-item { width:100%; text-align:left; padding:13px 12px; border:1px solid var(--line);
   border-radius:10px; background:var(--control); color:var(--txt); }
-.menu-item.danger { color:#ffb3b8; border-color:#6e2329; }
+.menu-item.danger { color:var(--flag-txt); border-color:var(--flag-border); }
 .menu-sub { color:var(--muted); font-size:12px; margin-bottom:2px; }
+/* Right-aligned current-value hint on a settings-style menu row (e.g. Appearance → "System"). */
+.menu-item:has(.menu-val) { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.menu-val { color:var(--muted); font-size:13px; }
+
+/* Appearance picker rows: icon · name/description · check. The active row gets
+   an accent tint + outline so the current choice reads at a glance. */
+.theme-opt { display:flex; align-items:center; gap:12px; }
+.theme-opt .ico { flex:0 0 auto; color:var(--muted); display:inline-flex; }
+.theme-opt-txt { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; }
+.theme-opt-name { font-weight:600; line-height:1.2; }
+.theme-opt .menu-sub { margin:1px 0 0; }
+.theme-opt .theme-check { flex:0 0 auto; color:var(--accent); display:inline-flex; min-width:20px; }
+.theme-opt.on { border-color:var(--accent); background:var(--accent-soft); }
+.theme-opt.on .ico, .theme-opt.on .theme-opt-name { color:var(--accent-soft-txt); }
 
 /* Confirm/prompt dialogs (ui.js) — reuse the .msheet shell but sit above every
    other overlay (.screen=70, .bulkai/.webcam=65, .sheet=55) since they can be
@@ -393,7 +487,7 @@ a { color:var(--accent); }
 .cat-name { font-weight:600; }
 .cat-acts { display:flex; gap:6px; flex-wrap:wrap; }
 .cat-acts .chip { font-size:12px; }
-.chip.danger { color:#ffb3b8; border-color:#6e2329; }
+.chip.danger { color:var(--flag-txt); border-color:var(--flag-border); }
 .scbtn { width:100%; }
 .cm-form { display:flex; flex-direction:column; }
 .cm-form input, .cm-form select { width:100%; }
@@ -420,7 +514,7 @@ a { color:var(--accent); }
 
 /* upload preview grid + progress */
 .up-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(72px, 1fr)); gap:6px; margin:10px 0; }
-.up-thumb { position:relative; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#000; }
+.up-thumb { position:relative; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:var(--thumb-bg); }
 .up-thumb img { width:100%; height:100%; object-fit:cover; }
 .up-x { position:absolute; top:4px; right:4px; width:30px; height:30px; border-radius:50%;
   background:#000a; color:#fff; border:none; font-size:14px; display:flex; align-items:center; justify-content:center; }
@@ -428,7 +522,7 @@ a { color:var(--accent); }
 .up-bar #barFill { height:100%; width:0; background:var(--accent); transition:width .2s; }
 .up-stats { font-size:13px; color:var(--muted); margin-bottom:12px; }
 .up-done { font-size:15px; margin:8px 0 14px; }
-.up-err { color:#ffb3b8; font-size:12px; margin-top:6px; word-break:break-word; }
+.up-err { color:var(--flag-txt); font-size:12px; margin-top:6px; word-break:break-word; }
 .up-actions { display:flex; flex-direction:column; gap:8px; }
 .up-actions .up-go { margin-top:0; }
 
@@ -510,7 +604,7 @@ a { color:var(--accent); }
 /* Count badge on the Review bottom-nav tab. */
 .bottomnav button { position:relative; }
 .navbadge { position:absolute; top:4px; left:50%; margin-left:4px; min-width:16px; height:16px;
-  padding:0 4px; border-radius:8px; background:#ffb020; color:#1a1206; font-size:10px; font-weight:700;
+  padding:0 4px; border-radius:8px; background:var(--warn); color:var(--warn-ink); font-size:10px; font-weight:700;
   display:flex; align-items:center; justify-content:center; }
 /* Count badge on the Filters button (number of active filters). */
 .fcount { position:absolute; top:2px; right:2px; min-width:16px; height:16px; padding:0 4px;
@@ -519,7 +613,7 @@ a { color:var(--accent); }
 /* Count badge on the Review bottom-nav tab. */
 .bottomnav button { position:relative; }
 .navbadge { position:absolute; top:4px; left:50%; margin-left:4px; min-width:16px; height:16px;
-  padding:0 4px; border-radius:8px; background:#ffb020; color:#1a1206; font-size:10px; font-weight:700;
+  padding:0 4px; border-radius:8px; background:var(--warn); color:var(--warn-ink); font-size:10px; font-weight:700;
   display:flex; align-items:center; justify-content:center; }
 
 /* ---------------- grouping view ---------------- */
@@ -542,7 +636,7 @@ a { color:var(--accent); }
 .grp .grid { padding:10px 2px 4px; }
 
 /* ---------------- edit sheet ---------------- */
-.sheet { position:fixed; inset:0; z-index:55; background:#0008; display:flex;
+.sheet { position:fixed; inset:0; z-index:55; background:var(--scrim); display:flex;
          align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
 .sheet.open { opacity:1; }
 .sheet-panel {
@@ -562,7 +656,7 @@ a { color:var(--accent); }
 .sheet-img { aspect-ratio:1/1; max-height:38dvh; display:flex; justify-content:center; margin-bottom:12px; }
 .sheet-img img { max-width:100%; max-height:38dvh; object-fit:contain; border-radius:8px; }
 
-.aibtn { width:100%; margin-bottom:12px; border-color:#3a3f73; color:#c3c9ff; }
+.aibtn { width:100%; margin-bottom:12px; border-color:var(--ai-border); color:var(--ai-txt); }
 .aibtn:hover { border-color:var(--accent); }
 .aibtn:disabled { opacity:.6; }
 .status-row { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
@@ -573,23 +667,23 @@ a { color:var(--accent); }
 .frow label { color:var(--muted); font-size:13px; }
 .fctl { display:flex; gap:6px; align-items:center; }
 .fctl input:not([type=checkbox]), .fctl select { flex:1; width:100%; }
-.fctl input.changed, .fctl select.changed { background:var(--edit); border-color:#a98b00; }
+.fctl input.changed, .fctl select.changed { background:var(--edit); border-color:var(--edit-border); }
 .field-sec { margin:16px 0 8px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
-.adminonly { color:#ffd479; text-transform:none; letter-spacing:0; }
+.adminonly { color:var(--review-txt); text-transform:none; letter-spacing:0; }
 
 .conf-pill { width:32px; height:32px; padding:0; border-radius:50%; font-size:12px; color:var(--muted); flex:0 0 auto; border:1px solid var(--line); background:var(--control); }
-.conf-pill.conf-high { color:#86e8a0; border-color:#22643a; }
-.conf-pill.conf-medium { color:#ffd479; border-color:#6b5600; }
-.conf-pill.conf-low { color:#ffb3b8; border-color:#6e2329; }
+.conf-pill.conf-high { color:var(--ok-txt); border-color:var(--ok-border); }
+.conf-pill.conf-medium { color:var(--review-txt); border-color:var(--review-border); }
+.conf-pill.conf-low { color:var(--flag-txt); border-color:var(--flag-border); }
 
 .del-btn { width:100%; margin-top:18px; }
 .sku-line { margin-top:14px; font-size:13px; color:var(--txt); }
-.dup-warn { background:var(--flag); border:1px solid #6e2329; color:#ffb3b8;
+.dup-warn { background:var(--flag); border:1px solid var(--flag-border); color:var(--flag-txt);
             padding:8px 10px; border-radius:8px; font-size:13px; margin-bottom:12px; }
 
 /* toast */
 #toast { position:fixed; left:50%; bottom:calc(86px + var(--safe-bottom)); transform:translateX(-50%);
-  background:#000d; border:1px solid var(--line); color:var(--txt); padding:10px 16px;
+  background:var(--toast-bg); border:1px solid var(--toast-line); color:var(--toast-txt); padding:10px 16px;
   border-radius:10px; font-size:13px; z-index:90; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; text-align:center; }
 #toast.show { opacity:1; }
 

@@ -336,7 +336,7 @@ export async function renderUpload(view, caps, onDone) {
   function paintRun(p, total, done, failed) {
     if (!barFill?.isConnected) return;
     barFill.style.width = `${total ? Math.round((p / total) * 100) : 0}%`;
-    runStats.innerHTML = `${p}/${total} processed · <b>${done}</b> added${failed ? ` · <span style="color:#ffb3b8">${failed} failed</span>` : ""}`;
+    runStats.innerHTML = `${p}/${total} processed · <b>${done}</b> added${failed ? ` · <span style="color:var(--flag-txt)">${failed} failed</span>` : ""}`;
   }
 
   async function startUpload(list) {

@@ -2,6 +2,12 @@ import "@fontsource-variable/inter"; // self-hosted (offline-capable PWA), no ex
 import "./styles.css";
 import { registerSW } from "virtual:pwa-register";
 import { isConfigured } from "./db.js";
+import { initTheme } from "./theme.js";
+
+// Resolve light/dark/system and keep the status bar in sync. index.html applies
+// the saved theme inline before paint (no flash); this re-asserts it and starts
+// listening for OS appearance changes.
+initTheme();
 
 // Register the service worker (auto-updates on new deploys). No-op in dev.
 registerSW({ immediate: true });

@@ -101,7 +101,7 @@ async function runBatch(modal, items, onlyEmpty, onDone, close) {
   function paint() {
     bar.style.width = `${Math.round((done / total) * 100)}%`;
     statsEl.innerHTML =
-      `${done}/${total} processed · <b>${filled}</b> filled · ${skipped} skipped${failed ? ` · <span style="color:#ffb3b8">${failed} failed</span>` : ""}`;
+      `${done}/${total} processed · <b>${filled}</b> filled · ${skipped} skipped${failed ? ` · <span style="color:var(--flag-txt)">${failed} failed</span>` : ""}`;
   }
   function logLine(html) {
     const div = document.createElement("div");
@@ -180,7 +180,7 @@ async function runBatch(modal, items, onlyEmpty, onDone, close) {
       }
     } catch (e) {
       failed++;
-      logLine(`<span style="color:#ffb3b8">✕ ${label} — ${esc(e?.message || e)}</span>`);
+      logLine(`<span style="color:var(--flag-txt)">✕ ${label} — ${esc(e?.message || e)}</span>`);
     } finally {
       done++;
       paint();
