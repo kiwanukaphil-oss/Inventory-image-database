@@ -39,6 +39,10 @@ them up. Grouped by "deferred" (consciously skipped during a phase) and
   - ✅ Keep-alive cron (`.github/workflows/keepalive.yml`, pings Supabase every 3 days).
   - ✅ CSV export (current catalogue + change log) — Export tab.
   - ✅ Bulk status change + bulk delete on the selection bar.
-  - ⬜ Two-level grouping (category › subcategory, collapsible) — last Phase 6 item.
+  - ✅ Two-level grouping (Groups tab: pick two dimensions, collapsible, counts).
+
+**Phase 6 complete.** Remaining work is all in "Deferred" above (AI-on-upload,
+offline queue, desktop webcam, in-app field editor, triage dot, currency,
+custom date range, audit history view).
 
 _Last updated: 2026-06-06 (after Phase 4)._

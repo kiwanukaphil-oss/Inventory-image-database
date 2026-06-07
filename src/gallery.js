@@ -85,6 +85,7 @@ export function renderApp(mount, profile, onSignOut) {
         renderGallery(view, caps);
       });
     else if (id === "export") renderExport(view, caps);
+    else if (id === "groups") renderGroups(view, caps);
     else renderComingSoon(view, id);
   }
 
@@ -457,6 +458,136 @@ async function renderGallery(view, caps) {
       openBulkAi(filtered, caps, () => renderGallery(view, caps));
   }
 
+  draw();
+}
+
+// Dimensions you can group by in the Groups view.
+const GROUP_DIMS = [
+  { v: "top", label: "Top category" },
+  { v: "category", label: "Category" },
+  { v: "brand", label: "Brand" },
+  { v: "status", label: "Status" },
+  { v: "color", label: "Colour" },
+];
+
+// Two-level grouping view: collapsible Category › Subcategory (or any two
+// chosen dimensions), with counts. Cards open the editor; photos the lightbox.
+async function renderGroups(view, caps) {
+  view.innerHTML = `<div class="spinner"></div>`;
+  await loadRefData();
+  const { data, error } = await supabase
+    .from("items")
+    .select("id, name, brand, sku, price, status, image_path, attributes, category_id")
+    .order("created_at", { ascending: false })
+    .limit(2000);
+  if (error) {
+    view.innerHTML = `<div class="empty"><div class="big">⚠️</div><div>Couldn't load items.</div>
+      <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
+    return;
+  }
+
+  // Signed thumbnails (batched).
+  const paths = data.filter((d) => d.image_path).map((d) => d.image_path);
+  const signed = {};
+  if (paths.length) {
+    const { data: urls } = await supabase.storage.from("product-images").createSignedUrls(paths, 3600);
+    (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
+  }
+
+  view.innerHTML = `
+    <div class="filterbar">
+      <input id="gq" class="fb-search" type="search" placeholder="Search…">
+      <div class="fb-controls">
+        <label class="grouplbl">Group by</label>
+        <select id="g1">${GROUP_DIMS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}</select>
+        <label class="grouplbl">then</label>
+        <select id="g2"><option value="none">(none)</option>${GROUP_DIMS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}</select>
+      </div>
+    </div>
+    <div class="count" id="gcount"></div>
+    <div id="groups"></div>`;
+
+  const groupsEl = view.querySelector("#groups");
+  const gq = view.querySelector("#gq");
+  const g1 = view.querySelector("#g1");
+  const g2 = view.querySelector("#g2");
+  g1.value = "top";
+  g2.value = "category";
+
+  const dimValue = (it, dim) => {
+    const path = categoryPath(it.category_id) || "—";
+    if (dim === "top") return path.split(" › ")[0] || "—";
+    if (dim === "category") return path.split(" › ").pop() || "—";
+    if (dim === "brand") return it.brand || "—";
+    if (dim === "status") return it.status || "—";
+    if (dim === "color") return it.attributes?.color || "—";
+    return "—";
+  };
+
+  function cardHtml(it, slides) {
+    const url = signed[it.image_path];
+    let slot = -1;
+    const variant = summarizeItem(it);
+    const title = it.brand || it.name || "—";
+    if (url) { slot = slides.length; slides.push({ url, caption: esc([title, variant].filter(Boolean).join(" · ")) }); }
+    const thumb = url
+      ? `<div class="thumb" data-slide="${slot}"><img loading="lazy" src="${url}" alt="${esc(title)}"></div>`
+      : `<div class="thumb"><span style="color:var(--muted);font-size:12px">no image</span></div>`;
+    return `<div class="card" data-id="${it.id}">${thumb}<div class="body">
+      <div class="cbrand">${esc(title)}</div>
+      ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
+      ${it.price != null ? `<div class="cprice">${fmtPrice(it.price)}</div>` : ""}
+    </div></div>`;
+  }
+
+  function draw() {
+    const q = gq.value.trim().toLowerCase();
+    const rows = data.filter((it) => {
+      if (!q) return true;
+      const hay = [it.brand, it.name, it.sku, ...Object.values(it.attributes || {})].join(" ").toLowerCase();
+      return hay.includes(q);
+    });
+    const d1 = g1.value;
+    const d2 = g2.value;
+    const slides = [];
+
+    // Build primary -> secondary -> items.
+    const groups = new Map();
+    for (const it of rows) {
+      const p = dimValue(it, d1);
+      const s = d2 === "none" ? "__all__" : dimValue(it, d2);
+      if (!groups.has(p)) groups.set(p, new Map());
+      const sub = groups.get(p);
+      if (!sub.has(s)) sub.set(s, []);
+      sub.get(s).push(it);
+    }
+
+    const html = [...groups.keys()].sort().map((p) => {
+      const sub = groups.get(p);
+      const pCount = [...sub.values()].reduce((a, arr) => a + arr.length, 0);
+      const inner = d2 === "none"
+        ? `<div class="grid">${sub.get("__all__").map((it) => cardHtml(it, slides)).join("")}</div>`
+        : [...sub.keys()].sort().map((s) =>
+            `<details class="grp grp2"><summary>${esc(s)} <span class="gcount">${sub.get(s).length}</span></summary>
+              <div class="grid">${sub.get(s).map((it) => cardHtml(it, slides)).join("")}</div></details>`
+          ).join("");
+      return `<details class="grp grp1" open><summary>${esc(p)} <span class="gcount">${pCount}</span></summary>${inner}</details>`;
+    }).join("");
+
+    groupsEl.innerHTML = html || `<div class="empty"><div>No items.</div></div>`;
+    groupsEl._slides = slides;
+    view.querySelector("#gcount").textContent = `${rows.length} item${rows.length === 1 ? "" : "s"}`;
+  }
+
+  groupsEl.addEventListener("click", (e) => {
+    const thumb = e.target.closest(".thumb[data-slide]");
+    if (thumb) { openLightbox(groupsEl._slides, Number(thumb.dataset.slide)); return; }
+    const card = e.target.closest(".card[data-id]");
+    if (card) openEditor(card.dataset.id, caps, () => renderGroups(view, caps));
+  });
+  gq.addEventListener("input", draw);
+  g1.addEventListener("change", draw);
+  g2.addEventListener("change", draw);
   draw();
 }
 

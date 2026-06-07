@@ -212,6 +212,25 @@ a { color:var(--accent); }
 .up-go { width:100%; margin-top:16px; padding:12px; }
 .progress { text-align:center; color:var(--muted); font-size:13px; margin-top:12px; min-height:18px; }
 
+/* ---------------- grouping view ---------------- */
+.grouplbl { font-size:13px; color:var(--muted); align-self:center; }
+.grp { margin-bottom:8px; }
+.grp > summary {
+  cursor:pointer; list-style:none; padding:9px 11px; border:1px solid var(--line);
+  border-radius:8px; background:var(--panel); font-weight:600;
+  display:flex; align-items:center; gap:8px;
+}
+.grp > summary::-webkit-details-marker { display:none; }
+.grp > summary::before { content:"▸"; color:var(--muted); transition:transform .15s; }
+.grp[open] > summary::before { transform:rotate(90deg); }
+.grp .gcount { color:var(--muted); font-weight:400; font-size:12px;
+  border:1px solid var(--line); border-radius:10px; padding:0 7px; }
+.grp1 > summary { font-size:15px; }
+.grp1 { border-left:2px solid var(--accent); padding-left:8px; border-radius:8px; }
+.grp2 { margin:8px 0 8px 6px; }
+.grp2 > summary { font-size:13px; font-weight:500; }
+.grp .grid { padding:10px 2px 4px; }
+
 /* ---------------- edit sheet ---------------- */
 .sheet { position:fixed; inset:0; z-index:55; background:#0008; display:flex;
          align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
