@@ -2,7 +2,7 @@ import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
-import { loadRefData, resolveFields, categoryPath } from "./data.js";
+import { loadRefData, resolveFields, categoryPath, fieldLabel } from "./data.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -37,7 +37,7 @@ function summarizeItem(it) {
 const NAV = [
   { id: "gallery", label: "Gallery", ico: "▦" },
   { id: "add", label: "Add", ico: "＋" },
-  { id: "groups", label: "Groups", ico: "☰" },
+  { id: "find", label: "Find", ico: "🔎" },
   { id: "export", label: "Export", ico: "⤓" },
 ];
 
@@ -85,7 +85,7 @@ export function renderApp(mount, profile, onSignOut) {
         renderGallery(view, caps);
       });
     else if (id === "export") renderExport(view, caps);
-    else if (id === "groups") renderGroups(view, caps);
+    else if (id === "find") renderFind(view, caps);
     else renderComingSoon(view, id);
   }
 
@@ -461,18 +461,14 @@ async function renderGallery(view, caps) {
   draw();
 }
 
-// Dimensions you can group by in the Groups view.
-const GROUP_DIMS = [
-  { v: "top", label: "Top category" },
-  { v: "category", label: "Category" },
-  { v: "brand", label: "Brand" },
-  { v: "status", label: "Status" },
-  { v: "color", label: "Colour" },
-];
+// ---- Find tab: faceted finder (AND across facets / OR within), group-by, saved views ----
+const SAVED_VIEWS_KEY = "kline_saved_views_v1";
+function loadSavedViews() {
+  try { return JSON.parse(localStorage.getItem(SAVED_VIEWS_KEY)) || []; } catch { return []; }
+}
+function storeSavedViews(v) { localStorage.setItem(SAVED_VIEWS_KEY, JSON.stringify(v)); }
 
-// Two-level grouping view: collapsible Category › Subcategory (or any two
-// chosen dimensions), with counts. Cards open the editor; photos the lightbox.
-async function renderGroups(view, caps) {
+async function renderFind(view, caps) {
   view.innerHTML = `<div class="spinner"></div>`;
   await loadRefData();
   const { data, error } = await supabase
@@ -494,35 +490,75 @@ async function renderGroups(view, caps) {
     (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
   }
 
-  view.innerHTML = `
-    <div class="filterbar">
-      <input id="gq" class="fb-search" type="search" placeholder="Search…">
-      <div class="fb-controls">
-        <label class="grouplbl">Group by</label>
-        <select id="g1">${GROUP_DIMS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}</select>
-        <label class="grouplbl">then</label>
-        <select id="g2"><option value="none">(none)</option>${GROUP_DIMS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}</select>
-      </div>
-    </div>
-    <div class="count" id="gcount"></div>
-    <div id="groups"></div>`;
-
-  const groupsEl = view.querySelector("#groups");
-  const gq = view.querySelector("#gq");
-  const g1 = view.querySelector("#g1");
-  const g2 = view.querySelector("#g2");
-  g1.value = "top";
-  g2.value = "category";
-
-  const dimValue = (it, dim) => {
-    const path = categoryPath(it.category_id) || "—";
-    if (dim === "top") return path.split(" › ")[0] || "—";
-    if (dim === "category") return path.split(" › ").pop() || "—";
-    if (dim === "brand") return it.brand || "—";
-    if (dim === "status") return it.status || "—";
-    if (dim === "color") return it.attributes?.color || "—";
-    return "—";
+  // The value of a given facet key for an item.
+  const valueOf = (it, key) => {
+    if (key === "brand") return it.brand || "";
+    if (key === "status") return it.status || "";
+    if (key === "top") return (categoryPath(it.category_id) || "").split(" › ")[0] || "";
+    if (key === "category") return (categoryPath(it.category_id) || "").split(" › ").pop() || "";
+    const v = it.attributes?.[key];
+    return v === null || v === undefined ? "" : String(v);
   };
+
+  // Build the facet list: base fields + every attribute key present, keeping
+  // only facets that actually have ≥2 distinct values (otherwise nothing to filter).
+  const attrKeys = [...new Set(data.flatMap((it) => Object.keys(it.attributes || {})))];
+  const candidates = [
+    { key: "top", label: "Top category" },
+    { key: "category", label: "Category" },
+    { key: "brand", label: "Brand" },
+    { key: "status", label: "Status" },
+    ...attrKeys.map((k) => ({ key: k, label: fieldLabel(k) })),
+  ];
+  const cmp = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+  const facets = [];
+  for (const f of candidates) {
+    const values = [...new Set(data.map((it) => valueOf(it, f.key)).filter(Boolean))].sort(cmp);
+    if (values.length >= 2) facets.push({ ...f, values });
+  }
+  const facetByKey = Object.fromEntries(facets.map((f) => [f.key, f]));
+
+  const active = {}; // facetKey -> Set(values); AND across keys, OR within a key
+  const facetFilter = {}; // facetKey -> typed text to narrow that facet's chips
+  let q = "";
+  let groupBy = "none";
+
+  view.innerHTML = `
+    <div class="find">
+      <input id="fq" class="fb-search" type="search" placeholder="Search…">
+      <div class="find-row">
+        <select id="groupBy">
+          <option value="none">No grouping</option>
+          ${facets.map((f) => `<option value="${f.key}">Group: ${esc(f.label)}</option>`).join("")}
+        </select>
+        <button class="ghost" id="saveViewBtn">★ Save view</button>
+      </div>
+      <div class="saved-views" id="savedViews"></div>
+      <div class="active-chips" id="activeChips"></div>
+      <div class="count" id="fcount"></div>
+      <div class="facets" id="facets"></div>
+      <div class="find-results" id="findResults"></div>
+    </div>`;
+
+  const fq = view.querySelector("#fq");
+  const groupSel = view.querySelector("#groupBy");
+  const facetsEl = view.querySelector("#facets");
+  const activeChipsEl = view.querySelector("#activeChips");
+  const resultsEl = view.querySelector("#findResults");
+  const countEl = view.querySelector("#fcount");
+  const savedEl = view.querySelector("#savedViews");
+
+  const textMatch = (it) =>
+    !q || [it.brand, it.name, it.sku, ...Object.values(it.attributes || {})].join(" ").toLowerCase().includes(q);
+  function matches(it, excludeKey) {
+    if (!textMatch(it)) return false;
+    for (const k in active) {
+      if (k === excludeKey) continue;
+      const set = active[k];
+      if (set && set.size && !set.has(valueOf(it, k))) return false;
+    }
+    return true;
+  }
 
   function cardHtml(it, slides) {
     const url = signed[it.image_path];
@@ -540,55 +576,142 @@ async function renderGroups(view, caps) {
     </div></div>`;
   }
 
-  function draw() {
-    const q = gq.value.trim().toLowerCase();
-    const rows = data.filter((it) => {
-      if (!q) return true;
-      const hay = [it.brand, it.name, it.sku, ...Object.values(it.attributes || {})].join(" ").toLowerCase();
-      return hay.includes(q);
-    });
-    const d1 = g1.value;
-    const d2 = g2.value;
-    const slides = [];
-
-    // Build primary -> secondary -> items.
-    const groups = new Map();
-    for (const it of rows) {
-      const p = dimValue(it, d1);
-      const s = d2 === "none" ? "__all__" : dimValue(it, d2);
-      if (!groups.has(p)) groups.set(p, new Map());
-      const sub = groups.get(p);
-      if (!sub.has(s)) sub.set(s, []);
-      sub.get(s).push(it);
+  function renderActiveChips() {
+    const chips = [];
+    for (const k in active) for (const v of active[k]) {
+      chips.push(`<button class="achip" data-facet="${esc(k)}" data-val="${esc(v)}">${esc(facetByKey[k]?.label || k)}: ${esc(v)} ✕</button>`);
     }
-
-    const html = [...groups.keys()].sort().map((p) => {
-      const sub = groups.get(p);
-      const pCount = [...sub.values()].reduce((a, arr) => a + arr.length, 0);
-      const inner = d2 === "none"
-        ? `<div class="grid">${sub.get("__all__").map((it) => cardHtml(it, slides)).join("")}</div>`
-        : [...sub.keys()].sort().map((s) =>
-            `<details class="grp grp2" open><summary>${esc(s)} <span class="gcount">${sub.get(s).length}</span></summary>
-              <div class="grid">${sub.get(s).map((it) => cardHtml(it, slides)).join("")}</div></details>`
-          ).join("");
-      return `<details class="grp grp1" open><summary>${esc(p)} <span class="gcount">${pCount}</span></summary>${inner}</details>`;
-    }).join("");
-
-    groupsEl.innerHTML = html || `<div class="empty"><div>No items.</div></div>`;
-    groupsEl._slides = slides;
-    view.querySelector("#gcount").textContent = `${rows.length} item${rows.length === 1 ? "" : "s"}`;
+    activeChipsEl.innerHTML = chips.length
+      ? chips.join("") + `<button class="achip clear" id="clearAll">Clear all</button>`
+      : "";
   }
 
-  groupsEl.addEventListener("click", (e) => {
-    const thumb = e.target.closest(".thumb[data-slide]");
-    if (thumb) { openLightbox(groupsEl._slides, Number(thumb.dataset.slide)); return; }
-    const card = e.target.closest(".card[data-id]");
-    if (card) openEditor(card.dataset.id, caps, () => renderGroups(view, caps));
+  function renderFacets() {
+    facetsEl.innerHTML = facets.map((f) => {
+      const sel = active[f.key];
+      const ff = facetFilter[f.key] || "";
+      // Counts reflect all OTHER active facets (standard faceted counts).
+      const base = data.filter((it) => matches(it, f.key));
+      const counts = {};
+      for (const it of base) { const v = valueOf(it, f.key); if (v) counts[v] = (counts[v] || 0) + 1; }
+      const chips = f.values.map((v) => {
+        const on = sel?.has(v);
+        const n = counts[v] || 0;
+        if (n === 0 && !on) return ""; // hide values that can't combine with current filters
+        const hide = ff && !v.toLowerCase().includes(ff); // type-to-filter
+        return `<button class="chip ${on ? "on" : ""}"${hide ? ' style="display:none"' : ""} data-facet="${esc(f.key)}" data-val="${esc(v)}">${esc(v)} <span class="chipn">${n}</span></button>`;
+      }).join("");
+      // Only long facets get a type-to-filter box.
+      const filterInput = f.values.length > 8
+        ? `<input class="facet-filter" type="search" data-facet="${esc(f.key)}" placeholder="Type to filter ${esc(f.label.toLowerCase())}…" value="${esc(ff)}">`
+        : "";
+      const badge = sel?.size ? ` <span class="gcount">${sel.size}</span>` : "";
+      return `<details class="facet"${sel?.size || ff ? " open" : ""}><summary>${esc(f.label)}${badge}</summary>${filterInput}<div class="chips">${chips}</div></details>`;
+    }).join("");
+  }
+
+  function renderResults() {
+    const results = data.filter((it) => matches(it, null));
+    countEl.textContent = `${results.length} result${results.length === 1 ? "" : "s"}`;
+    const slides = [];
+    let html;
+    if (groupBy === "none") {
+      html = `<div class="grid">${results.map((it) => cardHtml(it, slides)).join("")}</div>`;
+    } else {
+      const groups = new Map();
+      for (const it of results) {
+        const g = valueOf(it, groupBy) || "—";
+        if (!groups.has(g)) groups.set(g, []);
+        groups.get(g).push(it);
+      }
+      html = [...groups.keys()].sort(cmp).map((g) =>
+        `<details class="grp grp1" open><summary>${esc(g)} <span class="gcount">${groups.get(g).length}</span></summary>
+          <div class="grid">${groups.get(g).map((it) => cardHtml(it, slides)).join("")}</div></details>`
+      ).join("");
+    }
+    resultsEl.innerHTML = results.length ? html : `<div class="empty"><div>No matches.</div></div>`;
+    resultsEl._slides = slides;
+  }
+
+  function renderSavedViews() {
+    const views = loadSavedViews();
+    savedEl.innerHTML = views
+      .map((v, i) => `<span class="sview" data-i="${i}">${esc(v.name)}<span class="sx" data-del="${i}">✕</span></span>`)
+      .join("");
+  }
+
+  const refresh = () => { renderActiveChips(); renderFacets(); renderResults(); };
+
+  function toggleVal(key, val) {
+    if (!active[key]) active[key] = new Set();
+    if (active[key].has(val)) { active[key].delete(val); if (!active[key].size) delete active[key]; }
+    else active[key].add(val);
+    refresh();
+  }
+
+  facetsEl.addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip[data-facet]");
+    if (chip) toggleVal(chip.dataset.facet, chip.dataset.val);
   });
-  gq.addEventListener("input", draw);
-  g1.addEventListener("change", draw);
-  g2.addEventListener("change", draw);
-  draw();
+  // Type-to-filter a facet's chips in place (keeps focus / keyboard open).
+  facetsEl.addEventListener("input", (e) => {
+    const inp = e.target.closest(".facet-filter");
+    if (!inp) return;
+    const key = inp.dataset.facet;
+    const t = inp.value.trim().toLowerCase();
+    facetFilter[key] = t;
+    inp.closest(".facet").querySelectorAll(".chip[data-facet]").forEach((c) => {
+      c.style.display = c.dataset.val.toLowerCase().includes(t) ? "" : "none";
+    });
+  });
+  activeChipsEl.addEventListener("click", (e) => {
+    if (e.target.closest("#clearAll")) { for (const k in active) delete active[k]; refresh(); return; }
+    const chip = e.target.closest(".achip[data-facet]");
+    if (chip) toggleVal(chip.dataset.facet, chip.dataset.val);
+  });
+  resultsEl.addEventListener("click", (e) => {
+    const thumb = e.target.closest(".thumb[data-slide]");
+    if (thumb) { openLightbox(resultsEl._slides, Number(thumb.dataset.slide)); return; }
+    const card = e.target.closest(".card[data-id]");
+    if (card) openEditor(card.dataset.id, caps, () => renderFind(view, caps));
+  });
+  fq.addEventListener("input", () => { q = fq.value.trim().toLowerCase(); refresh(); });
+  groupSel.addEventListener("change", () => { groupBy = groupSel.value; renderResults(); });
+
+  // Saved views (per-device, localStorage).
+  view.querySelector("#saveViewBtn").onclick = () => {
+    const name = prompt("Name this saved view:");
+    if (!name) return;
+    const serial = {};
+    for (const k in active) serial[k] = [...active[k]];
+    const views = loadSavedViews();
+    views.push({ name: name.trim(), active: serial, q, groupBy });
+    storeSavedViews(views);
+    renderSavedViews();
+  };
+  savedEl.addEventListener("click", (e) => {
+    const del = e.target.closest("[data-del]");
+    if (del) {
+      e.stopPropagation();
+      const views = loadSavedViews();
+      views.splice(Number(del.dataset.del), 1);
+      storeSavedViews(views);
+      renderSavedViews();
+      return;
+    }
+    const sv = e.target.closest(".sview[data-i]");
+    if (!sv) return;
+    const v = loadSavedViews()[Number(sv.dataset.i)];
+    if (!v) return;
+    for (const k in active) delete active[k];
+    for (const k in (v.active || {})) active[k] = new Set(v.active[k]);
+    q = v.q || ""; fq.value = q;
+    groupBy = v.groupBy || "none"; groupSel.value = facetByKey[groupBy] ? groupBy : "none";
+    refresh();
+  });
+
+  renderSavedViews();
+  refresh();
 }
 
 // Fallback for any unrouted nav id (all current tabs are implemented).

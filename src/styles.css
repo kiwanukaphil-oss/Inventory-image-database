@@ -212,6 +212,32 @@ a { color:var(--accent); }
 .up-go { width:100%; margin-top:16px; padding:12px; }
 .progress { text-align:center; color:var(--muted); font-size:13px; margin-top:12px; min-height:18px; }
 
+/* ---------------- find / faceted finder ---------------- */
+.find { display:flex; flex-direction:column; gap:8px; }
+.find-row { display:flex; gap:8px; align-items:center; }
+.find-row #groupBy { flex:1 1 auto; min-width:0; }
+.saved-views { display:flex; gap:6px; flex-wrap:wrap; }
+.sview { display:inline-flex; align-items:center; gap:6px; font-size:12px;
+  border:1px solid var(--line); border-radius:14px; padding:4px 8px; color:var(--txt); cursor:pointer; background:var(--panel); }
+.sview .sx { color:var(--muted); }
+.active-chips { display:flex; gap:6px; flex-wrap:wrap; }
+.achip { font-size:12px; padding:4px 9px; border-radius:14px; border:1px solid var(--accent); color:#cfe0ff; background:#16203a; }
+.achip.clear { border-color:var(--line); color:var(--muted); background:transparent; }
+.facets { display:flex; flex-direction:column; gap:6px; }
+.facet > summary { cursor:pointer; list-style:none; padding:8px 10px; border:1px solid var(--line);
+  border-radius:8px; background:var(--panel); font-size:14px; display:flex; align-items:center; gap:8px; }
+.facet > summary::-webkit-details-marker { display:none; }
+.facet > summary::before { content:"▸"; color:var(--muted); transition:transform .15s; }
+.facet[open] > summary::before { transform:rotate(90deg); }
+.facet-filter { width:100%; margin:8px 0 2px; padding:7px 9px; font-size:13px; }
+.facet .chips { display:flex; flex-wrap:wrap; gap:6px; padding:8px 2px; max-height:240px; overflow-y:auto; }
+.chip { font-size:13px; padding:6px 10px; border-radius:16px; border:1px solid var(--line);
+  background:#0d0f14; color:var(--txt); display:inline-flex; gap:6px; align-items:center; }
+.chip.on { border-color:var(--accent); background:#16203a; color:#cfe0ff; }
+.chip .chipn { color:var(--muted); font-size:11px; }
+.chip.on .chipn { color:#9ecbff; }
+.find-results { margin-top:4px; }
+
 /* ---------------- grouping view ---------------- */
 .grouplbl { font-size:13px; color:var(--muted); align-self:center; }
 .grp { margin-bottom:8px; }

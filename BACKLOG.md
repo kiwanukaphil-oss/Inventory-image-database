@@ -6,6 +6,10 @@ them up. Grouped by "deferred" (consciously skipped during a phase) and
 
 ## Deferred (skipped for now, revisit in a dedicated phase)
 
+- **Cloud-synced saved views** — the Find tab's saved views are currently stored
+  per-device (localStorage). Move them to a Supabase table so they sync across
+  phone + desktop. Could also add price/date range facets to the finder.
+
 - **Offline write-queue** — _deferred from Phase 4._ The app shell opens
   offline, but edits and uploads currently require a connection. Plan: queue
   changes in IndexedDB and sync on reconnect; on conflict (server row changed),

@@ -77,6 +77,13 @@ export function categoryPath(categoryId) {
   return names.join(" › ");
 }
 
+/** Human label for an attribute key (from any category_field that defines it). */
+export function fieldLabel(key) {
+  const f = cache?.fields.find((x) => x.key === key);
+  if (f?.label) return f.label;
+  return key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 /** Canonical suggestions for a vocab-backed field (for autocomplete). */
 export function vocabSuggestions(field) {
   return (cache?.vocabByField[field] || []).map((v) => v.canonical).sort();
