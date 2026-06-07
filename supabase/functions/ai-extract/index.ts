@@ -126,7 +126,9 @@ Deno.serve(async (req) => {
       `general knowledge of that fragrance. If you don't recognise the specific fragrance, leave it ` +
       `blank — do not guess. Mark any inferred scent_family as Medium or Low confidence.\n` +
       `- If the item has an overlay/handwritten colour caption, that colour wins.\n` +
-      `- Only leave a field blank if it genuinely is not shown; when unsure, fill it with Low confidence rather than omitting.\n` +
+      `- If a field genuinely cannot be determined, OMIT it entirely — do NOT output placeholder values ` +
+      `like "unknown", "n/a", "none", "unspecified" or "-". Leaving it out is correct. Use Low confidence ` +
+      `only for values you do provide but are unsure of.\n` +
       `- Treat stylised logos as lower confidence. Give per-field confidence High / Medium / Low. Call record_fields.`;
 
     // --- call Claude ---
@@ -159,7 +161,19 @@ Deno.serve(async (req) => {
 
     const toolUse = (data.content || []).find((b: any) => b.type === "tool_use");
     const result = toolUse?.input ?? { values: {}, confidence: {} };
-    return json({ values: result.values || {}, confidence: result.confidence || {}, usage: data.usage });
+
+    // Drop placeholder/empty values so they stay BLANK (keeps "fill empty" usable).
+    const PLACEHOLDER = new Set([
+      "", "unknown", "n/a", "na", "none", "null", "-", "--", "n.a.",
+      "not visible", "not specified", "not shown", "unspecified", "unknown brand",
+    ]);
+    const cleanValues: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(result.values || {})) {
+      if (v === null || v === undefined) continue;
+      if (PLACEHOLDER.has(String(v).trim().toLowerCase())) continue;
+      cleanValues[k] = v;
+    }
+    return json({ values: cleanValues, confidence: result.confidence || {}, usage: data.usage });
   } catch (e) {
     return json({ error: String(e?.message || e) }, 500);
   }

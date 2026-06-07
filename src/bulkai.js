@@ -7,6 +7,7 @@ import { resolveFields, normalizeValue, categoryPath } from "./data.js";
 // overwritten; every change is audited and carries a confidence dot.
 
 const CONCURRENCY = 3; // a few at a time, to respect API rate limits
+const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -133,6 +134,7 @@ async function runBatch(modal, items, onlyEmpty, onDone) {
 
       for (const [key, raw] of Object.entries(data.values || {})) {
         if (raw === null || raw === undefined || raw === "") continue;
+        if (AI_PLACEHOLDER.has(String(raw).trim().toLowerCase())) continue;
         let val = String(raw);
         if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
 

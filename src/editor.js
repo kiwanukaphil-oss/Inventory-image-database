@@ -15,6 +15,9 @@ import {
 // writes through to Supabase (SKU + audit handled by DB triggers).
 
 const CONF_CYCLE = ["", "High", "Medium", "Low"];
+// Placeholder strings the AI sometimes returns — treat as "no value" so they
+// don't fill fields (which would defeat the only-fill-empty workflow).
+const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -180,6 +183,7 @@ export async function openEditor(itemId, caps, onSaved) {
     let n = 0;
     for (const [key, raw] of Object.entries(values || {})) {
       if (raw === null || raw === undefined || raw === "") continue;
+      if (AI_PLACEHOLDER.has(String(raw).trim().toLowerCase())) continue;
       const el = sheet.querySelector(`[data-key="${key}"]`);
       if (!el) continue;
       let val = String(raw);
