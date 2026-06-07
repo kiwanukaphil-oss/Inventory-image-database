@@ -9,12 +9,13 @@ let cache = null;
 
 export async function loadRefData(force = false) {
   if (cache && !force) return cache;
-  const [cats, fields, vocab] = await Promise.all([
+  const [cats, fields, vocab, settings] = await Promise.all([
     supabase.from("categories").select("id, slug, name, parent_id, sort, sku_token"),
     supabase
       .from("category_fields")
       .select("category_id, key, label, type, options, vocab, required, inherit, sort"),
     supabase.from("vocabularies").select("field, canonical, aliases, active"),
+    supabase.from("app_settings").select("key, value"),
   ]);
 
   const categories = cats.data || [];
@@ -27,8 +28,16 @@ export async function loadRefData(force = false) {
     (vocabByField[v.field] ||= []).push(v);
   }
 
-  cache = { categories, byId, fields: fields.data || [], vocabByField };
+  // Shop-wide settings (empty if the table isn't there yet).
+  const settingsMap = Object.fromEntries((settings.data || []).map((s) => [s.key, s.value]));
+
+  cache = { categories, byId, fields: fields.data || [], vocabByField, settings: settingsMap };
   return cache;
+}
+
+/** A shop-wide setting value (e.g. "currency"), or the default if unset. */
+export function getSetting(key, def = "") {
+  return cache?.settings?.[key] || def;
 }
 
 export function refreshRefData() {

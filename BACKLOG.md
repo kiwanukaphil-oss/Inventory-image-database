@@ -4,29 +4,34 @@ A running list of things intentionally left out so far, so we remember to pick
 them up. Grouped by "deferred" (consciously skipped during a phase) and
 "planned" (upcoming phases from the project plan).
 
-## Deferred (skipped for now, revisit in a dedicated phase)
+## Done since this list was written
+- ✅ In-app category & field editor (⋮ → Categories & fields).
+- ✅ Bulk AI-fill (selection + filtered).
+- ✅ Account ⋮ menu; premium gallery toolbar; QoL (back-to-top, scroll-keep,
+  skeletons, filter memory, Esc, haptics); large-batch uploader; AI quality
+  (Opus, OCR-first, no "unknown" placeholders).
 
-- **Cloud-synced saved views** — the Find tab's saved views are currently stored
-  per-device (localStorage). Move them to a Supabase table so they sync across
-  phone + desktop. Could also add price/date range facets to the finder.
+## Remaining (open)
 
-- **Offline write-queue** — _deferred from Phase 4._ The app shell opens
-  offline, but edits and uploads currently require a connection. Plan: queue
-  changes in IndexedDB and sync on reconnect; on conflict (server row changed),
-  mark the item `flag`.
-- **Desktop webcam capture** — taking a photo with a laptop/desktop camera
-  (via `getUserMedia`). Today "Take photo" uses the device camera on phones;
-  on desktop the picker opens files only.
-- **In-app category & field editor** — admins currently define categories and
-  their fields via the SQL seed config (`0003_seed_categories.sql`). A future
-  self-service UI would let admins add/edit categories and fields in the app.
-- **Low-confidence triage cues** — an amber dot on cards that have any
-  low-confidence field, plus a "needs review" filter (status flag/needs-review
-  OR any low-confidence field). Offered, not yet built.
-- **Currency setting** — prices show as plain numbers (e.g. `90,000`) with no
-  currency symbol. Add a configurable currency prefix (e.g. `UGX`).
-- **Audit history view** — the `audit_log` table records every change; surface
-  a per-item history view in the UI and a corrections-CSV export.
+Quick wins:
+- **Currency setting** — prices show as plain numbers (e.g. `90,000`); add a
+  configurable currency prefix (e.g. `UGX`).
+- **Low-confidence triage cues** — an amber dot on cards with any low-confidence
+  field + a "needs review" filter (status flag/needs-review OR any low-conf field).
+- **Audit history view** — per-item change history (the `audit_log` is already
+  populated; change-log CSV export already exists — this is the in-app view).
+- **Price / date-range facets** in the Find tab.
+- **Desktop webcam capture** — "Take photo" on a laptop via `getUserMedia`
+  (today desktop opens the file picker; camera works on phones).
+
+Larger / optional:
+- **Cloud-synced saved views** — Find's saved views are per-device (localStorage);
+  move to a Supabase table so they sync across phone + desktop.
+- **AI auto-fill on upload** — auto-run extraction as photos upload so new stock
+  arrives pre-filled (per-photo cost; uses the configured model).
+- **Offline write-queue** — edits/uploads while offline, queued in IndexedDB and
+  synced on reconnect; on conflict (server row changed) mark the item `flag`.
+  (Largest build.)
 
 ## Planned (next phases)
 
@@ -45,8 +50,6 @@ them up. Grouped by "deferred" (consciously skipped during a phase) and
   - ✅ Bulk status change + bulk delete on the selection bar.
   - ✅ Two-level grouping (Groups tab: pick two dimensions, collapsible, counts).
 
-**Phase 6 complete.** Remaining work is all in "Deferred" above (AI-on-upload,
-offline queue, desktop webcam, in-app field editor, triage dot, currency,
-custom date range, audit history view).
+**Phases 1–6 complete.** Remaining work is the "Remaining (open)" list above.
 
-_Last updated: 2026-06-06 (after Phase 4)._
+_Last updated: 2026-06-07._

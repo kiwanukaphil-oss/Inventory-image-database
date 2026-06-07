@@ -2,7 +2,7 @@ import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
-import { loadRefData, resolveFields, categoryPath, fieldLabel } from "./data.js";
+import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting } from "./data.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -93,11 +93,31 @@ export function renderApp(mount, profile, onSignOut) {
     else renderComingSoon(view, id);
   }
 
+  // Shop-wide settings (currency for now), gated to user-managers.
+  function openSettings() {
+    const cur = getSetting("currency", "");
+    const sh = openBottomSheet("Settings", `
+      <div class="sheet-sec">Currency</div>
+      <div class="cm-label">Prefix shown before prices (e.g. UGX, $, KSh)</div>
+      <input id="setCurrency" value="${esc(cur)}" placeholder="e.g. UGX">
+      <button class="primary up-go" id="setSave">Save</button>`);
+    sh.body.querySelector("#setSave").onclick = async () => {
+      const v = sh.body.querySelector("#setCurrency").value.trim();
+      const { error } = await supabase.from("app_settings").upsert({ key: "currency", value: v });
+      if (error) { alert("Save failed: " + error.message); return; }
+      sh.close();
+      refreshRefData();
+      await loadRefData();
+      setView(currentViewId); // re-render so prices show the new prefix
+    };
+  }
+
   // Account / admin menu (⋮) — keeps the top bar clean; Sign out lives at the bottom.
   mount.querySelector("#menuBtn").onclick = () => {
     const admin = caps.can_manage_users
       ? `<button class="menu-item" data-m="users">Users & permissions</button>
-         <button class="menu-item" data-m="cats">Categories & fields</button>`
+         <button class="menu-item" data-m="cats">Categories & fields</button>
+         <button class="menu-item" data-m="settings">Settings</button>`
       : "";
     const sh = openBottomSheet(caps.email || "Account",
       `<div class="menu-sub">Signed in as ${esc(role)}</div>
@@ -109,6 +129,7 @@ export function renderApp(mount, profile, onSignOut) {
       sh.close();
       if (b.dataset.m === "users") openUsers(caps);
       else if (b.dataset.m === "cats") openCategoryManager(caps);
+      else if (b.dataset.m === "settings") openSettings();
       else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
     });
   };
@@ -139,10 +160,12 @@ function esc(v) {
   );
 }
 
-// Format a price with thousands separators (no currency symbol assumed).
+// Format a price with thousands separators + the shop's currency prefix (if set).
 function fmtPrice(v) {
   const n = Number(v);
-  return Number.isFinite(n) ? n.toLocaleString() : esc(v);
+  const s = Number.isFinite(n) ? n.toLocaleString() : esc(v);
+  const cur = getSetting("currency", "");
+  return cur ? `${esc(cur)} ${s}` : s;
 }
 
 // Short date for display (upload/added date = created_at).
