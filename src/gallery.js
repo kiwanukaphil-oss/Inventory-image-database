@@ -6,6 +6,7 @@ import { loadRefData, resolveFields, categoryPath, fieldLabel } from "./data.js"
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
+import { openCategoryManager } from "./categories_admin.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -58,8 +59,7 @@ export function renderApp(mount, profile, onSignOut) {
         <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
         <span class="rolechip ${role}">${role}</span>
         <span class="spacer"></span>
-        ${caps.can_manage_users ? `<button class="ghost" id="usersBtn">Users</button>` : ""}
-        <button class="ghost" id="signOutBtn">Sign out</button>
+        <button class="iconbtn" id="menuBtn" aria-label="Menu">${ICON.kebab}</button>
       </header>
       <main class="content" id="view"></main>
       <nav class="bottomnav" id="nav"></nav>
@@ -89,17 +89,29 @@ export function renderApp(mount, profile, onSignOut) {
     else renderComingSoon(view, id);
   }
 
-  const usersBtn = mount.querySelector("#usersBtn");
-  if (usersBtn) usersBtn.onclick = () => openUsers(caps);
+  // Account / admin menu (⋮) — keeps the top bar clean; Sign out lives at the bottom.
+  mount.querySelector("#menuBtn").onclick = () => {
+    const admin = caps.can_manage_users
+      ? `<button class="menu-item" data-m="users">Users & permissions</button>
+         <button class="menu-item" data-m="cats">Categories & fields</button>`
+      : "";
+    const sh = openBottomSheet(caps.email || "Account",
+      `<div class="menu-sub">Signed in as ${esc(role)}</div>
+       ${admin}
+       <button class="menu-item danger" data-m="signout">Sign out</button>`);
+    sh.body.addEventListener("click", async (e) => {
+      const b = e.target.closest("[data-m]");
+      if (!b) return;
+      sh.close();
+      if (b.dataset.m === "users") openUsers(caps);
+      else if (b.dataset.m === "cats") openCategoryManager(caps);
+      else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
+    });
+  };
 
   nav.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-view]");
     if (btn) setView(btn.dataset.view);
-  });
-
-  mount.querySelector("#signOutBtn").addEventListener("click", async () => {
-    await signOut();
-    onSignOut();
   });
 
   setView("gallery");
@@ -149,6 +161,7 @@ const ICON = {
   filter: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
   check: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>`,
   x: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
+  kebab: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>`,
 };
 
 // A reusable bottom sheet (filters, status picker, more-actions menu).
