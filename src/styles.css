@@ -5,10 +5,35 @@
    app shell (top bar, scroll area, bottom nav) and an auth screen.
 ---------------------------------------------------------------------------- */
 :root {
-  --bg:#0f1115; --panel:#171a21; --line:#2a2f3a; --txt:#e6e9ef; --muted:#9aa3b2;
-  --accent:#4f8cff; --edit:#3a2f00; --flag:#3a0f12; --ok:#13351c;
+  /* Dark theme built as an elevation ladder so layers read clearly instead of
+     blending into one black mass: bg (deepest) < panel (cards/bars) < elevated
+     (sheets/menus). Controls sit just above bg and are defined by a crisp line. */
+  --bg:#10131a;        /* app background — deep, not flat black */
+  --panel:#1b212c;     /* cards, top bar, bottom nav — clearly lifted off bg */
+  --elevated:#242b38;  /* sheets, dialogs, menus — float above the panel layer */
+  --control:#161b24;   /* input/button fill — above bg, delineated by --line */
+  --line:#333c4c;      /* hairline borders — crisp enough to separate surfaces */
+  --line-strong:#414b5e;
+  --txt:#eef1f7; --muted:#a7b1c2;
+  /* Brand accent — deep teal/petrol, carried over from the POS system for a
+     consistent product family. The teal is light, so filled buttons use dark
+     "ink" text (--on-accent) for crisp, premium contrast. */
+  --accent:#22c7e0;            /* links, active states, focus, selected outlines */
+  --accent-hi:#46d6ec;         /* lighter top of the primary-button gradient */
+  --accent-press:#149fba;      /* pressed state */
+  --on-accent:#04222a;         /* dark ink on the teal button */
+  --accent-soft:#10303a;       /* tinted background for selected chips/pills */
+  --accent-soft-txt:#8fe6f5;   /* light-cyan text for selected chips + prices */
+  --edit:#3a2f00; --flag:#3a0f12; --ok:#13351c;
   --danger:#d04b53;
-  --radius:10px;
+  /* Depth on dark surfaces: a faint top-edge highlight (light from above) plus a
+     soft drop shadow makes panels feel physically raised — the signature detail
+     of premium dark UIs. */
+  --hi:inset 0 1px 0 rgba(255,255,255,.05);          /* lit top edge */
+  --shadow-card:var(--hi), 0 1px 2px rgba(0,0,0,.4);
+  --shadow-pop:var(--hi), 0 14px 38px rgba(0,0,0,.6);
+  --accent-glow:0 2px 12px rgba(34,199,224,.38);     /* soft halo for primary CTAs */
+  --radius:12px;
   /* Safe-area insets so the bottom nav clears the iPhone home indicator. */
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-top: env(safe-area-inset-top, 0px);
@@ -33,22 +58,37 @@ html, body { height:100%; }
   }
 }
 body {
-  margin:0; background:var(--bg); color:var(--txt);
-  font:15px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
+  margin:0; color:var(--txt);
+  /* Subtle top-lit gradient backdrop instead of a flat fill — adds quiet depth
+     behind the content. Fixed so it doesn't scroll with the grid. */
+  background:linear-gradient(180deg, #161b26 0%, var(--bg) 55%) fixed, var(--bg);
+  font:15px/1.45 "Inter Variable", system-ui, "Segoe UI", Roboto, sans-serif;
   -webkit-text-size-adjust:100%;
+  -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
 }
+/* Inter looks crisper with slight negative tracking at heading sizes. */
+.topbar h1, .auth h1, .sheet-title, .up-h, .users-head h2, .bulkai-panel h2,
+.screen-head #scTitle, #fsTitle, .msheet-head { letter-spacing:-0.01em; }
 #app { min-height:100%; }
 
 button, input, select, textarea {
-  background:#0d0f14; color:var(--txt); border:1px solid var(--line);
-  border-radius:8px; padding:9px 11px; font:inherit;
+  background:var(--control); color:var(--txt); border:1px solid var(--line);
+  border-radius:10px; padding:9px 11px; font:inherit;
 }
 button { cursor:pointer; }
 button:active { transform:translateY(1px); }
 /* Disabled buttons must look inactive (otherwise they invite a dead click). */
 button:disabled { opacity:.45; cursor:not-allowed; }
 button:disabled:active { transform:none; }
-button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+/* Primary CTA: a faint vertical gradient + lit top edge + soft accent halo make
+   it feel tactile and clearly the main action, not just a blue rectangle. */
+button.primary {
+  background:linear-gradient(180deg, var(--accent-hi), var(--accent));
+  border-color:var(--accent-hi); color:var(--on-accent); font-weight:650;
+  box-shadow:var(--hi), var(--accent-glow);
+}
+button.primary:active { background:linear-gradient(180deg, var(--accent), var(--accent-press)); }
+button.primary:disabled { box-shadow:none; }
 button.ghost:hover { border-color:var(--accent); }
 button.danger { border-color:var(--danger); color:#ffb3b8; }
 a { color:var(--accent); }
@@ -57,7 +97,7 @@ a { color:var(--accent); }
 .shell { display:flex; flex-direction:column; min-height:100dvh; }
 .topbar {
   position:sticky; top:0; z-index:20; background:var(--panel);
-  border-bottom:1px solid var(--line);
+  border-bottom:1px solid var(--line); box-shadow:0 2px 10px rgba(0,0,0,.3);
   padding:calc(10px + var(--safe-top)) 14px 10px;
   display:flex; align-items:center; gap:10px;
 }
@@ -68,7 +108,7 @@ a { color:var(--accent); }
   border:1px solid var(--line); color:var(--muted);
 }
 .rolechip.admin { color:#ffd479; border-color:#6b5600; }
-.rolechip.editor { color:#9ecbff; border-color:#274a73; }
+.rolechip.editor { color:var(--accent-soft-txt); border-color:#274a73; }
 .rolechip.viewer { color:var(--muted); }
 
 .content { flex:1; padding:12px 12px calc(78px + var(--safe-bottom)); }
@@ -94,6 +134,7 @@ a { color:var(--accent); }
 .bottomnav {
   position:fixed; left:0; right:0; bottom:0; z-index:30;
   background:var(--panel); border-top:1px solid var(--line);
+  box-shadow:0 -1px 0 rgba(255,255,255,.04), 0 -6px 20px rgba(0,0,0,.3);
   display:flex; padding-bottom:var(--safe-bottom);
 }
 .bottomnav button {
@@ -139,14 +180,14 @@ a { color:var(--accent); }
 
 .auth .forgot { display:block; margin-top:10px; padding:4px 0; font-size:13px; }
 .auth .forgot-help { margin-top:8px; font-size:12.5px; color:var(--muted); line-height:1.45;
-  background:#0d0f14; border:1px solid var(--line); border-radius:8px; padding:10px; }
+  background:var(--control); border:1px solid var(--line); border-radius:8px; padding:10px; }
 
 /* ---------------- card grid (ported from review.html) ---------------- */
 .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; }
 @media (min-width:700px) { .grid { grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); } }
 .card {
   background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
-  overflow:hidden; display:flex; flex-direction:column;
+  overflow:hidden; display:flex; flex-direction:column; box-shadow:var(--shadow-card);
 }
 .card .thumb {
   aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
@@ -214,8 +255,8 @@ a { color:var(--accent); }
 /* ---------------- bulk AI modal ---------------- */
 .bulkai { position:fixed; inset:0; z-index:65; background:#0009; display:flex;
   align-items:center; justify-content:center; padding:18px; }
-.bulkai-panel { width:100%; max-width:460px; background:var(--panel);
-  border:1px solid var(--line); border-radius:14px; padding:18px; }
+.bulkai-panel { width:100%; max-width:460px; background:var(--elevated);
+  border:1px solid var(--line); box-shadow:var(--shadow-pop); border-radius:14px; padding:18px; }
 .bulkai-panel h2 { font-size:16px; margin:0 0 6px; }
 .bulkai-panel .sub { color:var(--muted); font-size:13px; margin:0 0 12px; }
 .bulkai-panel .note { color:var(--muted); font-size:12px; margin:10px 0 0; }
@@ -223,12 +264,12 @@ a { color:var(--accent); }
 .bulkai-warn { background:var(--flag); border:1px solid #6e2329; color:#ffd0d3;
   padding:9px 11px; border-radius:8px; font-size:13px; margin-top:12px; }
 .bulkai-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
-.bulkai-bar { height:8px; background:#0d0f14; border:1px solid var(--line);
+.bulkai-bar { height:8px; background:var(--control); border:1px solid var(--line);
   border-radius:6px; overflow:hidden; margin-bottom:10px; }
 .bulkai-bar #barFill { height:100%; width:0; background:var(--accent); transition:width .2s; }
 .bulkai-stats { font-size:13px; margin-bottom:10px; }
 .bulkai-log { max-height:200px; overflow-y:auto; font-size:12px; color:var(--muted);
-  background:#0d0f14; border:1px solid var(--line); border-radius:8px; padding:8px;
+  background:var(--control); border:1px solid var(--line); border-radius:8px; padding:8px;
   display:flex; flex-direction:column; gap:2px; }
 
 /* ---------------- users admin ---------------- */
@@ -267,7 +308,7 @@ a { color:var(--accent); }
 .card .cbrand { font-weight:600; line-height:1.25; }
 .card .cattr { font-size:13px; color:var(--txt); }
 .card .cstyle { font-size:12px; color:var(--muted); }
-.card .cprice { font-size:13px; color:#9ecbff; }
+.card .cprice { font-size:13px; color:var(--accent-soft-txt); }
 .card .cmeta { display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-top:2px; }
 .card .cdate { font-size:11px; color:var(--muted); white-space:nowrap; }
 .readonly-val { color:var(--txt); font-size:14px; }
@@ -281,7 +322,7 @@ a { color:var(--accent); }
 .iconbtn {
   position:relative; display:inline-flex; align-items:center; justify-content:center;
   width:40px; height:40px; flex:0 0 auto; padding:0;
-  border:1px solid var(--line); border-radius:10px; background:#0d0f14; color:var(--txt);
+  border:1px solid var(--line); border-radius:10px; background:var(--control); color:var(--txt);
 }
 .iconbtn:active { transform:translateY(1px); }
 .fdot { position:absolute; top:6px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--accent); }
@@ -289,7 +330,7 @@ a { color:var(--accent); }
 .linkbtn { background:none; border:none; color:var(--accent); font-weight:600; padding:8px 4px; }
 .active-pills { display:flex; gap:6px; flex-wrap:wrap; }
 .active-pills:empty { display:none; }
-.apill { font-size:12px; padding:4px 9px; border-radius:14px; border:1px solid var(--accent); color:#cfe0ff; background:#16203a; }
+.apill { font-size:12px; padding:4px 9px; border-radius:14px; border:1px solid var(--accent); color:var(--accent-soft-txt); background:var(--accent-soft); }
 
 /* contextual selection action bar (replaces app nav while selecting) */
 .actionbar {
@@ -309,7 +350,7 @@ a { color:var(--accent); }
   align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
 .msheet.open { opacity:1; }
 .msheet-panel { width:100%; max-width:520px; max-height:88dvh; display:flex; flex-direction:column;
-  background:var(--bg); border:1px solid var(--line);
+  background:var(--elevated); border:1px solid var(--line); box-shadow:var(--shadow-pop);
   border-radius:16px 16px 0 0; transform:translateY(16px); transition:transform .2s; }
 .msheet.open .msheet-panel { transform:translateY(0); }
 @media (min-width:560px) { .msheet { align-items:center; } .msheet-panel { border-radius:16px; } }
@@ -322,11 +363,11 @@ a { color:var(--accent); }
 .be-note { font-size:12px; }
 .msheet-body .chips { display:flex; flex-wrap:wrap; gap:8px; }
 .sheet-sec { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
-.schip { font-size:13px; padding:8px 12px; border-radius:16px; border:1px solid var(--line); background:#0d0f14; color:var(--txt); }
-.schip.on { border-color:var(--accent); background:#16203a; color:#cfe0ff; }
+.schip { font-size:13px; padding:8px 12px; border-radius:16px; border:1px solid var(--line); background:var(--control); color:var(--txt); }
+.schip.on { border-color:var(--accent); background:var(--accent-soft); color:var(--accent-soft-txt); }
 .sheet-clear { margin-top:14px; }
 .menu-item { width:100%; text-align:left; padding:13px 12px; border:1px solid var(--line);
-  border-radius:10px; background:#0d0f14; color:var(--txt); }
+  border-radius:10px; background:var(--control); color:var(--txt); }
 .menu-item.danger { color:#ffb3b8; border-color:#6e2329; }
 .menu-sub { color:var(--muted); font-size:12px; margin-bottom:2px; }
 
@@ -383,7 +424,7 @@ a { color:var(--accent); }
 .up-thumb img { width:100%; height:100%; object-fit:cover; }
 .up-x { position:absolute; top:4px; right:4px; width:30px; height:30px; border-radius:50%;
   background:#000a; color:#fff; border:none; font-size:14px; display:flex; align-items:center; justify-content:center; }
-.up-bar { height:10px; background:#0d0f14; border:1px solid var(--line); border-radius:6px; overflow:hidden; margin:10px 0; }
+.up-bar { height:10px; background:var(--control); border:1px solid var(--line); border-radius:6px; overflow:hidden; margin:10px 0; }
 .up-bar #barFill { height:100%; width:0; background:var(--accent); transition:width .2s; }
 .up-stats { font-size:13px; color:var(--muted); margin-bottom:12px; }
 .up-done { font-size:15px; margin:8px 0 14px; }
@@ -415,7 +456,7 @@ a { color:var(--accent); }
   border:1px solid var(--line); border-radius:14px; padding:4px 8px; color:var(--txt); cursor:pointer; background:var(--panel); }
 .sview .sx { color:var(--muted); }
 .active-chips { display:flex; gap:6px; flex-wrap:wrap; }
-.achip { font-size:12px; padding:4px 9px; border-radius:14px; border:1px solid var(--accent); color:#cfe0ff; background:#16203a; }
+.achip { font-size:12px; padding:4px 9px; border-radius:14px; border:1px solid var(--accent); color:var(--accent-soft-txt); background:var(--accent-soft); }
 .achip.clear { border-color:var(--line); color:var(--muted); background:transparent; }
 .facets { display:flex; flex-direction:column; gap:6px; }
 .facet > summary { cursor:pointer; list-style:none; padding:8px 10px; border:1px solid var(--line);
@@ -426,10 +467,10 @@ a { color:var(--accent); }
 .facet-filter { width:100%; margin:8px 0 2px; padding:7px 9px; font-size:13px; }
 .facet .chips { display:flex; flex-wrap:wrap; gap:6px; padding:8px 2px; max-height:240px; overflow-y:auto; }
 .chip { font-size:13px; padding:6px 10px; border-radius:16px; border:1px solid var(--line);
-  background:#0d0f14; color:var(--txt); display:inline-flex; gap:6px; align-items:center; }
-.chip.on { border-color:var(--accent); background:#16203a; color:#cfe0ff; }
+  background:var(--control); color:var(--txt); display:inline-flex; gap:6px; align-items:center; }
+.chip.on { border-color:var(--accent); background:var(--accent-soft); color:var(--accent-soft-txt); }
 .chip .chipn { color:var(--muted); font-size:11px; }
-.chip.on .chipn { color:#9ecbff; }
+.chip.on .chipn { color:var(--accent-soft-txt); }
 .find-results { margin-top:4px; }
 
 /* ---- Filters & sort drill-down sheet ---- */
@@ -444,7 +485,7 @@ a { color:var(--accent); }
 .fs-link, .fs-opt { display:flex; align-items:center; gap:12px; width:100%; text-align:left;
   background:transparent; border:none; border-radius:0; padding:14px; color:var(--txt); font-size:15px; min-height:50px; }
 .fs-link + .fs-link, .fs-opt + .fs-opt { border-top:1px solid var(--line); }
-.fs-link:active, .fs-opt:active { background:#0d0f14; }
+.fs-link:active, .fs-opt:active { background:var(--control); }
 .fs-label, .fs-opt-label { flex:1 1 auto; }
 .fs-val { color:var(--muted); font-size:14px; white-space:nowrap; max-width:55%; overflow:hidden; text-overflow:ellipsis; }
 .fs-opt-n { color:var(--muted); font-size:12px; }
@@ -505,8 +546,8 @@ a { color:var(--accent); }
          align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
 .sheet.open { opacity:1; }
 .sheet-panel {
-  width:100%; max-width:560px; max-height:94dvh; background:var(--bg);
-  border:1px solid var(--line); border-radius:16px 16px 0 0;
+  width:100%; max-width:560px; max-height:94dvh; background:var(--elevated);
+  border:1px solid var(--line); box-shadow:var(--shadow-pop); border-radius:16px 16px 0 0;
   display:flex; flex-direction:column; transform:translateY(20px); transition:transform .2s;
 }
 .sheet.open .sheet-panel { transform:translateY(0); }
@@ -536,7 +577,7 @@ a { color:var(--accent); }
 .field-sec { margin:16px 0 8px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
 .adminonly { color:#ffd479; text-transform:none; letter-spacing:0; }
 
-.conf-pill { width:32px; height:32px; padding:0; border-radius:50%; font-size:12px; color:var(--muted); flex:0 0 auto; border:1px solid var(--line); background:#0d0f14; }
+.conf-pill { width:32px; height:32px; padding:0; border-radius:50%; font-size:12px; color:var(--muted); flex:0 0 auto; border:1px solid var(--line); background:var(--control); }
 .conf-pill.conf-high { color:#86e8a0; border-color:#22643a; }
 .conf-pill.conf-medium { color:#ffd479; border-color:#6b5600; }
 .conf-pill.conf-low { color:#ffb3b8; border-color:#6e2329; }

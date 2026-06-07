@@ -33,6 +33,10 @@ export default defineConfig(() => ({
         // (not navigations) and are never matched here, so live data is always
         // fetched fresh — exactly what we want.
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
+        // Inter ships Latin/Cyrillic/Greek/Vietnamese subsets; this app is Latin
+        // only, so keep just latin (+latin-ext) in the offline precache. The
+        // browser still only requests the subset a glyph needs at runtime.
+        globIgnores: ["**/inter-cyrillic*", "**/inter-greek*", "**/inter-vietnamese*"],
         navigateFallback: "index.html",
         navigateFallbackDenylist: [/^\/api/, /supabase\.co/],
         cleanupOutdatedCaches: true,

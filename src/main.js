@@ -1,3 +1,4 @@
+import "@fontsource-variable/inter"; // self-hosted (offline-capable PWA), no external request
 import "./styles.css";
 import { registerSW } from "virtual:pwa-register";
 import { isConfigured } from "./db.js";
