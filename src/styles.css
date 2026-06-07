@@ -55,6 +55,10 @@ a { color:var(--accent); }
 
 .content { flex:1; padding:12px 12px calc(78px + var(--safe-bottom)); }
 
+/* Offline banner (thin bar under the top bar). */
+.offline-banner { position:sticky; top:0; z-index:21; text-align:center; font-size:12.5px;
+  padding:6px 10px; background:#3a2a12; color:#ffcf8a; border-bottom:1px solid #6e4a1f; }
+
 /* Back-to-top floating button (sits above the bottom bar). */
 .fab-top {
   position:fixed; right:14px; bottom:calc(74px + var(--safe-bottom)); z-index:26;

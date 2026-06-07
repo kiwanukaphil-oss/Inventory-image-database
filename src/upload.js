@@ -330,12 +330,13 @@ export async function renderUpload(view, caps, onDone) {
   async function startUpload(list) {
     const common = gatherCommon();
     if (!common) { alert("Choose a category first."); return; }
+    if (!navigator.onLine) { alert("You're offline — connect to upload. The batch is kept; tap Upload again when you're back online."); return; }
     stopFlag = false;
     stopBtn.disabled = false;
     stopBtn.textContent = "Stop";
     setMode("running");
     const total = list.length;
-    let done = 0, failed = 0, processed = 0, firstError = "";
+    let done = 0, failed = 0, processed = 0, firstError = "", pausedOffline = false;
     const doneEntries = [];
     paintRun(0, total, 0, 0);
 
@@ -349,6 +350,8 @@ export async function renderUpload(view, caps, onDone) {
         const entry = list[i];
         try { await uploadOne(entry, common); done++; doneEntries.push(entry); }
         catch (err) {
+          // Lost connection mid-batch: pause and resume automatically on reconnect.
+          if (!navigator.onLine) { pausedOffline = true; stopFlag = true; break; }
           failed++;
           if (!firstError) firstError = err?.message || String(err);
           console.error("upload failed", entry.file.name, err);
@@ -367,6 +370,17 @@ export async function renderUpload(view, caps, onDone) {
       const k = entries.findIndex((x) => x.key === e.key);
       if (k >= 0) entries.splice(k, 1);
       seen.delete(e.key);
+    }
+
+    // Paused because the connection dropped — auto-resume the rest on reconnect.
+    if (pausedOffline && entries.length) {
+      if (doneArea?.isConnected) {
+        setMode("done");
+        $("#doneMsg").innerHTML = `Paused — you're offline. <b>${done}</b> added; ${entries.length} will resume automatically when you're back online.`;
+        $("#doneActions").innerHTML = "";
+      }
+      window.addEventListener("online", () => startUpload(entries.slice()), { once: true });
+      return;
     }
     finishUpload(done, failed, firstError);
   }

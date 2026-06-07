@@ -61,6 +61,7 @@ export function renderApp(mount, profile, onSignOut) {
         <span class="spacer"></span>
         <button class="iconbtn" id="menuBtn" aria-label="Menu">${ICON.kebab}</button>
       </header>
+      <div class="offline-banner" id="offlineBanner" hidden>● Offline — changes need a connection</div>
       <main class="content" id="view"></main>
       <button class="fab-top" id="fabTop" hidden aria-label="Back to top">${ICON.up}</button>
       <nav class="bottomnav" id="nav"></nav>
@@ -141,6 +142,13 @@ export function renderApp(mount, profile, onSignOut) {
     if (btn.dataset.view === currentViewId) window.scrollTo({ top: 0, behavior: "smooth" });
     else setView(btn.dataset.view);
   });
+
+  // Offline banner — toggled by the browser's connectivity events.
+  const banner = mount.querySelector("#offlineBanner");
+  const setOnline = () => { banner.hidden = navigator.onLine; };
+  window.addEventListener("online", setOnline);
+  window.addEventListener("offline", setOnline);
+  setOnline();
 
   // Back-to-top: appears once you've scrolled down a bit.
   const fab = mount.querySelector("#fabTop");

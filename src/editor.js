@@ -211,6 +211,7 @@ export async function openEditor(itemId, caps, onSaved) {
   const aiBtn = sheet.querySelector("#aiBtn");
   if (aiBtn) {
     aiBtn.onclick = async () => {
+      if (!navigator.onLine) { toast("You're offline — AI needs a connection."); return; }
       const label = aiBtn.textContent;
       aiBtn.disabled = true;
       aiBtn.textContent = "Reading photo…";
@@ -238,6 +239,7 @@ export async function openEditor(itemId, caps, onSaved) {
 
   sheet.querySelector("#saveBtn").onclick = async () => {
     if (!canEdit) return;
+    if (!navigator.onLine) { toast("You're offline — reconnect to save your changes."); return; }
     const btn = sheet.querySelector("#saveBtn");
     btn.disabled = true;
     btn.textContent = "Saving…";
@@ -262,6 +264,7 @@ export async function openEditor(itemId, caps, onSaved) {
   const deleteBtn = sheet.querySelector("#deleteBtn");
   if (deleteBtn) {
     deleteBtn.onclick = async () => {
+      if (!navigator.onLine) { toast("You're offline — reconnect to delete."); return; }
       if (!confirm("Delete this item and its photo? This cannot be undone.")) return;
       deleteBtn.disabled = true;
       try {
