@@ -1,11 +1,10 @@
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
-// GitHub Pages serves this project under /Inventory-image-database/, so every
-// asset URL must be prefixed with that path. Locally (dev/preview) we serve from
-// root, so the base is only applied for production builds.
-export default defineConfig(({ command }) => ({
-  base: command === "build" ? "/Inventory-image-database/" : "/",
+// Served from the root of the custom domain (klinemen-catalog.com, set via the
+// public/CNAME file), so the base is "/" everywhere — dev, preview, and deployed.
+export default defineConfig(() => ({
+  base: "/",
   build: { outDir: "dist", sourcemap: false },
   server: { port: 5173, host: true }, // host:true exposes on LAN for phone testing
   plugins: [
