@@ -129,8 +129,8 @@ export async function openUsers(currentCaps) {
     body.querySelectorAll("button[data-deact]").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const id = btn.dataset.deact;
-        const activate = btn.dataset.active === "false";
-        if (!activate) {
+        const isActive = btn.dataset.active === "true"; // current state of the account
+        if (isActive) {
           const ok = await confirmSheet({
             title: "Deactivate account?",
             message: "They won't be able to log in until the account is reactivated.",
@@ -140,8 +140,8 @@ export async function openUsers(currentCaps) {
           if (!ok) return;
         }
         btn.disabled = true;
-        const res = await callManage({ action: activate ? "reactivate" : "deactivate", user_id: id });
-        if (res) { notify(activate ? "Reactivated" : "Deactivated"); loadList(); }
+        const res = await callManage({ action: isActive ? "deactivate" : "reactivate", user_id: id });
+        if (res) { notify(isActive ? "Deactivated" : "Reactivated"); loadList(); }
         else btn.disabled = false;
       });
     });
@@ -193,7 +193,7 @@ function renderRow(p, isSelf) {
       }).join("")}
     </div>
     ${isSelf ? "" : `<div class="user-actions">
-      <button class="ghost user-deact" data-deact="${p.id}" data-active="${inactive}">${inactive ? "Reactivate" : "Deactivate"}</button>
+      <button class="ghost user-deact" data-deact="${p.id}" data-active="${!inactive}">${inactive ? "Reactivate" : "Deactivate"}</button>
     </div>`}
   </div>`;
 }
