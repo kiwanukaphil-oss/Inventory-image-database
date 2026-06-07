@@ -15,6 +15,7 @@
 }
 
 * { box-sizing:border-box; }
+[hidden] { display:none !important; } /* so the `hidden` attribute wins over flex/grid */
 html, body { height:100%; }
 body {
   margin:0; background:var(--bg); color:var(--txt);
@@ -195,6 +196,59 @@ a { color:var(--accent); }
 .card .cdate { font-size:11px; color:var(--muted); white-space:nowrap; }
 .readonly-val { color:var(--txt); font-size:14px; }
 .added-line { margin-top:6px; font-size:12px; color:var(--muted); }
+
+/* ---------------- premium gallery toolbar ---------------- */
+.galtop { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
+.ghdr { display:flex; align-items:center; gap:8px; }
+.ghdr .fb-search { flex:1 1 auto; width:auto; }
+.ghdr .spacer { flex:1; }
+.iconbtn {
+  position:relative; display:inline-flex; align-items:center; justify-content:center;
+  width:40px; height:40px; flex:0 0 auto; padding:0;
+  border:1px solid var(--line); border-radius:10px; background:#0d0f14; color:var(--txt);
+}
+.iconbtn:active { transform:translateY(1px); }
+.fdot { position:absolute; top:6px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--accent); }
+.selcount { font-weight:650; }
+.linkbtn { background:none; border:none; color:var(--accent); font-weight:600; padding:8px 4px; }
+.active-pills { display:flex; gap:6px; flex-wrap:wrap; }
+.active-pills:empty { display:none; }
+.apill { font-size:12px; padding:4px 9px; border-radius:14px; border:1px solid var(--accent); color:#cfe0ff; background:#16203a; }
+
+/* contextual selection action bar (replaces app nav while selecting) */
+.actionbar {
+  position:fixed; left:0; right:0; bottom:0; z-index:30;
+  background:var(--panel); border-top:1px solid var(--line);
+  display:flex; padding-bottom:var(--safe-bottom);
+}
+.ab-btn {
+  flex:1; background:transparent; border:none; border-radius:0; color:var(--txt);
+  padding:10px 4px; font-size:12px; display:flex; flex-direction:column; align-items:center; gap:3px;
+}
+.ab-btn:disabled { color:var(--muted); opacity:.45; }
+.ab-ico { font-size:20px; line-height:1; }
+
+/* bottom sheets (filters / status / more) */
+.msheet { position:fixed; inset:0; z-index:60; background:#0009; display:flex;
+  align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
+.msheet.open { opacity:1; }
+.msheet-panel { width:100%; max-width:520px; background:var(--bg); border:1px solid var(--line);
+  border-radius:16px 16px 0 0; transform:translateY(16px); transition:transform .2s;
+  padding-bottom:calc(12px + var(--safe-bottom)); }
+.msheet.open .msheet-panel { transform:translateY(0); }
+@media (min-width:560px) { .msheet { align-items:center; } .msheet-panel { border-radius:16px; } }
+.msheet-head { display:flex; align-items:center; justify-content:space-between;
+  padding:12px 14px; border-bottom:1px solid var(--line); font-weight:650; }
+.msheet-head .iconbtn { width:32px; height:32px; border:none; background:transparent; }
+.msheet-body { padding:14px; display:flex; flex-direction:column; gap:8px; }
+.msheet-body .chips { display:flex; flex-wrap:wrap; gap:8px; }
+.sheet-sec { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
+.schip { font-size:13px; padding:8px 12px; border-radius:16px; border:1px solid var(--line); background:#0d0f14; color:var(--txt); }
+.schip.on { border-color:var(--accent); background:#16203a; color:#cfe0ff; }
+.sheet-clear { margin-top:14px; }
+.menu-item { width:100%; text-align:left; padding:13px 12px; border:1px solid var(--line);
+  border-radius:10px; background:#0d0f14; color:var(--txt); }
+.menu-item.danger { color:#ffb3b8; border-color:#6e2329; }
 
 /* ---------------- uploader ---------------- */
 .uploader { max-width:560px; margin:0 auto; }

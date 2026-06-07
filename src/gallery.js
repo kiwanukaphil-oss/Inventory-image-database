@@ -144,11 +144,36 @@ function dateCutoff(v) {
 
 const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
 
-// Fetch items + signed thumbnails, render a filterable card grid. Tapping a
-// card opens the editor; tapping its photo opens the lightbox.
+// Small inline icons for a cleaner, premium toolbar.
+const ICON = {
+  filter: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
+  check: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>`,
+  x: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
+};
+
+// A reusable bottom sheet (filters, status picker, more-actions menu).
+function openBottomSheet(title, bodyHtml) {
+  const el = document.createElement("div");
+  el.className = "msheet";
+  el.innerHTML = `<div class="msheet-panel">
+      <div class="msheet-head"><span>${esc(title)}</span><button class="iconbtn" data-x aria-label="Close">✕</button></div>
+      <div class="msheet-body">${bodyHtml}</div>
+    </div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("open"));
+  const close = () => { el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
+  el.addEventListener("click", (e) => { if (e.target === el || e.target.closest("[data-x]")) close(); });
+  return { el, close, body: el.querySelector(".msheet-body") };
+}
+
+// Premium gallery: clean top bar (search · filters · select), active-filter
+// pills, and a contextual selection action bar (replaces the app nav while
+// selecting). Tapping a card opens the editor; tapping its photo the lightbox.
 async function renderGallery(view, caps) {
   const canEdit = !!caps.can_edit;
   const canDelete = !!caps.can_delete;
+  const appNav = document.querySelector(".bottomnav");
+  if (appNav) appNav.style.display = ""; // restore if a prior selection hid it
   view.innerHTML = `<div class="spinner"></div>`;
   await loadRefData(); // category tree + field definitions drive the card summary
   const { data, error } = await supabase
@@ -180,62 +205,65 @@ async function renderGallery(view, caps) {
     (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
   }
 
-  // Filter bar + containers.
   view.innerHTML = `
-    <div class="filterbar">
-      <input id="q" class="fb-search" type="search" placeholder="Search brand / colour / SKU / type…">
-      <div class="fb-controls">
-        <select id="statusFilter">
-          ${STATUSES.map((s) => `<option value="${s}">${s === "all" ? "All statuses" : s}</option>`).join("")}
-        </select>
-        <select id="dateFilter">
-          ${DATE_FILTERS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}
-        </select>
-        ${canEdit ? `<button class="ghost" id="selectBtn" title="Select items">Select</button>` : ""}
-        ${canEdit ? `<button class="ghost aifill" id="aiFillBtn" title="AI-fill filtered items">✨ AI-fill</button>` : ""}
+    <div class="galtop">
+      <div class="ghdr" id="hdrNormal">
+        <input id="q" class="fb-search" type="search" placeholder="Search…">
+        <button class="iconbtn" id="filterBtn" aria-label="Filters">${ICON.filter}<span class="fdot" id="fdot" hidden></span></button>
+        ${canEdit ? `<button class="iconbtn" id="selectBtn" aria-label="Select">${ICON.check}</button>` : ""}
       </div>
+      <div class="ghdr ghdr-sel" id="hdrSelect" hidden>
+        <button class="iconbtn" id="selExit" aria-label="Cancel">${ICON.x}</button>
+        <span class="selcount" id="selCount">0 selected</span>
+        <span class="spacer"></span>
+        <button class="linkbtn" id="selAll">Select all</button>
+      </div>
+      <div class="active-pills" id="pills"></div>
+      <div class="count" id="count"></div>
     </div>
-    <div class="count" id="count"></div>
     <div class="grid" id="grid"></div>
-    ${canEdit ? `<div class="selbar" id="selbar" hidden>
-      <span id="selCount">0 selected</span>
-      <button class="ghost" id="selAll">All</button>
-      <button class="ghost" id="selClear">Clear</button>
-      <select id="selStatus" title="Set status for selected">
-        <option value="">Set status…</option>
-        ${["draft", "needs-review", "approved", "flag"].map((s) => `<option value="${s}">${s}</option>`).join("")}
-      </select>
-      <button class="primary" id="selAi">✨ AI-fill</button>
-      ${canDelete ? `<button class="danger" id="selDel">Delete</button>` : ""}
-      <button class="ghost" id="selDone">Done</button>
+    ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
+      <button class="ab-btn" id="abAi"><span class="ab-ico">✨</span>AI-fill</button>
+      <button class="ab-btn" id="abStatus"><span class="ab-ico">◧</span>Status</button>
+      <button class="ab-btn" id="abMore"><span class="ab-ico">⋯</span>More</button>
     </div>` : ""}`;
 
   const grid = view.querySelector("#grid");
   const countEl = view.querySelector("#count");
+  const pillsEl = view.querySelector("#pills");
   const qEl = view.querySelector("#q");
-  const stEl = view.querySelector("#statusFilter");
-  const dtEl = view.querySelector("#dateFilter");
-  let filtered = []; // current filtered rows, used by bulk AI-fill
+  const hdrNormal = view.querySelector("#hdrNormal");
+  const hdrSelect = view.querySelector("#hdrSelect");
+  const actionbar = view.querySelector("#actionbar");
+  let q = "";
+  let stFilter = "all";
+  let dtFilter = "all";
+  let filtered = []; // current filtered rows, used by bulk actions
 
   // ---- selection mode (phone-gallery style multi-select) ----
   const byId = Object.fromEntries(data.map((d) => [d.id, d]));
   const selected = new Set();
   let selectionMode = false;
-  const selbar = view.querySelector("#selbar");
 
   function updateSelBar() {
-    if (!selbar) return;
     const n = selected.size;
-    view.querySelector("#selCount").textContent = `${n} selected`;
-    ["selAi", "selStatus", "selDel"].forEach((id) => {
+    const c = hdrSelect.querySelector("#selCount");
+    if (c) c.textContent = `${n} selected`;
+    ["abAi", "abStatus", "abMore"].forEach((id) => {
       const el = view.querySelector("#" + id);
       if (el) el.disabled = n === 0;
     });
   }
   function enterSelection() {
+    if (!canEdit) return;
     selectionMode = true;
     grid.classList.add("selecting");
-    if (selbar) selbar.hidden = false;
+    hdrNormal.hidden = true;
+    hdrSelect.hidden = false;
+    pillsEl.hidden = true;
+    countEl.hidden = true;
+    if (actionbar) actionbar.hidden = false;
+    if (appNav) appNav.style.display = "none"; // one bottom bar at a time
     updateSelBar();
   }
   function exitSelection() {
@@ -243,7 +271,17 @@ async function renderGallery(view, caps) {
     selected.clear();
     grid.classList.remove("selecting");
     grid.querySelectorAll(".card.selected").forEach((c) => c.classList.remove("selected"));
-    if (selbar) selbar.hidden = true;
+    hdrSelect.hidden = true;
+    hdrNormal.hidden = false;
+    pillsEl.hidden = false;
+    countEl.hidden = false;
+    if (actionbar) actionbar.hidden = true;
+    if (appNav) appNav.style.display = "";
+  }
+  function clearSel() {
+    selected.clear();
+    grid.querySelectorAll(".card.selected").forEach((c) => c.classList.remove("selected"));
+    updateSelBar();
   }
   function toggleSelect(id, cardEl) {
     if (selected.has(id)) { selected.delete(id); cardEl?.classList.remove("selected"); }
@@ -255,11 +293,9 @@ async function renderGallery(view, caps) {
   const stClass = { draft: "st-draft", "needs-review": "st-review", approved: "st-ok", flag: "st-flag" };
 
   function draw() {
-    const q = qEl.value.trim().toLowerCase();
-    const st = stEl.value;
-    const cutoff = dateCutoff(dtEl.value);
+    const cutoff = dateCutoff(dtFilter);
     const rows = data.filter((it) => {
-      if (st !== "all" && it.status !== st) return false;
+      if (stFilter !== "all" && it.status !== stFilter) return false;
       if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
       if (!q) return true;
       const hay = [it.brand, it.name, it.sku, it.categories?.name,
@@ -402,63 +438,104 @@ async function renderGallery(view, caps) {
   // Suppress the browser long-press context menu inside the grid.
   grid.addEventListener("contextmenu", (e) => e.preventDefault());
 
-  // Toolbar Select button + selection action bar.
+  // ---- active filter pills + filters sheet ----
+  function pills() {
+    const out = [];
+    if (stFilter !== "all") out.push(`<button class="apill" data-clear="st">Status: ${esc(stFilter)} ✕</button>`);
+    if (dtFilter !== "all") {
+      const lbl = DATE_FILTERS.find((d) => d.v === dtFilter)?.label || dtFilter;
+      out.push(`<button class="apill" data-clear="dt">${esc(lbl)} ✕</button>`);
+    }
+    pillsEl.innerHTML = out.join("");
+    const dot = view.querySelector("#fdot");
+    if (dot) dot.hidden = stFilter === "all" && dtFilter === "all";
+  }
+  pillsEl.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-clear]");
+    if (!b) return;
+    if (b.dataset.clear === "st") stFilter = "all"; else dtFilter = "all";
+    draw(); pills();
+  });
+
+  function openFilters() {
+    const body = `
+      <div class="sheet-sec">Status</div>
+      <div class="chips">${STATUSES.map((s) => `<button class="schip ${stFilter === s ? "on" : ""}" data-st="${s}">${s === "all" ? "All" : esc(s)}</button>`).join("")}</div>
+      <div class="sheet-sec">Added</div>
+      <div class="chips">${DATE_FILTERS.map((d) => `<button class="schip ${dtFilter === d.v ? "on" : ""}" data-dt="${d.v}">${esc(d.label)}</button>`).join("")}</div>
+      <button class="ghost sheet-clear" data-fclear>Clear filters</button>`;
+    const sh = openBottomSheet("Filters", body);
+    sh.body.addEventListener("click", (e) => {
+      const st = e.target.closest("[data-st]");
+      const dt = e.target.closest("[data-dt]");
+      if (st) stFilter = st.dataset.st;
+      else if (dt) dtFilter = dt.dataset.dt;
+      else if (e.target.closest("[data-fclear]")) { stFilter = "all"; dtFilter = "all"; }
+      else return;
+      sh.body.querySelectorAll("[data-st]").forEach((x) => x.classList.toggle("on", x.dataset.st === stFilter));
+      sh.body.querySelectorAll("[data-dt]").forEach((x) => x.classList.toggle("on", x.dataset.dt === dtFilter));
+      draw(); pills();
+    });
+  }
+
+  // ---- wiring: top bar ----
+  qEl.addEventListener("input", () => { q = qEl.value.trim().toLowerCase(); draw(); });
+  view.querySelector("#filterBtn").onclick = openFilters;
   const selectBtn = view.querySelector("#selectBtn");
-  if (selectBtn) selectBtn.onclick = () => (selectionMode ? exitSelection() : enterSelection());
-  if (selbar) {
-    view.querySelector("#selDone").onclick = exitSelection;
-    view.querySelector("#selClear").onclick = () => {
-      selected.clear();
-      grid.querySelectorAll(".card.selected").forEach((c) => c.classList.remove("selected"));
-      updateSelBar();
-    };
+  if (selectBtn) selectBtn.onclick = enterSelection;
+
+  // ---- wiring: selection header + action bar ----
+  if (canEdit) {
+    view.querySelector("#selExit").onclick = exitSelection;
     view.querySelector("#selAll").onclick = () => {
       for (const it of filtered) selected.add(it.id);
       grid.querySelectorAll(".card[data-id]").forEach((c) => c.classList.add("selected"));
       updateSelBar();
     };
-    view.querySelector("#selAi").onclick = () => {
+    view.querySelector("#abAi").onclick = () => {
+      if (!selected.size) return;
       const items = [...selected].map((id) => byId[id]).filter(Boolean);
-      if (items.length) openBulkAi(items, caps, () => renderGallery(view, caps));
+      openBulkAi(items, caps, () => renderGallery(view, caps));
     };
-
-    // Bulk status change for all selected.
-    const selStatus = view.querySelector("#selStatus");
-    if (selStatus) selStatus.onchange = async () => {
-      const st = selStatus.value;
-      const ids = [...selected];
-      selStatus.value = "";
-      if (!st || !ids.length) return;
-      const { error } = await supabase.from("items").update({ status: st }).in("id", ids);
-      if (error) { alert("Status update failed: " + error.message); return; }
-      renderGallery(view, caps);
+    view.querySelector("#abStatus").onclick = () => {
+      if (!selected.size) return;
+      const body = `<div class="chips">${["draft", "needs-review", "approved", "flag"]
+        .map((s) => `<button class="schip" data-set="${s}">${esc(s)}</button>`).join("")}</div>`;
+      const sh = openBottomSheet(`Set status · ${selected.size} selected`, body);
+      sh.body.addEventListener("click", async (e) => {
+        const b = e.target.closest("[data-set]");
+        if (!b) return;
+        const ids = [...selected];
+        sh.close();
+        const { error } = await supabase.from("items").update({ status: b.dataset.set }).in("id", ids);
+        if (error) { alert("Status update failed: " + error.message); return; }
+        renderGallery(view, caps);
+      });
     };
-
-    // Bulk delete (capability-gated) — removes items + their stored images.
-    const selDel = view.querySelector("#selDel");
-    if (selDel) selDel.onclick = async () => {
-      const ids = [...selected];
-      if (!ids.length) return;
-      if (!confirm(`Delete ${ids.length} item(s) and their photos? This cannot be undone.`)) return;
-      const paths = ids.map((id) => byId[id]?.image_path).filter(Boolean);
-      const { error } = await supabase.from("items").delete().in("id", ids);
-      if (error) { alert("Delete failed: " + error.message); return; }
-      if (paths.length) await supabase.storage.from("product-images").remove(paths);
-      renderGallery(view, caps);
+    view.querySelector("#abMore").onclick = () => {
+      if (!selected.size) return;
+      const body = `
+        <button class="menu-item" data-clearsel>Clear selection</button>
+        ${canDelete ? `<button class="menu-item danger" data-del>Delete ${selected.size} item(s)</button>` : ""}`;
+      const sh = openBottomSheet("More actions", body);
+      sh.body.addEventListener("click", async (e) => {
+        if (e.target.closest("[data-clearsel]")) { sh.close(); clearSel(); return; }
+        if (e.target.closest("[data-del]")) {
+          const ids = [...selected];
+          if (!confirm(`Delete ${ids.length} item(s) and their photos? This cannot be undone.`)) return;
+          sh.close();
+          const paths = ids.map((id) => byId[id]?.image_path).filter(Boolean);
+          const { error } = await supabase.from("items").delete().in("id", ids);
+          if (error) { alert("Delete failed: " + error.message); return; }
+          if (paths.length) await supabase.storage.from("product-images").remove(paths);
+          renderGallery(view, caps);
+        }
+      });
     };
-  }
-
-  qEl.addEventListener("input", draw);
-  stEl.addEventListener("change", draw);
-  dtEl.addEventListener("change", draw);
-
-  const aiFillBtn = view.querySelector("#aiFillBtn");
-  if (aiFillBtn) {
-    aiFillBtn.onclick = () =>
-      openBulkAi(filtered, caps, () => renderGallery(view, caps));
   }
 
   draw();
+  pills();
 }
 
 // ---- Find tab: faceted finder (AND across facets / OR within), group-by, saved views ----
