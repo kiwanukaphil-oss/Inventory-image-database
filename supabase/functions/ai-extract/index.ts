@@ -21,7 +21,10 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const MODEL = "claude-haiku-4-5";
+// Sonnet reads small/stylised product text much better than Haiku. Override with
+// the ANTHROPIC_MODEL secret (e.g. claude-opus-4-8 for max accuracy, or
+// claude-haiku-4-5 for lowest cost).
+const MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-4-6";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -97,6 +100,7 @@ Deno.serve(async (req) => {
       input_schema: {
         type: "object",
         properties: {
+          visible_text: { type: "string", description: "Every piece of text you can read in the image, transcribed verbatim." },
           values: { type: "object", properties: valueProps },
           confidence: { type: "object", properties: confProps },
         },
@@ -106,21 +110,19 @@ Deno.serve(async (req) => {
 
     const fieldList = fields.map((f: any) => `${f.label} (${f.key})`).join(", ");
     const prompt =
-      `This is a photo of a men's retail product in the category "${category}". ` +
-      `Read the visible tags, care labels, printed text, and any handwriting, and extract: ` +
-      `brand, ${fieldList}. Rules:\n` +
-      `- Use the brand name EXACTLY as printed on the tag. Keep look-alike/knock-off names as printed; ` +
-      `do NOT normalise toward a famous brand.\n` +
-      `- "Product name" (name) is the product's line/model name WITHOUT the variant ` +
-      `(e.g. a fragrance like "Stronger With You" or "Diamonds"). Omit it for generic ` +
-      `garments that have no model name.\n` +
-      `- "Edition" is the specific variant / flanker (e.g. "Intensely", "Absolutely", ` +
-      `"Intense", "Elixir", "Parfum"). If the product has no such variant, use "Standard".\n` +
-      `- Treat stylised brand logos (not printed text) as Low confidence.\n` +
-      `- If the item shows an overlay/handwritten colour caption, that colour wins.\n` +
-      `- Only report a field if you can actually see it; omit fields you cannot determine. ` +
-      `Prefer omitting over guessing.\n` +
-      `- Give per-field confidence: High / Medium / Low. Call record_fields with the result.`;
+      `This is a photo of a retail product (category: "${category}"). ` +
+      `Carefully read EVERY piece of visible text — on the box, bottle, tags, labels and any handwriting.\n` +
+      `Step 1: transcribe all of that text verbatim into "visible_text".\n` +
+      `Step 2: using only what you read, fill "values": brand, ${fieldList}.\n` +
+      `Guidance:\n` +
+      `- brand: the maker/brand exactly as printed; keep look-alike/knock-off names as printed (do NOT normalise toward a famous brand).\n` +
+      `- name (Product name): the product's FULL name as printed, INCLUDING any variant/flanker — ` +
+      `e.g. "Polo Red", "Stronger With You Intensely", "Sauvage Elixir", "Diamonds". ` +
+      `It is usually the largest text after the brand; read it in full. Omit only for generic garments with no model name.\n` +
+      `- For fragrances the brand, product name, concentration (EDT/EDP/Parfum) and size (in ml) are almost always clearly printed — read and fill them.\n` +
+      `- If the item has an overlay/handwritten colour caption, that colour wins.\n` +
+      `- Only leave a field blank if it genuinely is not shown; when unsure, fill it with Low confidence rather than omitting.\n` +
+      `- Treat stylised logos as lower confidence. Give per-field confidence High / Medium / Low. Call record_fields.`;
 
     // --- call Claude ---
     const resp = await fetch("https://api.anthropic.com/v1/messages", {
