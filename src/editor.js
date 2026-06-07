@@ -278,7 +278,15 @@ export async function openEditor(itemId, caps, onSaved) {
         const { data, error } = await supabase.functions.invoke("ai-extract", {
           body: { item_id: itemId, category: categoryPath(item.category_id), fields: defs },
         });
-        if (error) throw error;
+        if (error) {
+          // Surface the function's actual error body (FunctionsHttpError hides it).
+          let detail = error.message;
+          try {
+            const b = await error.context.json();
+            detail = b.detail ? `${b.error}: ${JSON.stringify(b.detail)}` : (b.error || detail);
+          } catch {}
+          throw new Error(detail);
+        }
         if (data?.error) throw new Error(data.error);
         const n = applySuggestions(data.values, data.confidence);
         toast(n ? `AI filled ${n} field${n === 1 ? "" : "s"} — review & Save` : "AI couldn't read any fields");
