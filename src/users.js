@@ -1,8 +1,9 @@
 import { supabase } from "./db.js";
 
-// Users admin screen — for people with can_manage_users. Lists every profile and
-// lets you set a role preset or toggle individual capabilities per person.
-// Changes are enforced server-side by RLS; this UI just drives the profile rows.
+// Users admin screen — for people with can_manage_users. Create login accounts,
+// set role/capabilities, and deactivate/reactivate accounts. Account create and
+// status changes go through the manage-users Edge Function (service-role,
+// server-side); capability edits write the profile row directly (RLS-enforced).
 
 const PRESETS = {
   admin:  { can_upload: true,  can_edit: true,  can_delete: true,  can_view_cost: true,  can_manage_users: true },
@@ -42,6 +43,19 @@ export async function openUsers(currentCaps) {
         <h2>Users & permissions</h2>
         <button class="ghost" id="closeUsers">Close</button>
       </div>
+      <div class="user-add">
+        <div class="user-add-row">
+          <input id="newEmail" type="email" placeholder="email@example.com" autocomplete="off">
+          <input id="newPass" type="text" placeholder="temporary password" autocomplete="off">
+          <select id="newRole">
+            <option value="viewer">viewer</option>
+            <option value="editor">editor</option>
+            <option value="admin">admin</option>
+          </select>
+          <button class="primary" id="addUserBtn">Add user</button>
+        </div>
+        <div class="muted" style="font-size:12px">Creates a login immediately; share the email + temporary password with them.</div>
+      </div>
       <div id="usersBody"><div class="spinner"></div></div>
       <div class="users-status" id="usersStatus"></div>
     </div>`;
@@ -55,53 +69,98 @@ export async function openUsers(currentCaps) {
   const notify = (msg) => {
     statusEl.textContent = msg;
     clearTimeout(notify._t);
-    notify._t = setTimeout(() => (statusEl.textContent = ""), 2500);
+    notify._t = setTimeout(() => (statusEl.textContent = ""), 3000);
   };
 
   const selfId = currentCaps.id; // don't let the current admin lock themselves out
 
-  const { data: profiles, error } = await supabase
-    .from("profiles")
-    .select("id, email, role, can_upload, can_edit, can_delete, can_view_cost, can_manage_users")
-    .order("email");
-  if (error) {
-    body.innerHTML = `<div class="empty"><div>Couldn't load users.</div>
-      <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
-    return;
+  // Call the manage-users Edge Function and surface any error.
+  async function callManage(payload) {
+    const { data, error } = await supabase.functions.invoke("manage-users", { body: payload });
+    if (error) { notify("Failed: " + error.message); return null; }
+    if (data?.error) { notify("Failed: " + data.error); return null; }
+    return data;
   }
 
-  body.innerHTML = profiles.map((p) => renderRow(p, p.id === selfId)).join("");
+  // (Re)load the user list and wire its controls.
+  async function loadList() {
+    const { data: profiles, error } = await supabase
+      .from("profiles")
+      .select("id, email, role, active, can_upload, can_edit, can_delete, can_view_cost, can_manage_users")
+      .order("email");
+    if (error) {
+      body.innerHTML = `<div class="empty"><div>Couldn't load users.</div>
+        <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
+      return;
+    }
+    body.innerHTML = profiles.map((p) => renderRow(p, p.id === selfId)).join("");
 
-  // Toggle a single capability → mark role 'custom'.
-  body.querySelectorAll("input[data-cap]").forEach((cb) => {
-    cb.addEventListener("change", async () => {
-      const row = cb.closest(".user-row");
-      const update = { role: "custom" };
-      row.querySelectorAll("input[data-cap]").forEach((x) => (update[x.dataset.cap] = x.checked));
-      await save(row.dataset.id, update, row, notify);
+    // Toggle a single capability → mark role 'custom'.
+    body.querySelectorAll("input[data-cap]").forEach((cb) => {
+      cb.addEventListener("change", async () => {
+        const row = cb.closest(".user-row");
+        const update = { role: "custom" };
+        row.querySelectorAll("input[data-cap]").forEach((x) => (update[x.dataset.cap] = x.checked));
+        await save(row.dataset.id, update, row, notify);
+      });
     });
-  });
 
-  // Apply a preset → set role + the preset's capabilities.
-  body.querySelectorAll("select[data-preset]").forEach((sel) => {
-    sel.addEventListener("change", async () => {
-      const row = sel.closest(".user-row");
-      const preset = sel.value;
-      if (preset === "custom") return;
-      const update = { role: preset, ...PRESETS[preset] };
-      row.querySelectorAll("input[data-cap]").forEach((x) => (x.checked = PRESETS[preset][x.dataset.cap]));
-      await save(row.dataset.id, update, row, notify);
+    // Apply a preset → set role + the preset's capabilities.
+    body.querySelectorAll("select[data-preset]").forEach((sel) => {
+      sel.addEventListener("change", async () => {
+        const row = sel.closest(".user-row");
+        const preset = sel.value;
+        if (preset === "custom") return;
+        const update = { role: preset, ...PRESETS[preset] };
+        row.querySelectorAll("input[data-cap]").forEach((x) => (x.checked = PRESETS[preset][x.dataset.cap]));
+        await save(row.dataset.id, update, row, notify);
+      });
     });
-  });
+
+    // Deactivate / reactivate an account (bans/unbans the login server-side).
+    body.querySelectorAll("button[data-deact]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.deact;
+        const activate = btn.dataset.active === "false";
+        if (!activate && !confirm("Deactivate this account? They won't be able to log in until reactivated.")) return;
+        btn.disabled = true;
+        const res = await callManage({ action: activate ? "reactivate" : "deactivate", user_id: id });
+        if (res) { notify(activate ? "Reactivated" : "Deactivated"); loadList(); }
+        else btn.disabled = false;
+      });
+    });
+  }
+
+  // Add-user form.
+  modal.querySelector("#addUserBtn").onclick = async () => {
+    const email = modal.querySelector("#newEmail").value.trim();
+    const password = modal.querySelector("#newPass").value;
+    const role = modal.querySelector("#newRole").value;
+    if (!email || !password) { notify("Enter an email and a temporary password."); return; }
+    if (password.length < 6) { notify("Password must be at least 6 characters."); return; }
+    const btn = modal.querySelector("#addUserBtn");
+    btn.disabled = true; btn.textContent = "Adding…";
+    const res = await callManage({ action: "create", email, password, role, caps: PRESETS[role] });
+    btn.disabled = false; btn.textContent = "Add user";
+    if (res) {
+      notify("User created");
+      modal.querySelector("#newEmail").value = "";
+      modal.querySelector("#newPass").value = "";
+      loadList();
+    }
+  };
+
+  loadList();
 }
 
 function renderRow(p, isSelf) {
   const preset = presetOf(p);
-  return `<div class="user-row" data-id="${p.id}">
+  const inactive = p.active === false;
+  return `<div class="user-row${inactive ? " inactive" : ""}" data-id="${p.id}">
     <div class="user-top">
       <span class="user-email">${esc(p.email || p.id.slice(0, 8))}${
         isSelf ? ' <span style="color:var(--muted)">(you)</span>' : ""
-      }</span>
+      }${inactive ? ' <span class="user-off">inactive</span>' : ""}</span>
       <select data-preset ${isSelf ? "disabled" : ""}>
         ${["admin", "editor", "viewer", "custom"]
           .map((r) => `<option value="${r}" ${preset === r ? "selected" : ""}>${r}</option>`)
@@ -117,6 +176,9 @@ function renderRow(p, isSelf) {
         }> ${c.label}</label>`;
       }).join("")}
     </div>
+    ${isSelf ? "" : `<div class="user-actions">
+      <button class="ghost user-deact" data-deact="${p.id}" data-active="${inactive}">${inactive ? "Reactivate" : "Deactivate"}</button>
+    </div>`}
   </div>`;
 }
 

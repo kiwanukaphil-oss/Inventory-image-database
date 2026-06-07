@@ -2,7 +2,7 @@ import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
-import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting } from "./data.js";
+import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, vocabSuggestions } from "./data.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -300,7 +300,7 @@ async function renderGallery(view, caps) {
     <div class="grid" id="grid"></div>
     ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
       <button class="ab-btn" id="abAi"><span class="ab-ico">✨</span>AI-fill</button>
-      <button class="ab-btn" id="abStatus"><span class="ab-ico">◧</span>Status</button>
+      <button class="ab-btn" id="abEdit"><span class="ab-ico">✎</span>Edit</button>
       <button class="ab-btn" id="abMore"><span class="ab-ico">⋯</span>More</button>
       <button class="ab-btn" id="abDone"><span class="ab-ico">✓</span>Done</button>
     </div>` : ""}`;
@@ -333,7 +333,7 @@ async function renderGallery(view, caps) {
     const n = selected.size;
     const c = hdrSelect.querySelector("#selCount");
     if (c) c.textContent = `${n} selected`;
-    ["abAi", "abStatus", "abMore"].forEach((id) => {
+    ["abAi", "abEdit", "abMore"].forEach((id) => {
       const el = view.querySelector("#" + id);
       if (el) el.disabled = n === 0;
     });
@@ -580,6 +580,105 @@ async function renderGallery(view, caps) {
   const selectBtn = view.querySelector("#selectBtn");
   if (selectBtn) selectBtn.onclick = enterSelection;
 
+  // Bulk-edit common fields across the selection. Only the fields you fill are
+  // applied; category-specific fields appear when the whole selection is one
+  // category. Cost is gated by can_view_cost.
+  function openBulkEdit() {
+    if (!selected.size) return;
+    const ids = [...selected];
+    const items = ids.map((id) => byId[id]).filter(Boolean);
+    const cats = new Set(items.map((it) => it.category_id));
+    const sameCat = cats.size === 1 ? [...cats][0] : null;
+    const catFields = sameCat ? resolveFields(sameCat) : [];
+    const canCost = !!caps.can_view_cost;
+    const UNCH = "— unchanged —";
+
+    let body = `
+      <div class="be-note muted">Only the fields you fill are applied to the ${ids.length} selected item${ids.length === 1 ? "" : "s"}.</div>
+      <div class="cm-label">Status</div>
+      <select id="be-status"><option value="">${UNCH}</option>${["draft", "needs-review", "approved", "flag"].map((s) => `<option value="${s}">${s}</option>`).join("")}</select>
+      <div class="cm-label">Brand</div>
+      <input id="be-brand" list="dl-brand" placeholder="${UNCH}">
+      <datalist id="dl-brand">${vocabSuggestions("brand").map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
+      <div class="cm-label">Retail price</div>
+      <input id="be-price" type="number" inputmode="decimal" placeholder="${UNCH}">
+      ${canCost ? `<div class="cm-label">Cost price</div><input id="be-cost" type="number" inputmode="decimal" placeholder="${UNCH}">` : ""}
+      <div class="cm-label">Stock quantity</div>
+      <input id="be-stock" type="number" inputmode="numeric" placeholder="${UNCH}">
+      <div class="cm-label">Reorder level</div>
+      <input id="be-reorder" type="number" inputmode="numeric" placeholder="${UNCH}">`;
+
+    if (sameCat && catFields.length) {
+      body += `<div class="sheet-sec">${esc(categoryPath(sameCat))} fields</div>`;
+      for (const f of catFields) {
+        body += `<div class="cm-label">${esc(f.label)}</div>`;
+        if (f.type === "select" && Array.isArray(f.options) && f.options.length) {
+          body += `<select class="be-attr" data-key="${esc(f.key)}" data-type="${esc(f.type)}" data-vocab="${esc(f.vocab || "")}"><option value="">${UNCH}</option>${f.options.map((o) => `<option value="${esc(o)}">${esc(o)}</option>`).join("")}</select>`;
+        } else {
+          const t = f.type === "number" ? "number" : "text";
+          const dl = f.vocab ? ` list="be-dl-${esc(f.vocab)}"` : "";
+          body += `<input class="be-attr" data-key="${esc(f.key)}" data-type="${esc(f.type)}" data-vocab="${esc(f.vocab || "")}" type="${t}"${dl} placeholder="${UNCH}">`;
+          if (f.vocab) body += `<datalist id="be-dl-${esc(f.vocab)}">${vocabSuggestions(f.vocab).map((o) => `<option value="${esc(o)}">`).join("")}</datalist>`;
+        }
+      }
+    } else if (cats.size > 1) {
+      body += `<div class="be-note muted">Category-specific fields are hidden because the selection spans multiple categories.</div>`;
+    }
+    body += `<button class="primary up-go" id="be-apply">Apply to ${ids.length} item${ids.length === 1 ? "" : "s"}</button>`;
+
+    const sh = openBottomSheet("Edit selected", body);
+    sh.body.querySelector("#be-apply").onclick = async () => {
+      const col = {};
+      const st = sh.body.querySelector("#be-status").value;
+      if (st) col.status = st;
+      const brand = sh.body.querySelector("#be-brand").value.trim();
+      if (brand) col.brand = normalizeValue("brand", brand);
+      const price = sh.body.querySelector("#be-price").value.trim();
+      if (price !== "") col.price = Number(price);
+      const stock = sh.body.querySelector("#be-stock").value.trim();
+      if (stock !== "") col.stock_quantity = Number(stock);
+      const reorder = sh.body.querySelector("#be-reorder").value.trim();
+      if (reorder !== "") col.reorder_level = Number(reorder);
+      const costEl = sh.body.querySelector("#be-cost");
+      const costVal = costEl && costEl.value.trim() !== "" ? Number(costEl.value.trim()) : undefined;
+
+      const attrChanges = {};
+      sh.body.querySelectorAll(".be-attr").forEach((el) => {
+        let v = el.value.trim();
+        if (v === "") return;
+        if (el.dataset.vocab) v = normalizeValue(el.dataset.vocab, v);
+        attrChanges[el.dataset.key] = el.dataset.type === "number" ? Number(v) : v;
+      });
+
+      if (!Object.keys(col).length && costVal === undefined && !Object.keys(attrChanges).length) {
+        alert("Enter at least one field to apply."); return;
+      }
+      sh.close();
+      try {
+        if (Object.keys(col).length) {
+          const { error } = await supabase.from("items").update(col).in("id", ids);
+          if (error) throw error;
+        }
+        if (costVal !== undefined) {
+          const { error } = await supabase.from("item_costs")
+            .upsert(ids.map((id) => ({ item_id: id, cost_price: costVal })), { onConflict: "item_id" });
+          if (error) throw error;
+        }
+        if (Object.keys(attrChanges).length) {
+          // jsonb attributes must merge per item (each has its own existing values).
+          for (const it of items) {
+            const merged = { ...(it.attributes || {}), ...attrChanges };
+            const { error } = await supabase.from("items").update({ attributes: merged }).eq("id", it.id);
+            if (error) throw error;
+          }
+        }
+      } catch (e) {
+        alert("Bulk edit failed: " + (e.message || e));
+      }
+      refresh();
+    };
+  }
+
   // ---- wiring: selection header + action bar ----
   if (canEdit) {
     view.querySelector("#selExit").onclick = exitSelection;
@@ -594,21 +693,7 @@ async function renderGallery(view, caps) {
       const items = [...selected].map((id) => byId[id]).filter(Boolean);
       openBulkAi(items, caps, refresh);
     };
-    view.querySelector("#abStatus").onclick = () => {
-      if (!selected.size) return;
-      const body = `<div class="chips">${["draft", "needs-review", "approved", "flag"]
-        .map((s) => `<button class="schip" data-set="${s}">${esc(s)}</button>`).join("")}</div>`;
-      const sh = openBottomSheet(`Set status · ${selected.size} selected`, body);
-      sh.body.addEventListener("click", async (e) => {
-        const b = e.target.closest("[data-set]");
-        if (!b) return;
-        const ids = [...selected];
-        sh.close();
-        const { error } = await supabase.from("items").update({ status: b.dataset.set }).in("id", ids);
-        if (error) { alert("Status update failed: " + error.message); return; }
-        refresh();
-      });
-    };
+    view.querySelector("#abEdit").onclick = openBulkEdit;
     view.querySelector("#abMore").onclick = () => {
       if (!selected.size) return;
       const body = `
