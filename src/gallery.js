@@ -39,9 +39,17 @@ function summarizeItem(it) {
 const NAV = [
   { id: "gallery", label: "Gallery", ico: "▦" },
   { id: "add", label: "Add", ico: "＋" },
-  { id: "find", label: "Find", ico: "🔎" },
+  { id: "review", label: "Review", ico: "⚑", badge: true },
   { id: "export", label: "Export", ico: "⤓" },
 ];
+
+// Update the Review tab's count badge (needs-review + low-confidence items).
+function setReviewBadge(count) {
+  const b = document.getElementById("reviewBadge");
+  if (!b) return;
+  b.textContent = count > 99 ? "99+" : String(count);
+  b.hidden = !count;
+}
 
 /**
  * Render the full app shell for a signed-in user.
@@ -73,7 +81,9 @@ export function renderApp(mount, profile, onSignOut) {
 
   // Build bottom nav buttons.
   nav.innerHTML = NAV.map(
-    (n) => `<button data-view="${n.id}"><span class="ico">${n.ico}</span>${n.label}</button>`
+    (n) => `<button data-view="${n.id}"><span class="ico">${n.ico}</span>${n.label}${
+      n.badge ? `<span class="navbadge" id="reviewBadge" hidden></span>` : ""
+    }</button>`
   ).join("");
 
   let currentViewId = "gallery";
@@ -91,7 +101,7 @@ export function renderApp(mount, profile, onSignOut) {
         renderGallery(view, caps);
       });
     else if (id === "export") renderExport(view, caps);
-    else if (id === "find") renderFind(view, caps);
+    else if (id === "review") renderReview(view, caps);
     else renderComingSoon(view, id);
   }
 
@@ -201,6 +211,8 @@ function dateCutoff(v) {
   return d;
 }
 
+// TODO(remove): no longer used since Status became a facet in the unified browse
+// surface (Step 4). Kept briefly in case a status quick-filter is wanted back.
 const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
 
 // Hard caps on how many rows each browse surface loads at once. Exposed so the
@@ -218,10 +230,29 @@ function skeletonGrid(n = 8) {
   return `<div class="grid">${card.repeat(n)}</div>`;
 }
 
-// Remember the gallery's search + filters for the session (until reload).
-const galState = { q: "", stFilter: "all", dtFilter: "all", needsReview: false };
+// Sort options for the unified browse surface.
+const SORTS = [
+  { v: "new", label: "Newest first" },
+  { v: "old", label: "Oldest first" },
+  { v: "price-desc", label: "Price: high → low" },
+  { v: "price-asc", label: "Price: low → high" },
+  { v: "stock-asc", label: "Stock: low → high" },
+  { v: "stock-desc", label: "Stock: high → low" },
+  { v: "brand", label: "Brand A–Z" },
+];
+
+// Session-remembered view state, kept separate per surface so the Gallery and
+// Review tabs don't clobber each other's search/filters/sort. `active` holds
+// facet selections serialised as arrays (rehydrated to Sets on render).
+const browseState = {
+  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", datePreset: "all", active: {} },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", datePreset: "all", active: {} },
+};
+
 // True if an item has any field marked Low confidence.
 const hasLowConf = (it) => it.confidence && Object.values(it.confidence).some((v) => v === "Low");
+// Triage predicate: flagged / explicitly needs-review / has a low-confidence field.
+const needsReviewItem = (it) => it.status === "flag" || it.status === "needs-review" || hasLowConf(it);
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 
 // Fade each thumbnail in over its shimmer once the image has loaded, so the
@@ -250,7 +281,9 @@ const ICON = {
 // Premium gallery: clean top bar (search · filters · select), active-filter
 // pills, and a contextual selection action bar (replaces the app nav while
 // selecting). Tapping a card opens the editor; tapping its photo the lightbox.
-async function renderGallery(view, caps) {
+async function renderGallery(view, caps, opts = {}) {
+  const review = !!opts.review; // Review tab = this surface pre-filtered to triage
+  const state = review ? browseState.review : browseState.gallery;
   const canEdit = !!caps.can_edit;
   const canDelete = !!caps.can_delete;
   const appNav = document.querySelector(".bottomnav");
@@ -259,7 +292,7 @@ async function renderGallery(view, caps) {
   await loadRefData(); // category tree + field definitions drive the card summary
   const { data, error } = await supabase
     .from("items")
-    .select("id, name, brand, sku, price, status, image_path, attributes, confidence, category_id, created_at, categories(name)")
+    .select("id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, categories(name)")
     .order("created_at", { ascending: false })
     .limit(GALLERY_LIMIT);
 
@@ -269,10 +302,14 @@ async function renderGallery(view, caps) {
       <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
     return;
   }
+
+  // Keep the Review tab's badge in sync on every load (any surface refreshes it).
+  setReviewBadge((data || []).filter(needsReviewItem).length);
+
   if (!data || data.length === 0) {
     view.innerHTML = `<div class="empty"><div class="big">📭</div>
-      <div>No items yet.</div>
-      <div style="color:var(--muted);font-size:13px">Run the seed importer or add photos.</div></div>`;
+      <div>${review ? "Nothing to review." : "No items yet."}</div>
+      <div style="color:var(--muted);font-size:13px">${review ? "New uploads needing attention will appear here." : "Run the seed importer or add photos."}</div></div>`;
     return;
   }
 
@@ -286,11 +323,51 @@ async function renderGallery(view, caps) {
     (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
   }
 
+  // This user's saved views (cloud-synced; empty if the table isn't there yet).
+  const { data: svData } = await supabase.from("saved_views").select("id, name, payload").order("created_at");
+  let savedViews = svData || [];
+
+  // ---- faceting engine (ported from the old Find tab) ----
+  // The value of a given facet key for an item.
+  const valueOf = (it, key) => {
+    if (key === "brand") return it.brand || "";
+    if (key === "status") return it.status || "";
+    if (key === "top") return (categoryPath(it.category_id) || "").split(" › ")[0] || "";
+    if (key === "category") return (categoryPath(it.category_id) || "").split(" › ").pop() || "";
+    const v = it.attributes?.[key];
+    return v === null || v === undefined ? "" : String(v);
+  };
+  // Base fields + every attribute key present, keeping only facets with ≥2 values.
+  const attrKeys = [...new Set(data.flatMap((it) => Object.keys(it.attributes || {})))];
+  const facetCmp = (a, b) => a.localeCompare(b, undefined, { numeric: true });
+  const facets = [];
+  for (const f of [
+    { key: "top", label: "Top category" },
+    { key: "category", label: "Category" },
+    { key: "brand", label: "Brand" },
+    { key: "status", label: "Status" },
+    ...attrKeys.map((k) => ({ key: k, label: fieldLabel(k) })),
+  ]) {
+    const values = [...new Set(data.map((it) => valueOf(it, f.key)).filter(Boolean))].sort(facetCmp);
+    if (values.length >= 2) facets.push({ ...f, values });
+  }
+  const facetByKey = Object.fromEntries(facets.map((f) => [f.key, f]));
+
+  // ---- view state (restored from the session, per surface) ----
+  let q = state.q;
+  let needsReview = review ? true : state.needsReview; // Review tab forces it on
+  let sortBy = state.sortBy;
+  let priceMin = state.priceMin, priceMax = state.priceMax, datePreset = state.datePreset;
+  const active = {}; // facetKey -> Set(values); AND across keys, OR within a key
+  for (const k in (state.active || {})) if (facetByKey[k]) active[k] = new Set(state.active[k]);
+  const facetFilter = {}; // facetKey -> typed text to narrow that facet's value list
+  let filtered = []; // current filtered+sorted rows, for bulk actions
+
   view.innerHTML = `
     <div class="galtop">
       <div class="ghdr" id="hdrNormal">
-        <input id="q" class="fb-search" type="search" placeholder="Search…" value="${esc(galState.q)}">
-        <button class="iconbtn" id="filterBtn" aria-label="Filters">${ICON.filter}<span class="fdot" id="fdot" hidden></span></button>
+        <input id="q" class="fb-search" type="search" placeholder="Search…" value="${esc(q)}">
+        <button class="iconbtn" id="filterBtn" aria-label="Filters &amp; sort">${ICON.filter}<span class="fcount" id="fcount" hidden></span></button>
         ${canEdit ? `<button class="iconbtn" id="selectBtn" aria-label="Select">${ICON.check}</button>` : ""}
       </div>
       <div class="ghdr ghdr-sel" id="hdrSelect" hidden>
@@ -302,7 +379,7 @@ async function renderGallery(view, caps) {
       <div class="active-pills" id="pills"></div>
       <div class="count" id="count"></div>
     </div>
-    <div class="grid" id="grid"></div>
+    <div class="results" id="grid"></div>
     ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
       <button class="ab-btn" id="abAi"><span class="ab-ico">✨</span>AI-fill</button>
       <button class="ab-btn" id="abEdit"><span class="ab-ico">✎</span>Edit</button>
@@ -317,16 +394,20 @@ async function renderGallery(view, caps) {
   const hdrNormal = view.querySelector("#hdrNormal");
   const hdrSelect = view.querySelector("#hdrSelect");
   const actionbar = view.querySelector("#actionbar");
-  let q = galState.q;
-  let stFilter = galState.stFilter;
-  let dtFilter = galState.dtFilter;
-  let needsReview = galState.needsReview;
-  let filtered = []; // current filtered rows, used by bulk actions
+
+  // Persist the current view state for this surface (so tab switches keep place).
+  const saveState = () => {
+    state.q = q; state.needsReview = needsReview; state.sortBy = sortBy;
+    state.priceMin = priceMin; state.priceMax = priceMax;
+    state.datePreset = datePreset;
+    state.active = {};
+    for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
+  };
 
   // Re-render after an edit/bulk action without losing the user's scroll place.
   const refresh = () => {
     const y = window.scrollY;
-    return renderGallery(view, caps).then(() => window.scrollTo(0, y));
+    return renderGallery(view, caps, opts).then(() => window.scrollTo(0, y));
   };
 
   // ---- selection mode (phone-gallery style multi-select) ----
@@ -383,77 +464,109 @@ async function renderGallery(view, caps) {
   // Status badge colour per workflow state.
   const stClass = { draft: "st-draft", "needs-review": "st-review", approved: "st-ok", flag: "st-flag" };
 
+  // Free-text search across brand/name/sku/category + all attribute values.
+  const textMatch = (it) => !q || [it.brand, it.name, it.sku, it.categories?.name,
+    ...Object.values(it.attributes || {})].join(" ").toLowerCase().includes(q);
+
+  // Does an item pass all active filters? excludeKey lets a facet's own counts
+  // ignore its own selection (standard faceted counting).
+  function matches(it, excludeKey) {
+    if (!textMatch(it)) return false;
+    if (needsReview && !needsReviewItem(it)) return false;
+    if (priceMin !== "" && (it.price == null || it.price < Number(priceMin))) return false;
+    if (priceMax !== "" && (it.price == null || it.price > Number(priceMax))) return false;
+    const cutoff = dateCutoff(datePreset);
+    if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
+    for (const k in active) {
+      if (k === excludeKey) continue;
+      const set = active[k];
+      if (set && set.size && !set.has(valueOf(it, k))) return false;
+    }
+    return true;
+  }
+
+  // Sort comparators that always push blank (null) numbers to the end.
+  const numAsc = (key) => (a, b) => {
+    const x = a[key], y = b[key];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1; if (y == null) return -1;
+    return x - y;
+  };
+  const numDesc = (key) => (a, b) => {
+    const x = a[key], y = b[key];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1; if (y == null) return -1;
+    return y - x;
+  };
+  function applySort(rows) {
+    const r = rows.slice(); // data is loaded newest-first, so "new" needs no sort
+    if (sortBy === "old") r.reverse();
+    else if (sortBy === "price-asc") r.sort(numAsc("price"));
+    else if (sortBy === "price-desc") r.sort(numDesc("price"));
+    else if (sortBy === "stock-asc") r.sort(numAsc("stock_quantity"));
+    else if (sortBy === "stock-desc") r.sort(numDesc("stock_quantity"));
+    else if (sortBy === "brand") r.sort((a, b) =>
+      (a.brand || a.name || "").localeCompare(b.brand || b.name || "", undefined, { numeric: true }));
+    return r;
+  }
+
+  // Status badge colour per workflow state.
+  const stClass2 = stClass; // (alias kept to minimise churn below)
+
+  // One product card.
+  function cardHtml(it, slides) {
+    const url = signed[it.image_path];
+    const cat = it.categories?.name || "";
+    const variant = summarizeItem(it); // category-driven summary line
+    const brand = it.brand || it.name || "—";
+    let slideIdx = -1;
+    if (url) { slideIdx = slides.length; slides.push({ url, caption: esc([brand, variant].filter(Boolean).join(" · ")) }); }
+    const inner = url
+      ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
+      : `<span style="color:var(--muted);font-size:12px">no image</span>`;
+    const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
+      ${inner}<span class="selcheck">✓</span>${hasLowConf(it) ? '<span class="lowdot" title="Has a low-confidence field"></span>' : ""}</div>`;
+    return `<div class="card${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
+      ${thumb}
+      <div class="body">
+        <div class="cardtop">
+          <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
+          <span class="stbadge ${stClass2[it.status] || ""}">${esc(it.status)}</span>
+        </div>
+        <div class="cbrand">${esc(brand)}</div>
+        ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
+        <div class="cmeta">
+          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : "<span></span>"}
+          <span class="cdate">${fmtDate(it.created_at)}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function draw() {
-    const cutoff = dateCutoff(dtFilter);
-    const rows = data.filter((it) => {
-      if (stFilter !== "all" && it.status !== stFilter) return false;
-      if (needsReview && !(it.status === "flag" || it.status === "needs-review" || hasLowConf(it))) return false;
-      if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
-      if (!q) return true;
-      const hay = [it.brand, it.name, it.sku, it.categories?.name,
-        ...Object.values(it.attributes || {})].join(" ").toLowerCase();
-      return hay.includes(q);
-    });
-    filtered = rows; // expose current filtered set for bulk actions
-    galState.q = q; galState.stFilter = stFilter; galState.dtFilter = dtFilter; galState.needsReview = needsReview; // remember for the session
+    const rows = applySort(data.filter((it) => matches(it, null)));
+    filtered = rows;          // expose current filtered+sorted set for bulk actions
+    saveState();
 
     // Note when the load hit the row cap so a truncated set never looks complete.
     const capped = data.length >= GALLERY_LIMIT;
     const countNote = capped ? ` · <span class="cap-note">showing the first ${GALLERY_LIMIT.toLocaleString()} — refine to see all</span>` : "";
 
-    // Search/filters matched nothing — show an actionable empty state rather than
-    // a blank grid. (The "no items at all" case is handled earlier, on load.)
+    // Filters matched nothing → actionable empty state (not a blank grid).
     if (rows.length === 0) {
       countEl.innerHTML = `0 of ${data.length} item${data.length === 1 ? "" : "s"}${countNote}`;
-      grid.innerHTML = `<div class="empty"><div class="big">🔍</div>
-        <div>No items match your search or filters.</div>
-        <button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button></div>`;
+      grid.innerHTML = `<div class="empty"><div class="big">${review ? "✓" : "🔍"}</div>
+        <div>${review ? "Nothing needs review right now." : "No items match your search or filters."}</div>
+        ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
       grid._slides = [];
-      grid.querySelector("#clearFiltersBtn").onclick = () => {
-        q = ""; stFilter = "all"; dtFilter = "all"; needsReview = false;
-        if (qEl) qEl.value = "";
-        draw(); pills();
-      };
+      const cf = grid.querySelector("#clearFiltersBtn");
+      if (cf) cf.onclick = clearAllFilters;
       return;
     }
 
     // Slides for the lightbox follow the currently filtered, ordered rows.
     const slides = [];
-    grid.innerHTML = rows
-      .map((it) => {
-        const url = signed[it.image_path];
-        const cat = it.categories?.name || "";
-        // Category-driven summary: shows each category's own fields.
-        const variant = summarizeItem(it);
-        const brand = it.brand || it.name || "—";
-        const caption = [brand, variant].filter(Boolean).join(" · ");
-        let slideIdx = -1;
-        if (url) {
-          slideIdx = slides.length;
-          slides.push({ url, caption: esc(caption) });
-        }
-        const inner = url
-          ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
-          : `<span style="color:var(--muted);font-size:12px">no image</span>`;
-        const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
-          ${inner}<span class="selcheck">✓</span>${hasLowConf(it) ? '<span class="lowdot" title="Has a low-confidence field"></span>' : ""}</div>`;
-        return `<div class="card${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
-          ${thumb}
-          <div class="body">
-            <div class="cardtop">
-              <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
-              <span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span>
-            </div>
-            <div class="cbrand">${esc(brand)}</div>
-            ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
-            <div class="cmeta">
-              ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : "<span></span>"}
-              <span class="cdate">${fmtDate(it.created_at)}</span>
-            </div>
-          </div>
-        </div>`;
-      })
-      .join("");
+    grid.innerHTML = `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
     countEl.innerHTML = `${rows.length} of ${data.length} item${data.length === 1 ? "" : "s"}${countNote}`;
     grid._slides = slides;
     fadeInImages(grid);
@@ -552,51 +665,280 @@ async function renderGallery(view, caps) {
   // Suppress the browser long-press context menu inside the grid.
   grid.addEventListener("contextmenu", (e) => e.preventDefault());
 
-  // ---- active filter pills + filters sheet ----
+  // ---- active filters: pill strip + the "Filters & sort" sheet ----
+  // How many narrowing filters are active (drives the Filters-button badge).
+  function filterCount() {
+    let n = 0;
+    for (const k in active) if (active[k]?.size) n += active[k].size;
+    if (priceMin || priceMax) n++;
+    if (datePreset !== "all") n++;
+    if (needsReview && !review) n++;
+    return n;
+  }
+  // Reset filters (not sort/group, which are view options). Review keeps triage.
+  function clearAllFilters() {
+    q = ""; if (qEl) qEl.value = "";
+    for (const k in active) delete active[k];
+    for (const k in facetFilter) delete facetFilter[k];
+    priceMin = ""; priceMax = ""; datePreset = "all";
+    if (!review) needsReview = false;
+    draw(); pills();
+  }
+
+  // The horizontal strip of removable chips below the search box.
   function pills() {
     const out = [];
-    if (needsReview) out.push(`<button class="apill" data-clear="nr">Needs review ✕</button>`);
-    if (stFilter !== "all") out.push(`<button class="apill" data-clear="st">Status: ${esc(stFilter)} ✕</button>`);
-    if (dtFilter !== "all") {
-      const lbl = DATE_FILTERS.find((d) => d.v === dtFilter)?.label || dtFilter;
-      out.push(`<button class="apill" data-clear="dt">${esc(lbl)} ✕</button>`);
+    if (sortBy !== "new") out.push(`<button class="apill view" data-clear="sort">Sorted: ${esc(SORTS.find((s) => s.v === sortBy)?.label || sortBy)} ✕</button>`);
+    for (const k in active) for (const v of active[k]) {
+      out.push(`<button class="apill" data-facet="${esc(k)}" data-val="${esc(v)}">${esc(facetByKey[k]?.label || k)}: ${esc(v)} ✕</button>`);
     }
+    if (priceMin || priceMax) out.push(`<button class="apill" data-clear="price">Price: ${esc(priceMin || "0")}–${esc(priceMax || "∞")} ✕</button>`);
+    if (datePreset !== "all") out.push(`<button class="apill" data-clear="dt">${esc(DATE_FILTERS.find((d) => d.v === datePreset)?.label || datePreset)} ✕</button>`);
     pillsEl.innerHTML = out.join("");
-    const dot = view.querySelector("#fdot");
-    if (dot) dot.hidden = stFilter === "all" && dtFilter === "all" && !needsReview;
+    const badge = view.querySelector("#fcount");
+    if (badge) { const n = filterCount(); badge.textContent = n; badge.hidden = !n; }
   }
   pillsEl.addEventListener("click", (e) => {
-    const b = e.target.closest("[data-clear]");
+    const b = e.target.closest("[data-clear], [data-facet]");
     if (!b) return;
-    if (b.dataset.clear === "st") stFilter = "all";
-    else if (b.dataset.clear === "dt") dtFilter = "all";
-    else if (b.dataset.clear === "nr") needsReview = false;
+    if (b.dataset.facet) active[b.dataset.facet]?.delete(b.dataset.val);
+    else if (b.dataset.clear === "price") { priceMin = ""; priceMax = ""; }
+    else if (b.dataset.clear === "dt") datePreset = "all";
+    else if (b.dataset.clear === "sort") sortBy = "new";
     draw(); pills();
   });
 
+  // The "Filters & sort" sheet — a clean drill-down (master list → focused
+  // picker), designed for non-technical mobile users: one consistent row idiom,
+  // one decision per screen, current value shown on each row. Live-applies to
+  // the grid behind it; the footer shows the live result count.
   function openFilters() {
-    const body = `
-      <div class="sheet-sec">Review</div>
-      <div class="chips"><button class="schip ${needsReview ? "on" : ""}" data-nr>Needs review (flagged / low-confidence)</button></div>
-      <div class="sheet-sec">Status</div>
-      <div class="chips">${STATUSES.map((s) => `<button class="schip ${stFilter === s ? "on" : ""}" data-st="${s}">${s === "all" ? "All" : esc(s)}</button>`).join("")}</div>
-      <div class="sheet-sec">Added</div>
-      <div class="chips">${DATE_FILTERS.map((d) => `<button class="schip ${dtFilter === d.v ? "on" : ""}" data-dt="${d.v}">${esc(d.label)}</button>`).join("")}</div>
-      <button class="ghost sheet-clear" data-fclear>Clear filters</button>`;
-    const sh = openBottomSheet("Filters", body);
-    sh.body.addEventListener("click", (e) => {
-      const st = e.target.closest("[data-st]");
+    const matchCount = () => data.filter((it) => matches(it, null)).length;
+    const PRIMARY = ["category", "brand"]; // shown directly; the rest go under "More"
+    const moreFacets = facets.filter((f) => !PRIMARY.includes(f.key));
+    const priceLabel = () => (priceMin || priceMax)
+      ? `${fmtPrice(priceMin || 0)}–${priceMax ? fmtPrice(priceMax) : "∞"}` : "Any";
+    const dateLabel = () => DATE_FILTERS.find((d) => d.v === datePreset)?.label || "Any date";
+    const facetSummary = (f) => {
+      const sel = active[f.key];
+      return sel?.size ? `${[...sel].slice(0, 2).join(", ")}${sel.size > 2 ? ` +${sel.size - 2}` : ""}` : "Any";
+    };
+    const moreSummary = () => {
+      const n = moreFacets.reduce((s, f) => s + (active[f.key]?.size || 0), 0);
+      return n ? `${n} selected` : "Any";
+    };
+
+    // ---- sheet shell with a master/detail head ----
+    const el = document.createElement("div");
+    el.className = "msheet filter-sheet";
+    el.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true" aria-label="Filters and sort">
+        <div class="msheet-head">
+          <button class="iconbtn" id="fsBack" aria-label="Back" hidden>‹</button>
+          <span id="fsTitle">Filters &amp; sort</span>
+          <button class="iconbtn" id="fsX" aria-label="Close">✕</button>
+        </div>
+        <div class="msheet-body" id="fsBody"></div>
+        <div class="fs-foot">
+          <button class="ghost" id="fsClear">Clear all</button>
+          <button class="primary" id="fsShow"></button>
+        </div>
+      </div>`;
+    document.body.appendChild(el);
+    requestAnimationFrame(() => el.classList.add("open"));
+    const release = trapFocus(el);
+    const bodyEl = el.querySelector("#fsBody");
+    const titleEl = el.querySelector("#fsTitle");
+    const backBtn = el.querySelector("#fsBack");
+    const showBtn = el.querySelector("#fsShow");
+
+    const close = () => { document.removeEventListener("keydown", onKey); release(); el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
+    let currentBack = null; // where the head back-button goes (null = at master)
+    const onKey = (e) => { if (e.key === "Escape" && isTopOverlay(el)) (currentBack ? currentBack() : close()); };
+    document.addEventListener("keydown", onKey);
+    el.addEventListener("click", (e) => { if (e.target === el) close(); });
+    el.querySelector("#fsX").onclick = close;
+    el.querySelector("#fsClear").onclick = () => { clearAllFilters(); showMaster(); };
+    showBtn.onclick = close;
+
+    const refreshShow = () => { const n = matchCount(); showBtn.textContent = `Show ${n} result${n === 1 ? "" : "s"}`; };
+    // Apply changes to the grid behind the sheet, then refresh the footer count.
+    const apply = () => { draw(); pills(); refreshShow(); };
+
+    // Navigate into a detail view (sets the head back-target).
+    function go(renderFn, backFn) { currentBack = backFn; backBtn.hidden = false; renderFn(); }
+    backBtn.onclick = () => (currentBack ? currentBack() : showMaster());
+
+    const rowLink = (id, label, val) =>
+      `<button class="fs-link" data-go="${esc(id)}"><span class="fs-label">${esc(label)}</span><span class="fs-val">${esc(val)} ›</span></button>`;
+    const optRow = (attrs, label, on, n) =>
+      `<button class="fs-opt${on ? " on" : ""}" ${attrs}>${
+        n === undefined
+          ? `<span class="fs-opt-label">${esc(label)}</span>${on ? '<span class="fs-check">✓</span>' : ""}`
+          : `<span class="fs-check-box${on ? " on" : ""}">${on ? "✓" : ""}</span><span class="fs-opt-label">${esc(label)}</span><span class="fs-opt-n">${n}</span>`
+      }</button>`;
+
+    // ---- MASTER list ----
+    function showMaster() {
+      currentBack = null; backBtn.hidden = true; titleEl.textContent = "Filters & sort";
+      let html = `<div class="fs-list">${rowLink("sort", "Sort", SORTS.find((s) => s.v === sortBy)?.label || "Newest")}</div>`;
+      html += `<div class="fs-list">`;
+      for (const k of PRIMARY) if (facetByKey[k]) html += rowLink("facet:" + k, facetByKey[k].label, facetSummary(facetByKey[k]));
+      html += rowLink("price", "Price", priceLabel());
+      html += rowLink("date", "Added", dateLabel());
+      html += `</div>`;
+      if (moreFacets.length) html += `<div class="fs-list">${rowLink("more", "More filters", moreSummary())}</div>`;
+      html += `<div class="fs-list">${rowLink("saved", "Saved views", savedViews.length ? `${savedViews.length}` : "None")}</div>`;
+      bodyEl.innerHTML = html;
+      refreshShow();
+    }
+
+    // ---- SORT detail (single choice) ----
+    function showSort() {
+      titleEl.textContent = "Sort";
+      bodyEl.innerHTML = `<div class="fs-list">${SORTS.map((s) =>
+        optRow(`data-sort="${s.v}"`, s.label, sortBy === s.v)).join("")}</div>`;
+    }
+
+    // ---- PRICE detail ----
+    function showPrice() {
+      titleEl.textContent = "Price";
+      bodyEl.innerHTML = `<div class="fs-detail">
+        <label class="cm-label" for="fsMin">Minimum price</label>
+        <input id="fsMin" class="rng" type="number" inputmode="numeric" placeholder="No minimum" value="${esc(priceMin)}">
+        <label class="cm-label" for="fsMax">Maximum price</label>
+        <input id="fsMax" class="rng" type="number" inputmode="numeric" placeholder="No maximum" value="${esc(priceMax)}">
+      </div>`;
+      requestAnimationFrame(() => bodyEl.querySelector("#fsMin")?.focus());
+    }
+
+    // ---- ADDED (date) detail (single choice) ----
+    function showDate() {
+      titleEl.textContent = "Added";
+      bodyEl.innerHTML = `<div class="fs-list">${DATE_FILTERS.map((d) =>
+        optRow(`data-dt="${d.v}"`, d.label, datePreset === d.v)).join("")}</div>`;
+    }
+
+    // ---- MORE filters: list of the remaining facets ----
+    function showMore() {
+      titleEl.textContent = "More filters";
+      bodyEl.innerHTML = `<div class="fs-list">${moreFacets.map((f) =>
+        rowLink("facet:" + f.key, f.label, facetSummary(f))).join("")}</div>`;
+    }
+
+    // ---- FACET detail (multi-select checklist with live counts) ----
+    let curFacet = null;
+    function renderFacet() {
+      const f = curFacet;
+      const sel = active[f.key];
+      const ff = facetFilter[f.key] || "";
+      const base = data.filter((it) => matches(it, f.key));
+      const counts = {};
+      for (const it of base) { const v = valueOf(it, f.key); if (v) counts[v] = (counts[v] || 0) + 1; }
+      const rows = f.values.map((v) => {
+        const on = sel?.has(v); const n = counts[v] || 0;
+        if (n === 0 && !on) return "";
+        if (ff && !v.toLowerCase().includes(ff)) return "";
+        return optRow(`data-facet="${esc(f.key)}" data-val="${esc(v)}"`, v, on, n);
+      }).join("");
+      const search = f.values.length > 8
+        ? `<input class="facet-filter" type="search" placeholder="Search ${esc(f.label.toLowerCase())}…" value="${esc(ff)}">`
+        : "";
+      bodyEl.innerHTML = `<div class="fs-detail">${search}<div class="fs-list">${rows || `<div class="muted" style="padding:14px">No matches.</div>`}</div></div>`;
+    }
+    function showFacet(f, backFn) { curFacet = f; titleEl.textContent = f.label; go(renderFacet, backFn); }
+
+    // ---- SAVED VIEWS detail ----
+    function showSaved() {
+      titleEl.textContent = "Saved views";
+      const list = savedViews.length
+        ? savedViews.map((v) => `<div class="fs-opt sv-row" data-apply="${v.id}">
+            <span class="fs-opt-label">${esc(v.name)}</span>
+            <button class="sx" data-del="${v.id}" aria-label="Delete view">✕</button></div>`).join("")
+        : `<div class="muted" style="padding:14px">No saved views yet.</div>`;
+      bodyEl.innerHTML = `<div class="fs-detail">
+        <div class="fs-list">${list}</div>
+        <button class="ghost" id="fsSaveView" style="margin-top:12px">★ Save current view</button>
+      </div>`;
+    }
+
+    // ---- one delegated click handler for the whole sheet body ----
+    bodyEl.addEventListener("click", async (e) => {
+      const nav = e.target.closest("[data-go]");
+      if (nav) {
+        const id = nav.dataset.go;
+        if (id === "sort") go(showSort, showMaster);
+        else if (id === "price") go(showPrice, showMaster);
+        else if (id === "date") go(showDate, showMaster);
+        else if (id === "more") go(showMore, showMaster);
+        else if (id === "saved") go(showSaved, showMaster);
+        else if (id.startsWith("facet:")) {
+          const f = facetByKey[id.slice(6)];
+          if (f) showFacet(f, PRIMARY.includes(f.key) ? showMaster : showMore);
+        }
+        return;
+      }
+      const sort = e.target.closest("[data-sort]");
+      if (sort) { sortBy = sort.dataset.sort; apply(); showMaster(); return; }
       const dt = e.target.closest("[data-dt]");
-      if (st) stFilter = st.dataset.st;
-      else if (dt) dtFilter = dt.dataset.dt;
-      else if (e.target.closest("[data-nr]")) needsReview = !needsReview;
-      else if (e.target.closest("[data-fclear]")) { stFilter = "all"; dtFilter = "all"; needsReview = false; }
-      else return;
-      sh.body.querySelectorAll("[data-st]").forEach((x) => x.classList.toggle("on", x.dataset.st === stFilter));
-      sh.body.querySelectorAll("[data-dt]").forEach((x) => x.classList.toggle("on", x.dataset.dt === dtFilter));
-      sh.body.querySelector("[data-nr]")?.classList.toggle("on", needsReview);
-      draw(); pills();
+      if (dt) { datePreset = dt.dataset.dt; apply(); showMaster(); return; }
+      const chip = e.target.closest("[data-facet][data-val]");
+      if (chip) {
+        const k = chip.dataset.facet, v = chip.dataset.val;
+        (active[k] = active[k] || new Set()).has(v) ? active[k].delete(v) : active[k].add(v);
+        if (!active[k].size) delete active[k];
+        apply(); renderFacet(); // counts shift, so re-render this list
+        return;
+      }
+      const del = e.target.closest("[data-del]");
+      if (del) {
+        e.stopPropagation();
+        const v = savedViews.find((x) => x.id === del.dataset.del);
+        const ok = await confirmSheet({ title: "Delete saved view?", message: v ? `“${v.name}” will be removed from all your devices.` : "", confirmText: "Delete", danger: true });
+        if (!ok) return;
+        const { error } = await supabase.from("saved_views").delete().eq("id", del.dataset.del);
+        if (error) { toast("Couldn't delete view: " + error.message); return; }
+        savedViews = savedViews.filter((x) => x.id !== del.dataset.del);
+        showSaved(); toast("View deleted");
+        return;
+      }
+      const applyV = e.target.closest("[data-apply]");
+      if (applyV) {
+        const v = savedViews.find((x) => x.id === applyV.dataset.apply);
+        if (!v) return;
+        const p = v.payload || {};
+        for (const k in active) delete active[k];
+        for (const k in (p.active || {})) if (facetByKey[k]) active[k] = new Set(p.active[k]);
+        q = p.q || ""; if (qEl) qEl.value = q;
+        sortBy = p.sortBy && SORTS.some((s) => s.v === p.sortBy) ? p.sortBy : "new";
+        priceMin = p.priceMin || ""; priceMax = p.priceMax || ""; datePreset = p.datePreset || "all";
+        apply(); showMaster(); toast(`Applied “${v.name}”`);
+        return;
+      }
+      if (e.target.closest("#fsSaveView")) {
+        const name = await promptSheet({ title: "Save this view", label: "View name", placeholder: "e.g. Low stock, New arrivals", confirmText: "Save view" });
+        if (!name) return;
+        const serial = {};
+        for (const k in active) if (active[k]?.size) serial[k] = [...active[k]];
+        const payload = { active: serial, q, sortBy, priceMin, priceMax, datePreset };
+        const { data: created, error } = await supabase.from("saved_views").insert({ name, payload }).select("id, name, payload").single();
+        if (error) { toast("Couldn't save view: " + error.message); return; }
+        savedViews.push(created); showSaved(); toast("View saved");
+      }
     });
+
+    // price + facet-search inputs (delegated)
+    bodyEl.addEventListener("input", (e) => {
+      if (e.target.id === "fsMin") { priceMin = e.target.value.trim(); apply(); }
+      else if (e.target.id === "fsMax") { priceMax = e.target.value.trim(); apply(); }
+      else if (e.target.classList.contains("facet-filter") && curFacet) {
+        facetFilter[curFacet.key] = e.target.value.trim().toLowerCase();
+        renderFacet();
+        const again = bodyEl.querySelector(".facet-filter");
+        if (again) { again.focus(); again.setSelectionRange(again.value.length, again.value.length); }
+      }
+    });
+
+    showMaster();
   }
 
   // ---- wiring: top bar ----
@@ -760,318 +1102,10 @@ async function renderGallery(view, caps) {
   pills();
 }
 
-// ---- Find tab: faceted finder (AND across facets / OR within), group-by, saved views ----
-// Saved views live in the `saved_views` table (per-user), so they sync across devices.
-async function renderFind(view, caps) {
-  view.innerHTML = skeletonGrid();
-  await loadRefData();
-  const { data, error } = await supabase
-    .from("items")
-    .select("id, name, brand, sku, price, status, image_path, attributes, category_id, created_at")
-    .order("created_at", { ascending: false })
-    .limit(FIND_LIMIT);
-  if (error) {
-    view.innerHTML = `<div class="empty"><div class="big">⚠️</div><div>Couldn't load items.</div>
-      <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
-    return;
-  }
 
-  // This user's saved views (empty if the table isn't there yet).
-  const { data: svData } = await supabase.from("saved_views").select("id, name, payload").order("created_at");
-  let savedViews = svData || [];
-
-  // Signed thumbnails (batched).
-  const paths = data.filter((d) => d.image_path).map((d) => d.image_path);
-  const signed = {};
-  if (paths.length) {
-    const { data: urls } = await supabase.storage.from("product-images").createSignedUrls(paths, 3600);
-    (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
-  }
-
-  // The value of a given facet key for an item.
-  const valueOf = (it, key) => {
-    if (key === "brand") return it.brand || "";
-    if (key === "status") return it.status || "";
-    if (key === "top") return (categoryPath(it.category_id) || "").split(" › ")[0] || "";
-    if (key === "category") return (categoryPath(it.category_id) || "").split(" › ").pop() || "";
-    const v = it.attributes?.[key];
-    return v === null || v === undefined ? "" : String(v);
-  };
-
-  // Build the facet list: base fields + every attribute key present, keeping
-  // only facets that actually have ≥2 distinct values (otherwise nothing to filter).
-  const attrKeys = [...new Set(data.flatMap((it) => Object.keys(it.attributes || {})))];
-  const candidates = [
-    { key: "top", label: "Top category" },
-    { key: "category", label: "Category" },
-    { key: "brand", label: "Brand" },
-    { key: "status", label: "Status" },
-    ...attrKeys.map((k) => ({ key: k, label: fieldLabel(k) })),
-  ];
-  const cmp = (a, b) => a.localeCompare(b, undefined, { numeric: true });
-  const facets = [];
-  for (const f of candidates) {
-    const values = [...new Set(data.map((it) => valueOf(it, f.key)).filter(Boolean))].sort(cmp);
-    if (values.length >= 2) facets.push({ ...f, values });
-  }
-  const facetByKey = Object.fromEntries(facets.map((f) => [f.key, f]));
-
-  const active = {}; // facetKey -> Set(values); AND across keys, OR within a key
-  const facetFilter = {}; // facetKey -> typed text to narrow that facet's chips
-  let q = "";
-  let groupBy = "none";
-  let priceMin = "", priceMax = "", datePreset = "all"; // range filters
-
-  view.innerHTML = `
-    <div class="find">
-      <input id="fq" class="fb-search" type="search" placeholder="Search…">
-      <div class="find-row">
-        <select id="groupBy">
-          <option value="none">No grouping</option>
-          ${facets.map((f) => `<option value="${f.key}">Group: ${esc(f.label)}</option>`).join("")}
-        </select>
-        <button class="ghost" id="saveViewBtn">★ Save view</button>
-      </div>
-      <div class="find-ranges">
-        <input id="pMin" class="rng" type="number" inputmode="numeric" placeholder="Min price">
-        <input id="pMax" class="rng" type="number" inputmode="numeric" placeholder="Max price">
-        <select id="dPreset">${DATE_FILTERS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}</select>
-      </div>
-      <div class="saved-views" id="savedViews"></div>
-      <div class="active-chips" id="activeChips"></div>
-      <div class="count" id="fcount"></div>
-      <div class="facets" id="facets"></div>
-      <div class="find-results" id="findResults"></div>
-    </div>`;
-
-  const fq = view.querySelector("#fq");
-  const groupSel = view.querySelector("#groupBy");
-  const facetsEl = view.querySelector("#facets");
-  const activeChipsEl = view.querySelector("#activeChips");
-  const resultsEl = view.querySelector("#findResults");
-  const countEl = view.querySelector("#fcount");
-  const savedEl = view.querySelector("#savedViews");
-  const pMin = view.querySelector("#pMin");
-  const pMax = view.querySelector("#pMax");
-  const dPreset = view.querySelector("#dPreset");
-
-  const textMatch = (it) =>
-    !q || [it.brand, it.name, it.sku, ...Object.values(it.attributes || {})].join(" ").toLowerCase().includes(q);
-  function matches(it, excludeKey) {
-    if (!textMatch(it)) return false;
-    if (priceMin !== "" && (it.price == null || it.price < Number(priceMin))) return false;
-    if (priceMax !== "" && (it.price == null || it.price > Number(priceMax))) return false;
-    const cutoff = dateCutoff(datePreset);
-    if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
-    for (const k in active) {
-      if (k === excludeKey) continue;
-      const set = active[k];
-      if (set && set.size && !set.has(valueOf(it, k))) return false;
-    }
-    return true;
-  }
-
-  function cardHtml(it, slides) {
-    const url = signed[it.image_path];
-    let slot = -1;
-    const variant = summarizeItem(it);
-    const title = it.brand || it.name || "—";
-    if (url) { slot = slides.length; slides.push({ url, caption: esc([title, variant].filter(Boolean).join(" · ")) }); }
-    const thumb = url
-      ? `<div class="thumb" data-slide="${slot}"><img loading="lazy" src="${url}" alt="${esc(title)}"></div>`
-      : `<div class="thumb"><span style="color:var(--muted);font-size:12px">no image</span></div>`;
-    return `<div class="card" data-id="${it.id}">${thumb}<div class="body">
-      <div class="cbrand">${esc(title)}</div>
-      ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
-      ${it.price != null ? `<div class="cprice">${fmtPrice(it.price)}</div>` : ""}
-    </div></div>`;
-  }
-
-  function renderActiveChips() {
-    const chips = [];
-    for (const k in active) for (const v of active[k]) {
-      chips.push(`<button class="achip" data-facet="${esc(k)}" data-val="${esc(v)}">${esc(facetByKey[k]?.label || k)}: ${esc(v)} ✕</button>`);
-    }
-    activeChipsEl.innerHTML = chips.length
-      ? chips.join("") + `<button class="achip clear" id="clearAll">Clear all</button>`
-      : "";
-  }
-
-  function renderFacets() {
-    facetsEl.innerHTML = facets.map((f) => {
-      const sel = active[f.key];
-      const ff = facetFilter[f.key] || "";
-      // Counts reflect all OTHER active facets (standard faceted counts).
-      const base = data.filter((it) => matches(it, f.key));
-      const counts = {};
-      for (const it of base) { const v = valueOf(it, f.key); if (v) counts[v] = (counts[v] || 0) + 1; }
-      const chips = f.values.map((v) => {
-        const on = sel?.has(v);
-        const n = counts[v] || 0;
-        if (n === 0 && !on) return ""; // hide values that can't combine with current filters
-        const hide = ff && !v.toLowerCase().includes(ff); // type-to-filter
-        return `<button class="chip ${on ? "on" : ""}"${hide ? ' style="display:none"' : ""} data-facet="${esc(f.key)}" data-val="${esc(v)}">${esc(v)} <span class="chipn">${n}</span></button>`;
-      }).join("");
-      // Only long facets get a type-to-filter box.
-      const filterInput = f.values.length > 8
-        ? `<input class="facet-filter" type="search" data-facet="${esc(f.key)}" placeholder="Type to filter ${esc(f.label.toLowerCase())}…" value="${esc(ff)}">`
-        : "";
-      const badge = sel?.size ? ` <span class="gcount">${sel.size}</span>` : "";
-      return `<details class="facet"${sel?.size || ff ? " open" : ""}><summary>${esc(f.label)}${badge}</summary>${filterInput}<div class="chips">${chips}</div></details>`;
-    }).join("");
-  }
-
-  function renderResults() {
-    const results = data.filter((it) => matches(it, null));
-    const capped = data.length >= FIND_LIMIT;
-    const countNote = capped ? ` · <span class="cap-note">showing the first ${FIND_LIMIT.toLocaleString()} — refine to see all</span>` : "";
-    countEl.innerHTML = `${results.length} result${results.length === 1 ? "" : "s"}${countNote}`;
-    const slides = [];
-    let html;
-    if (groupBy === "none") {
-      html = `<div class="grid">${results.map((it) => cardHtml(it, slides)).join("")}</div>`;
-    } else {
-      const groups = new Map();
-      for (const it of results) {
-        const g = valueOf(it, groupBy) || "—";
-        if (!groups.has(g)) groups.set(g, []);
-        groups.get(g).push(it);
-      }
-      html = [...groups.keys()].sort(cmp).map((g) =>
-        `<details class="grp grp1" open><summary>${esc(g)} <span class="gcount">${groups.get(g).length}</span></summary>
-          <div class="grid">${groups.get(g).map((it) => cardHtml(it, slides)).join("")}</div></details>`
-      ).join("");
-    }
-    if (results.length) {
-      resultsEl.innerHTML = html;
-    } else {
-      // Offer a reset only if something is actually narrowing the results.
-      const anyFilter = q || priceMin || priceMax || datePreset !== "all"
-        || Object.keys(active).some((k) => active[k]?.size);
-      resultsEl.innerHTML = `<div class="empty"><div class="big">🔍</div>
-        <div>No matches.</div>
-        ${anyFilter ? `<button class="ghost" id="fClear" style="margin-top:10px">Clear all filters</button>` : ""}</div>`;
-      const fc = resultsEl.querySelector("#fClear");
-      if (fc) fc.onclick = () => {
-        for (const k in active) delete active[k];
-        q = ""; fq.value = "";
-        priceMin = ""; pMin.value = "";
-        priceMax = ""; pMax.value = "";
-        datePreset = "all"; dPreset.value = "all";
-        refresh();
-      };
-    }
-    resultsEl._slides = slides;
-    fadeInImages(resultsEl);
-  }
-
-  function renderSavedViews() {
-    savedEl.innerHTML = savedViews
-      .map((v) => `<span class="sview" data-apply="${v.id}">${esc(v.name)}<span class="sx" data-del="${v.id}">✕</span></span>`)
-      .join("");
-  }
-
-  const refresh = () => { renderActiveChips(); renderFacets(); renderResults(); };
-
-  function toggleVal(key, val) {
-    if (!active[key]) active[key] = new Set();
-    if (active[key].has(val)) { active[key].delete(val); if (!active[key].size) delete active[key]; }
-    else active[key].add(val);
-    refresh();
-  }
-
-  facetsEl.addEventListener("click", (e) => {
-    const chip = e.target.closest(".chip[data-facet]");
-    if (chip) toggleVal(chip.dataset.facet, chip.dataset.val);
-  });
-  // Type-to-filter a facet's chips in place (keeps focus / keyboard open).
-  facetsEl.addEventListener("input", (e) => {
-    const inp = e.target.closest(".facet-filter");
-    if (!inp) return;
-    const key = inp.dataset.facet;
-    const t = inp.value.trim().toLowerCase();
-    facetFilter[key] = t;
-    inp.closest(".facet").querySelectorAll(".chip[data-facet]").forEach((c) => {
-      c.style.display = c.dataset.val.toLowerCase().includes(t) ? "" : "none";
-    });
-  });
-  activeChipsEl.addEventListener("click", (e) => {
-    if (e.target.closest("#clearAll")) { for (const k in active) delete active[k]; refresh(); return; }
-    const chip = e.target.closest(".achip[data-facet]");
-    if (chip) toggleVal(chip.dataset.facet, chip.dataset.val);
-  });
-  resultsEl.addEventListener("click", (e) => {
-    const thumb = e.target.closest(".thumb[data-slide]");
-    if (thumb) { openLightbox(resultsEl._slides, Number(thumb.dataset.slide)); return; }
-    const card = e.target.closest(".card[data-id]");
-    if (card) openEditor(card.dataset.id, caps, () => {
-      const y = window.scrollY;
-      return renderFind(view, caps).then(() => window.scrollTo(0, y)); // keep place after edit
-    });
-  });
-  fq.addEventListener("input", () => { q = fq.value.trim().toLowerCase(); refresh(); });
-  groupSel.addEventListener("change", () => { groupBy = groupSel.value; renderResults(); });
-  pMin.addEventListener("input", () => { priceMin = pMin.value.trim(); refresh(); });
-  pMax.addEventListener("input", () => { priceMax = pMax.value.trim(); refresh(); });
-  dPreset.addEventListener("change", () => { datePreset = dPreset.value; refresh(); });
-
-  // Saved views (cloud-synced via the saved_views table; per-user).
-  view.querySelector("#saveViewBtn").onclick = async () => {
-    const name = await promptSheet({
-      title: "Save this view",
-      label: "View name",
-      placeholder: "e.g. Low stock, New arrivals",
-      confirmText: "Save view",
-    });
-    if (!name) return;
-    const serial = {};
-    for (const k in active) serial[k] = [...active[k]];
-    const payload = { active: serial, q, groupBy, priceMin, priceMax, datePreset };
-    const { data, error } = await supabase.from("saved_views")
-      .insert({ name, payload }).select("id, name, payload").single();
-    if (error) { toast("Couldn't save view: " + error.message); return; }
-    savedViews.push(data);
-    renderSavedViews();
-    toast("View saved");
-  };
-  savedEl.addEventListener("click", async (e) => {
-    const del = e.target.closest("[data-del]");
-    if (del) {
-      e.stopPropagation();
-      const id = del.dataset.del;
-      const sv = savedViews.find((x) => x.id === id);
-      const ok = await confirmSheet({
-        title: "Delete saved view?",
-        message: sv ? `“${sv.name}” will be removed from all your devices.` : "",
-        confirmText: "Delete",
-        danger: true,
-      });
-      if (!ok) return;
-      const { error } = await supabase.from("saved_views").delete().eq("id", id);
-      if (error) { toast("Couldn't delete view: " + error.message); return; }
-      savedViews = savedViews.filter((v) => v.id !== id);
-      renderSavedViews();
-      toast("View deleted");
-      return;
-    }
-    const sv = e.target.closest(".sview[data-apply]");
-    if (!sv) return;
-    const v = savedViews.find((x) => x.id === sv.dataset.apply);
-    if (!v) return;
-    const p = v.payload || {};
-    for (const k in active) delete active[k];
-    for (const k in (p.active || {})) active[k] = new Set(p.active[k]);
-    q = p.q || ""; fq.value = q;
-    groupBy = p.groupBy || "none"; groupSel.value = facetByKey[groupBy] ? groupBy : "none";
-    priceMin = p.priceMin || ""; pMin.value = priceMin;
-    priceMax = p.priceMax || ""; pMax.value = priceMax;
-    datePreset = p.datePreset || "all"; dPreset.value = datePreset;
-    refresh();
-  });
-
-  renderSavedViews();
-  refresh();
-}
+// The Review tab is the unified browse surface, pre-filtered to triage items
+// (flagged / needs-review / low-confidence). Reuses renderGallery with review:true.
+function renderReview(view, caps) { return renderGallery(view, caps, { review: true }); }
 
 // Fallback for any unrouted nav id (all current tabs are implemented).
 function renderComingSoon(view, id) {

@@ -39,10 +39,15 @@ export function anyOverlayOpen() {
 // users can't tab into the page behind a modal and aren't dumped at the top of
 // the document on close. Returns a release() to call when the overlay closes.
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+// Stack of active traps so that when overlays nest (e.g. a confirm over a sheet)
+// only the top-most trap enforces Tab — otherwise the two fight over focus.
+const trapStack = [];
 export function trapFocus(container) {
   const prevFocus = document.activeElement;
+  trapStack.push(container);
   const onKey = (e) => {
     if (e.key !== "Tab") return;
+    if (trapStack[trapStack.length - 1] !== container) return; // a deeper trap owns focus
     const items = [...container.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null);
     if (!items.length) return;
     const first = items[0], last = items[items.length - 1];
@@ -55,6 +60,8 @@ export function trapFocus(container) {
   document.addEventListener("keydown", onKey, true);
   return () => {
     document.removeEventListener("keydown", onKey, true);
+    const i = trapStack.lastIndexOf(container);
+    if (i >= 0) trapStack.splice(i, 1);
     try { prevFocus?.focus?.(); } catch { /* element gone — ignore */ }
   };
 }

@@ -147,8 +147,8 @@ a { color:var(--accent); }
   border:2px solid #fff9; background:#0006; color:transparent;
   display:none; align-items:center; justify-content:center; font-size:14px; font-weight:700;
 }
-.grid.selecting .card .selcheck { display:flex; }
-.grid.selecting .card { cursor:pointer; }
+.selecting .card .selcheck { display:flex; }
+.selecting .card { cursor:pointer; }
 .card.selected { outline:2px solid var(--accent); outline-offset:-2px; }
 .card.selected .selcheck { background:var(--accent); border-color:var(--accent); color:#fff; }
 /* low-confidence triage dot */
@@ -414,6 +414,55 @@ a { color:var(--accent); }
 .chip .chipn { color:var(--muted); font-size:11px; }
 .chip.on .chipn { color:#9ecbff; }
 .find-results { margin-top:4px; }
+
+/* ---- Filters & sort drill-down sheet ---- */
+/* Head: back chevron + title + close. Title takes the middle. */
+.filter-sheet .msheet-head { gap:6px; }
+.filter-sheet .msheet-head #fsTitle { flex:1 1 auto; }
+.filter-sheet .msheet-body { gap:0; } /* groups manage their own spacing */
+/* iOS-settings-style grouped list of tappable rows. */
+.fs-list { display:flex; flex-direction:column; background:var(--panel);
+  border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+.fs-list + .fs-list { margin-top:14px; }
+.fs-link, .fs-opt { display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+  background:transparent; border:none; border-radius:0; padding:14px; color:var(--txt); font-size:15px; min-height:50px; }
+.fs-link + .fs-link, .fs-opt + .fs-opt { border-top:1px solid var(--line); }
+.fs-link:active, .fs-opt:active { background:#0d0f14; }
+.fs-label, .fs-opt-label { flex:1 1 auto; }
+.fs-val { color:var(--muted); font-size:14px; white-space:nowrap; max-width:55%; overflow:hidden; text-overflow:ellipsis; }
+.fs-opt-n { color:var(--muted); font-size:12px; }
+.fs-check { color:var(--accent); }
+.fs-check-box { width:22px; height:22px; flex:0 0 auto; border-radius:6px; border:1.5px solid var(--line);
+  display:inline-flex; align-items:center; justify-content:center; font-size:13px; color:#fff; }
+.fs-check-box.on { background:var(--accent); border-color:var(--accent); }
+.fs-detail { display:flex; flex-direction:column; gap:8px; }
+.fs-detail .facet-filter { margin:0 0 4px; }
+.sv-row .sx { color:var(--muted); flex:0 0 auto; background:transparent; border:none; font-size:14px; }
+/* Footer with Clear all + the live "Show N results" button. */
+.fs-foot { display:flex; gap:8px; flex:0 0 auto; padding:12px 14px calc(12px + var(--safe-bottom));
+  border-top:1px solid var(--line); background:var(--bg); }
+.fs-foot .ghost { flex:0 0 auto; }
+.fs-foot .primary { flex:1 1 auto; }
+/* "view option" pills (sort) read as muted vs the accent filter pills. */
+.apill.view { border-color:var(--line); color:var(--muted); background:transparent; }
+/* Count badge on the Filters button (number of active filters). */
+.fcount { position:absolute; top:2px; right:2px; min-width:16px; height:16px; padding:0 4px;
+  border-radius:8px; background:var(--accent); color:#fff; font-size:10px; font-weight:600;
+  display:flex; align-items:center; justify-content:center; }
+/* Count badge on the Review bottom-nav tab. */
+.bottomnav button { position:relative; }
+.navbadge { position:absolute; top:4px; left:50%; margin-left:4px; min-width:16px; height:16px;
+  padding:0 4px; border-radius:8px; background:#ffb020; color:#1a1206; font-size:10px; font-weight:700;
+  display:flex; align-items:center; justify-content:center; }
+/* Count badge on the Filters button (number of active filters). */
+.fcount { position:absolute; top:2px; right:2px; min-width:16px; height:16px; padding:0 4px;
+  border-radius:8px; background:var(--accent); color:#fff; font-size:10px; font-weight:600;
+  display:flex; align-items:center; justify-content:center; }
+/* Count badge on the Review bottom-nav tab. */
+.bottomnav button { position:relative; }
+.navbadge { position:absolute; top:4px; left:50%; margin-left:4px; min-width:16px; height:16px;
+  padding:0 4px; border-radius:8px; background:#ffb020; color:#1a1206; font-size:10px; font-weight:700;
+  display:flex; align-items:center; justify-content:center; }
 
 /* ---------------- grouping view ---------------- */
 .grouplbl { font-size:13px; color:var(--muted); align-self:center; }
