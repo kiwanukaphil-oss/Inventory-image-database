@@ -194,7 +194,9 @@ function dateCutoff(v) {
 const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
 
 // Remember the gallery's search + filters for the session (until reload).
-const galState = { q: "", stFilter: "all", dtFilter: "all" };
+const galState = { q: "", stFilter: "all", dtFilter: "all", needsReview: false };
+// True if an item has any field marked Low confidence.
+const hasLowConf = (it) => it.confidence && Object.values(it.confidence).some((v) => v === "Low");
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 
 // Fade each thumbnail in over its shimmer once the image has loaded, so the
@@ -305,6 +307,7 @@ async function renderGallery(view, caps) {
   let q = galState.q;
   let stFilter = galState.stFilter;
   let dtFilter = galState.dtFilter;
+  let needsReview = galState.needsReview;
   let filtered = []; // current filtered rows, used by bulk actions
 
   // Re-render after an edit/bulk action without losing the user's scroll place.
@@ -371,6 +374,7 @@ async function renderGallery(view, caps) {
     const cutoff = dateCutoff(dtFilter);
     const rows = data.filter((it) => {
       if (stFilter !== "all" && it.status !== stFilter) return false;
+      if (needsReview && !(it.status === "flag" || it.status === "needs-review" || hasLowConf(it))) return false;
       if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
       if (!q) return true;
       const hay = [it.brand, it.name, it.sku, it.categories?.name,
@@ -398,7 +402,7 @@ async function renderGallery(view, caps) {
           ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
           : `<span style="color:var(--muted);font-size:12px">no image</span>`;
         const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
-          ${inner}<span class="selcheck">✓</span></div>`;
+          ${inner}<span class="selcheck">✓</span>${hasLowConf(it) ? '<span class="lowdot" title="Has a low-confidence field"></span>' : ""}</div>`;
         return `<div class="card${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
           ${thumb}
           <div class="body">
@@ -418,7 +422,7 @@ async function renderGallery(view, caps) {
       .join("");
     countEl.textContent = `${rows.length} of ${data.length} item${data.length === 1 ? "" : "s"}`;
     grid._slides = slides;
-    galState.q = q; galState.stFilter = stFilter; galState.dtFilter = dtFilter; // remember for the session
+    galState.q = q; galState.stFilter = stFilter; galState.dtFilter = dtFilter; galState.needsReview = needsReview; // remember for the session
     fadeInImages(grid);
   }
 
@@ -518,6 +522,7 @@ async function renderGallery(view, caps) {
   // ---- active filter pills + filters sheet ----
   function pills() {
     const out = [];
+    if (needsReview) out.push(`<button class="apill" data-clear="nr">Needs review ✕</button>`);
     if (stFilter !== "all") out.push(`<button class="apill" data-clear="st">Status: ${esc(stFilter)} ✕</button>`);
     if (dtFilter !== "all") {
       const lbl = DATE_FILTERS.find((d) => d.v === dtFilter)?.label || dtFilter;
@@ -525,17 +530,21 @@ async function renderGallery(view, caps) {
     }
     pillsEl.innerHTML = out.join("");
     const dot = view.querySelector("#fdot");
-    if (dot) dot.hidden = stFilter === "all" && dtFilter === "all";
+    if (dot) dot.hidden = stFilter === "all" && dtFilter === "all" && !needsReview;
   }
   pillsEl.addEventListener("click", (e) => {
     const b = e.target.closest("[data-clear]");
     if (!b) return;
-    if (b.dataset.clear === "st") stFilter = "all"; else dtFilter = "all";
+    if (b.dataset.clear === "st") stFilter = "all";
+    else if (b.dataset.clear === "dt") dtFilter = "all";
+    else if (b.dataset.clear === "nr") needsReview = false;
     draw(); pills();
   });
 
   function openFilters() {
     const body = `
+      <div class="sheet-sec">Review</div>
+      <div class="chips"><button class="schip ${needsReview ? "on" : ""}" data-nr>Needs review (flagged / low-confidence)</button></div>
       <div class="sheet-sec">Status</div>
       <div class="chips">${STATUSES.map((s) => `<button class="schip ${stFilter === s ? "on" : ""}" data-st="${s}">${s === "all" ? "All" : esc(s)}</button>`).join("")}</div>
       <div class="sheet-sec">Added</div>
@@ -547,10 +556,12 @@ async function renderGallery(view, caps) {
       const dt = e.target.closest("[data-dt]");
       if (st) stFilter = st.dataset.st;
       else if (dt) dtFilter = dt.dataset.dt;
-      else if (e.target.closest("[data-fclear]")) { stFilter = "all"; dtFilter = "all"; }
+      else if (e.target.closest("[data-nr]")) needsReview = !needsReview;
+      else if (e.target.closest("[data-fclear]")) { stFilter = "all"; dtFilter = "all"; needsReview = false; }
       else return;
       sh.body.querySelectorAll("[data-st]").forEach((x) => x.classList.toggle("on", x.dataset.st === stFilter));
       sh.body.querySelectorAll("[data-dt]").forEach((x) => x.classList.toggle("on", x.dataset.dt === dtFilter));
+      sh.body.querySelector("[data-nr]")?.classList.toggle("on", needsReview);
       draw(); pills();
     });
   }
@@ -634,7 +645,7 @@ async function renderFind(view, caps) {
   await loadRefData();
   const { data, error } = await supabase
     .from("items")
-    .select("id, name, brand, sku, price, status, image_path, attributes, category_id")
+    .select("id, name, brand, sku, price, status, image_path, attributes, category_id, created_at")
     .order("created_at", { ascending: false })
     .limit(2000);
   if (error) {
@@ -683,6 +694,7 @@ async function renderFind(view, caps) {
   const facetFilter = {}; // facetKey -> typed text to narrow that facet's chips
   let q = "";
   let groupBy = "none";
+  let priceMin = "", priceMax = "", datePreset = "all"; // range filters
 
   view.innerHTML = `
     <div class="find">
@@ -693,6 +705,11 @@ async function renderFind(view, caps) {
           ${facets.map((f) => `<option value="${f.key}">Group: ${esc(f.label)}</option>`).join("")}
         </select>
         <button class="ghost" id="saveViewBtn">★ Save view</button>
+      </div>
+      <div class="find-ranges">
+        <input id="pMin" class="rng" type="number" inputmode="numeric" placeholder="Min price">
+        <input id="pMax" class="rng" type="number" inputmode="numeric" placeholder="Max price">
+        <select id="dPreset">${DATE_FILTERS.map((d) => `<option value="${d.v}">${d.label}</option>`).join("")}</select>
       </div>
       <div class="saved-views" id="savedViews"></div>
       <div class="active-chips" id="activeChips"></div>
@@ -708,11 +725,18 @@ async function renderFind(view, caps) {
   const resultsEl = view.querySelector("#findResults");
   const countEl = view.querySelector("#fcount");
   const savedEl = view.querySelector("#savedViews");
+  const pMin = view.querySelector("#pMin");
+  const pMax = view.querySelector("#pMax");
+  const dPreset = view.querySelector("#dPreset");
 
   const textMatch = (it) =>
     !q || [it.brand, it.name, it.sku, ...Object.values(it.attributes || {})].join(" ").toLowerCase().includes(q);
   function matches(it, excludeKey) {
     if (!textMatch(it)) return false;
+    if (priceMin !== "" && (it.price == null || it.price < Number(priceMin))) return false;
+    if (priceMax !== "" && (it.price == null || it.price > Number(priceMax))) return false;
+    const cutoff = dateCutoff(datePreset);
+    if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
     for (const k in active) {
       if (k === excludeKey) continue;
       const set = active[k];
@@ -842,6 +866,9 @@ async function renderFind(view, caps) {
   });
   fq.addEventListener("input", () => { q = fq.value.trim().toLowerCase(); refresh(); });
   groupSel.addEventListener("change", () => { groupBy = groupSel.value; renderResults(); });
+  pMin.addEventListener("input", () => { priceMin = pMin.value.trim(); refresh(); });
+  pMax.addEventListener("input", () => { priceMax = pMax.value.trim(); refresh(); });
+  dPreset.addEventListener("change", () => { datePreset = dPreset.value; refresh(); });
 
   // Saved views (per-device, localStorage).
   view.querySelector("#saveViewBtn").onclick = () => {
@@ -850,7 +877,7 @@ async function renderFind(view, caps) {
     const serial = {};
     for (const k in active) serial[k] = [...active[k]];
     const views = loadSavedViews();
-    views.push({ name: name.trim(), active: serial, q, groupBy });
+    views.push({ name: name.trim(), active: serial, q, groupBy, priceMin, priceMax, datePreset });
     storeSavedViews(views);
     renderSavedViews();
   };
@@ -872,6 +899,9 @@ async function renderFind(view, caps) {
     for (const k in (v.active || {})) active[k] = new Set(v.active[k]);
     q = v.q || ""; fq.value = q;
     groupBy = v.groupBy || "none"; groupSel.value = facetByKey[groupBy] ? groupBy : "none";
+    priceMin = v.priceMin || ""; pMin.value = priceMin;
+    priceMax = v.priceMax || ""; pMax.value = priceMax;
+    datePreset = v.datePreset || "all"; dPreset.value = datePreset;
     refresh();
   });
 

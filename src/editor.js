@@ -118,6 +118,7 @@ export async function openEditor(itemId, caps, onSaved) {
           <span style="color:var(--muted)"> (updates automatically)</span></div>
         ${item.created_at ? `<div class="added-line">Added ${esc(new Date(item.created_at).toLocaleString())}</div>` : ""}
 
+        ${canEdit ? `<button class="ghost histbtn" id="historyBtn">View change history</button>` : ""}
         ${canDelete ? `<button class="danger del-btn" id="deleteBtn">Delete item</button>` : ""}
       </div>
     </div>`;
@@ -252,6 +253,10 @@ export async function openEditor(itemId, caps, onSaved) {
       btn.textContent = "Save";
     }
   };
+
+  // Per-item change history (audit log; readable by editors).
+  const histBtn = sheet.querySelector("#historyBtn");
+  if (histBtn) histBtn.onclick = () => openHistory(itemId);
 
   // Delete (capability-gated): removes the item and its stored image.
   const deleteBtn = sheet.querySelector("#deleteBtn");
@@ -391,6 +396,38 @@ async function refreshSkuAndDupCheck(sheet, itemId) {
     }
   }
   return sku;
+}
+
+// Per-item change history from the audit log, shown in a bottom sheet.
+async function openHistory(itemId) {
+  const { data, error } = await supabase
+    .from("audit_log")
+    .select("created_at, change_type, field, before, after, notes")
+    .eq("item_id", itemId)
+    .order("created_at", { ascending: false })
+    .limit(200);
+
+  const rows = (data || []).map((r) => {
+    const when = new Date(r.created_at).toLocaleString();
+    let desc;
+    if (r.change_type === "create") desc = "Created";
+    else if (r.change_type === "delete") desc = "Deleted";
+    else desc = `${esc(r.field || "")}: ${esc(r.before ?? "∅")} → ${esc(r.after ?? "∅")}`;
+    return `<div class="hist-row"><div class="hist-when">${esc(when)}</div><div>${desc}</div>${
+      r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ""
+    }</div>`;
+  }).join("");
+
+  const ov = document.createElement("div");
+  ov.className = "msheet";
+  ov.innerHTML = `<div class="msheet-panel">
+      <div class="msheet-head"><span>Change history</span><button class="iconbtn" data-x aria-label="Close">✕</button></div>
+      <div class="msheet-body">${error ? esc(error.message) : rows || '<div class="muted">No history yet.</div>'}</div>
+    </div>`;
+  document.body.appendChild(ov);
+  requestAnimationFrame(() => ov.classList.add("open"));
+  const close = () => { ov.classList.remove("open"); setTimeout(() => ov.remove(), 200); };
+  ov.addEventListener("click", (e) => { if (e.target === ov || e.target.closest("[data-x]")) close(); });
 }
 
 // Lightweight toast.

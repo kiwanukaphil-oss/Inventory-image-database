@@ -132,6 +132,9 @@ a { color:var(--accent); }
 .grid.selecting .card { cursor:pointer; }
 .card.selected { outline:2px solid var(--accent); outline-offset:-2px; }
 .card.selected .selcheck { background:var(--accent); border-color:var(--accent); color:#fff; }
+/* low-confidence triage dot */
+.card .lowdot { position:absolute; top:6px; right:6px; width:11px; height:11px; border-radius:50%;
+  background:#ffb020; box-shadow:0 0 0 2px #0009; }
 
 .selbar {
   position:fixed; left:0; right:0; bottom:calc(60px + var(--safe-bottom)); z-index:28;
@@ -318,10 +321,25 @@ a { color:var(--accent); }
 .up-actions { display:flex; flex-direction:column; gap:8px; }
 .up-actions .up-go { margin-top:0; }
 
+/* webcam capture overlay */
+.webcam { position:fixed; inset:0; z-index:65; background:#000; display:flex; }
+.webcam-inner { flex:1; display:flex; flex-direction:column; min-height:0; }
+.webcam video { flex:1; width:100%; min-height:0; object-fit:contain; background:#000; }
+.webcam-bar { display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:12px 14px calc(12px + var(--safe-bottom)); background:var(--panel); border-top:1px solid var(--line); }
+
+/* per-item history rows */
+.hist-row { padding:8px 0; border-bottom:1px solid var(--line); font-size:14px; }
+.hist-row:last-child { border-bottom:none; }
+.hist-when { font-size:12px; color:var(--muted); }
+
 /* ---------------- find / faceted finder ---------------- */
 .find { display:flex; flex-direction:column; gap:8px; }
 .find-row { display:flex; gap:8px; align-items:center; }
 .find-row #groupBy { flex:1 1 auto; min-width:0; }
+.find-ranges { display:flex; gap:8px; }
+.find-ranges .rng { flex:1 1 0; min-width:0; }
+.find-ranges select { flex:1 1 0; min-width:0; }
 .saved-views { display:flex; gap:6px; flex-wrap:wrap; }
 .sview { display:inline-flex; align-items:center; gap:6px; font-size:12px;
   border:1px solid var(--line); border-radius:14px; padding:4px 8px; color:var(--txt); cursor:pointer; background:var(--panel); }

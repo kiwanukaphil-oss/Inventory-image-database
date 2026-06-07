@@ -63,6 +63,9 @@ export async function renderUpload(view, caps, onDone) {
           <input id="libInput" type="file" accept="image/*" multiple hidden>
           <span class="big">🖼️</span><span>Choose photos</span>
         </label>
+        <button type="button" class="pickbtn" id="webcamBtn">
+          <span class="big">📸</span><span>Webcam</span>
+        </button>
       </div>
 
       <div id="composeArea">
@@ -178,6 +181,42 @@ export async function renderUpload(view, caps, onDone) {
   }
   camInput.addEventListener("change", () => { addFiles([...camInput.files]); camInput.value = ""; });
   libInput.addEventListener("change", () => { addFiles([...libInput.files]); libInput.value = ""; });
+
+  // Webcam capture (mainly for desktop; needs HTTPS/localhost). Snap multiple
+  // frames, each added to the batch; the stream stops on close.
+  view.querySelector("#webcamBtn").onclick = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) { alert("Camera not available in this browser/context."); return; }
+    let stream;
+    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); }
+    catch (e) { alert("Couldn't access the camera: " + (e?.message || e)); return; }
+    const ov = document.createElement("div");
+    ov.className = "webcam";
+    ov.innerHTML = `<div class="webcam-inner">
+        <video id="wcVid" autoplay playsinline></video>
+        <div class="webcam-bar">
+          <button class="ghost" id="wcClose">Close</button>
+          <span id="wcCount" class="muted"></span>
+          <button class="primary" id="wcSnap">Capture</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    const vid = ov.querySelector("#wcVid");
+    vid.srcObject = stream;
+    let snapped = 0;
+    const close = () => { stream.getTracks().forEach((t) => t.stop()); ov.remove(); };
+    ov.querySelector("#wcClose").onclick = close;
+    ov.querySelector("#wcSnap").onclick = () => {
+      const c = document.createElement("canvas");
+      c.width = vid.videoWidth; c.height = vid.videoHeight;
+      c.getContext("2d").drawImage(vid, 0, 0);
+      c.toBlob((blob) => {
+        if (!blob) return;
+        addFiles([new File([blob], `webcam-${snapped}-${blob.size}.jpg`, { type: "image/jpeg" })]);
+        snapped++;
+        ov.querySelector("#wcCount").textContent = `${snapped} captured`;
+      }, "image/jpeg", 0.92);
+    };
+  };
 
   // When a category is chosen, render its (optional) common fields + brand.
   catSel.addEventListener("change", () => {
