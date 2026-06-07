@@ -28,6 +28,40 @@ function esc(v) {
   );
 }
 
+// Run the vision extractor on a freshly-uploaded item and fill any fields that
+// are still empty (never overrides the batch-common values the user set).
+async function aiFillItem(id, common) {
+  const defs = [
+    { key: "brand", label: "Brand" },
+    { key: "name", label: "Product name" },
+    ...resolveFields(common.categoryId).map((f) => ({ key: f.key, label: f.label, type: f.type, options: f.options, vocab: f.vocab })),
+  ];
+  const { data, error } = await supabase.functions.invoke("ai-extract", {
+    body: { item_id: id, category: categoryPath(common.categoryId), fields: defs },
+  });
+  if (error || data?.error || !data?.values) return;
+
+  const vocabByKey = { brand: "brand" };
+  const typeByKey = {};
+  for (const d of defs) { if (d.vocab) vocabByKey[d.key] = d.vocab; typeByKey[d.key] = d.type; }
+
+  const attributes = { ...common.attributes };
+  const confidence = {};
+  let brand = common.brand;
+  let name = null;
+  for (const [key, raw] of Object.entries(data.values)) {
+    if (raw === null || raw === undefined || raw === "") continue;
+    let val = String(raw);
+    if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
+    if (key === "brand") { if (!brand) brand = val; if (data.confidence?.brand) confidence.brand = data.confidence.brand; continue; }
+    if (key === "name") { if (!name) name = val; if (data.confidence?.name) confidence.name = data.confidence.name; continue; }
+    if (attributes[key] !== undefined && attributes[key] !== "") continue; // keep batch-common values
+    attributes[key] = typeByKey[key] === "number" ? Number(val) : val;
+    if (data.confidence?.[key]) confidence[key] = data.confidence[key];
+  }
+  await supabase.from("items").update({ brand, name, attributes, confidence }).eq("id", id);
+}
+
 // Leaf categories (no children) are where items actually go.
 function leafCategories(cache) {
   const hasChild = new Set(cache.categories.filter((c) => c.parent_id).map((c) => c.parent_id));
@@ -44,6 +78,7 @@ export async function renderUpload(view, caps, onDone) {
     return;
   }
 
+  const canEdit = !!caps.can_edit; // AI extraction requires editor/admin
   const cache = await loadRefData();
   const leaves = leafCategories(cache);
   const entries = []; // { key, file, url }
@@ -89,6 +124,7 @@ export async function renderUpload(view, caps, onDone) {
               <select id="statusSel"><option value="draft" selected>draft</option><option value="needs-review">needs-review</option></select>
             </div>
           </div>
+          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"> ✨ Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost)</span></label>` : ""}
           <button class="primary up-go" id="uploadBtn" disabled>Upload</button>
         </div>
       </div>
@@ -258,7 +294,10 @@ export async function renderUpload(view, caps, onDone) {
       if (el.dataset.vocab) val = normalizeValue(el.dataset.vocab, val);
       attributes[el.dataset.ck] = el.dataset.type === "number" ? Number(val) : val;
     });
-    return { categoryId, slug: cache.byId[categoryId]?.slug || "misc", status: $("#statusSel").value, brand, attributes };
+    return {
+      categoryId, slug: cache.byId[categoryId]?.slug || "misc", status: $("#statusSel").value,
+      brand, attributes, ai: !!$("#aiAfter")?.checked,
+    };
   }
 
   async function uploadOne(entry, common) {
@@ -274,6 +313,9 @@ export async function renderUpload(view, caps, onDone) {
       image_path: path, original_filename: entry.file.name,
     });
     if (ins.error) throw ins.error;
+    // Opt-in: read the photo and fill any still-empty fields. Soft-fails — the
+    // photo is already saved, so an AI hiccup never fails the upload.
+    if (common.ai) { try { await aiFillItem(id, common); } catch (e) { console.error("ai-fill failed", e); } }
   }
 
   const barFill = $("#barFill");
