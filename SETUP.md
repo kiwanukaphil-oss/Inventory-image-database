@@ -30,7 +30,7 @@ existing images comes in Phase 2.
 6. **Make yourself admin:** **SQL Editor**, run (using your email):
    ```sql
    update public.profiles set role = 'admin'
-   where email = 'kiwanukapkn@gmail.com';
+   where email = 'kiwanukaphil@gmail.com';
    ```
 
 ## B. Run locally

@@ -58,6 +58,8 @@ export async function openUsers(currentCaps) {
     notify._t = setTimeout(() => (statusEl.textContent = ""), 2500);
   };
 
+  const selfId = currentCaps.id; // don't let the current admin lock themselves out
+
   const { data: profiles, error } = await supabase
     .from("profiles")
     .select("id, email, role, can_upload, can_edit, can_delete, can_view_cost, can_manage_users")
@@ -68,7 +70,7 @@ export async function openUsers(currentCaps) {
     return;
   }
 
-  body.innerHTML = profiles.map(renderRow).join("");
+  body.innerHTML = profiles.map((p) => renderRow(p, p.id === selfId)).join("");
 
   // Toggle a single capability → mark role 'custom'.
   body.querySelectorAll("input[data-cap]").forEach((cb) => {
@@ -93,21 +95,27 @@ export async function openUsers(currentCaps) {
   });
 }
 
-function renderRow(p) {
+function renderRow(p, isSelf) {
   const preset = presetOf(p);
   return `<div class="user-row" data-id="${p.id}">
     <div class="user-top">
-      <span class="user-email">${esc(p.email || p.id.slice(0, 8))}</span>
-      <select data-preset>
+      <span class="user-email">${esc(p.email || p.id.slice(0, 8))}${
+        isSelf ? ' <span style="color:var(--muted)">(you)</span>' : ""
+      }</span>
+      <select data-preset ${isSelf ? "disabled" : ""}>
         ${["admin", "editor", "viewer", "custom"]
           .map((r) => `<option value="${r}" ${preset === r ? "selected" : ""}>${r}</option>`)
           .join("")}
       </select>
     </div>
     <div class="user-caps">
-      ${CAPS.map((c) =>
-        `<label><input type="checkbox" data-cap="${c.k}" ${p[c.k] ? "checked" : ""}> ${c.label}</label>`
-      ).join("")}
+      ${CAPS.map((c) => {
+        // Keep your own "Manage users" on so you can't lock yourself out.
+        const lock = isSelf && c.k === "can_manage_users";
+        return `<label><input type="checkbox" data-cap="${c.k}" ${p[c.k] ? "checked" : ""} ${
+          lock ? "checked disabled" : ""
+        }> ${c.label}</label>`;
+      }).join("")}
     </div>
   </div>`;
 }
