@@ -2,7 +2,7 @@ import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
-import { loadRefData, resolveFields } from "./data.js";
+import { loadRefData, resolveFields, categoryPath } from "./data.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -568,7 +568,7 @@ async function renderGroups(view, caps) {
       const inner = d2 === "none"
         ? `<div class="grid">${sub.get("__all__").map((it) => cardHtml(it, slides)).join("")}</div>`
         : [...sub.keys()].sort().map((s) =>
-            `<details class="grp grp2"><summary>${esc(s)} <span class="gcount">${sub.get(s).length}</span></summary>
+            `<details class="grp grp2" open><summary>${esc(s)} <span class="gcount">${sub.get(s).length}</span></summary>
               <div class="grid">${sub.get(s).map((it) => cardHtml(it, slides)).join("")}</div></details>`
           ).join("");
       return `<details class="grp grp1" open><summary>${esc(p)} <span class="gcount">${pCount}</span></summary>${inner}</details>`;
@@ -591,10 +591,10 @@ async function renderGroups(view, caps) {
   draw();
 }
 
+// Fallback for any unrouted nav id (all current tabs are implemented).
 function renderComingSoon(view, id) {
-  const labels = { add: "Add photos", groups: "Grouping", export: "CSV export" };
   view.innerHTML = `<div class="empty"><div class="big">🚧</div>
-    <div>${labels[id] || id} arrives in a later phase.</div></div>`;
+    <div>${esc(id)} is coming soon.</div></div>`;
 }
 
 // ---------------------------------------------------------------------------
