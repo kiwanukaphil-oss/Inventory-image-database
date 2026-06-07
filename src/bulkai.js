@@ -1,5 +1,6 @@
 import { supabase } from "./db.js";
 import { resolveFields, normalizeValue, categoryPath } from "./data.js";
+import { trapFocus } from "./ui.js";
 
 // Bulk AI fill: run the ai-extract Edge Function across a set of items (the
 // gallery's currently-filtered rows), filling empty fields with AI suggestions.
@@ -30,6 +31,9 @@ export function openBulkAi(items, caps, onDone) {
 
   const modal = document.createElement("div");
   modal.className = "bulkai";
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", `AI-fill ${n} item${n === 1 ? "" : "s"}`);
   modal.innerHTML = `
     <div class="bulkai-panel">
       <div id="confirmStep">
@@ -53,8 +57,8 @@ export function openBulkAi(items, caps, onDone) {
       <div id="runStep" style="display:none">
         <h2>Filling…</h2>
         <div class="bulkai-bar"><div id="barFill"></div></div>
-        <div class="bulkai-stats" id="stats"></div>
-        <div class="bulkai-log" id="log"></div>
+        <div class="bulkai-stats" id="stats" aria-live="polite"></div>
+        <div class="bulkai-log" id="log" role="log" aria-live="polite"></div>
         <div class="bulkai-actions">
           <button class="danger" id="stopBtn">Stop</button>
           <button class="primary" id="closeBtn" style="display:none">Done</button>
@@ -62,8 +66,10 @@ export function openBulkAi(items, caps, onDone) {
       </div>
     </div>`;
   document.body.appendChild(modal);
+  const releaseFocus = trapFocus(modal);
+  requestAnimationFrame(() => modal.querySelector("#startBtn")?.focus());
 
-  const close = () => modal.remove();
+  const close = () => { releaseFocus(); modal.remove(); };
   modal.querySelector("#cancelBtn").onclick = close;
   modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
 
@@ -75,11 +81,11 @@ export function openBulkAi(items, caps, onDone) {
     const onlyEmpty = modal.querySelector("#onlyEmpty").checked;
     modal.querySelector("#confirmStep").style.display = "none";
     modal.querySelector("#runStep").style.display = "block";
-    runBatch(modal, withImages, onlyEmpty, onDone);
+    runBatch(modal, withImages, onlyEmpty, onDone, close);
   };
 }
 
-async function runBatch(modal, items, onlyEmpty, onDone) {
+async function runBatch(modal, items, onlyEmpty, onDone, close) {
   const total = items.length;
   let done = 0, filled = 0, skipped = 0, failed = 0;
   let stopped = false;
@@ -191,5 +197,5 @@ async function runBatch(modal, items, onlyEmpty, onDone) {
   modal.querySelector("#runStep h2").textContent = stopped ? "Stopped" : "Done";
   stopBtn.style.display = "none";
   closeBtn.style.display = "inline-block";
-  closeBtn.onclick = () => { modal.remove(); onDone?.(); };
+  closeBtn.onclick = () => { close(); onDone?.(); };
 }

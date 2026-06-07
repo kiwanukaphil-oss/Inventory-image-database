@@ -6,7 +6,7 @@ import {
   vocabSuggestions,
   normalizeValue,
 } from "./data.js";
-import { toast, confirmSheet } from "./ui.js";
+import { toast, confirmSheet, openBottomSheet, trapFocus } from "./ui.js";
 
 // The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
 // the item's category. Universal columns (name/brand/price/stock) plus the
@@ -73,15 +73,17 @@ export async function openEditor(itemId, caps, onSaved) {
   // ---- build the sheet ----
   const sheet = document.createElement("div");
   sheet.className = "sheet";
+  // Describe the photo for screen readers / broken-image fallback.
+  const imgAlt = esc([item.brand || item.name, categoryPath(item.category_id)].filter(Boolean).join(" — ") || "Product photo");
   sheet.innerHTML = `
-    <div class="sheet-panel">
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="${esc(categoryPath(item.category_id) || "Edit item")}">
       <header class="sheet-head">
         <button class="ghost" id="cancelBtn">Cancel</button>
         <div class="sheet-title">${esc(categoryPath(item.category_id))}</div>
         <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>Save</button>
       </header>
       <div class="sheet-body">
-        ${imgUrl ? `<div class="sheet-img"><img src="${imgUrl}" alt=""></div>` : ""}
+        ${imgUrl ? `<div class="sheet-img"><img src="${imgUrl}" alt="${imgAlt}"></div>` : ""}
 
         ${canEdit && imgUrl ? `<button class="ghost aibtn" id="aiBtn">✨ AI suggest fields from photo</button>` : ""}
 
@@ -136,9 +138,14 @@ export async function openEditor(itemId, caps, onSaved) {
   sheet.appendChild(lists);
   document.body.appendChild(sheet);
   requestAnimationFrame(() => sheet.classList.add("open"));
+  const releaseFocus = trapFocus(sheet);
+  // Focus the Cancel control first (not a text field) so opening the editor
+  // doesn't pop the mobile keyboard before the user has looked at the photo.
+  requestAnimationFrame(() => sheet.querySelector("#cancelBtn")?.focus());
 
   // ---- interactions ----
   const close = () => {
+    releaseFocus();
     sheet.classList.remove("open");
     setTimeout(() => sheet.remove(), 200);
   };
@@ -428,16 +435,9 @@ async function openHistory(itemId) {
     }</div>`;
   }).join("");
 
-  const ov = document.createElement("div");
-  ov.className = "msheet";
-  ov.innerHTML = `<div class="msheet-panel">
-      <div class="msheet-head"><span>Change history</span><button class="iconbtn" data-x aria-label="Close">✕</button></div>
-      <div class="msheet-body">${error ? esc(error.message) : rows || '<div class="muted">No history yet.</div>'}</div>
-    </div>`;
-  document.body.appendChild(ov);
-  requestAnimationFrame(() => ov.classList.add("open"));
-  const close = () => { ov.classList.remove("open"); setTimeout(() => ov.remove(), 200); };
-  ov.addEventListener("click", (e) => { if (e.target === ov || e.target.closest("[data-x]")) close(); });
+  // Reuse the shared sheet so it inherits focus-trap, role=dialog and Esc-to-close.
+  openBottomSheet("Change history",
+    error ? esc(error.message) : rows || '<div class="muted">No history yet.</div>');
 }
 
 // (toast now lives in ui.js — imported above.)

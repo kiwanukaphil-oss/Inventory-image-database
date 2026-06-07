@@ -17,6 +17,21 @@
 * { box-sizing:border-box; }
 [hidden] { display:none !important; } /* so the `hidden` attribute wins over flex/grid */
 html, body { height:100%; }
+
+/* Keyboard focus ring. Only shows for keyboard/AT users (:focus-visible), never
+   on mouse/touch, so it adds accessibility without visual noise. Low specificity
+   via :where() so component styles can still override where needed. */
+:where(a, button, input, select, textarea, [tabindex], summary):focus-visible {
+  outline:2px solid var(--accent); outline-offset:2px; border-radius:6px;
+}
+
+/* Respect users who ask for less motion: neutralise animations/transitions. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration:.01ms !important; animation-iteration-count:1 !important;
+    transition-duration:.01ms !important; scroll-behavior:auto !important;
+  }
+}
 body {
   margin:0; background:var(--bg); color:var(--txt);
   font:15px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
@@ -150,7 +165,6 @@ a { color:var(--accent); }
   background-size:200% 100%; animation:shimmer 1.4s linear infinite; }
 .sk-line.w70 { width:70%; }
 .sk-line.w45 { width:45%; }
-@media (prefers-reduced-motion: reduce) { .sk-line, .card .thumb { animation:none; } }
 .cap-note { color:var(--muted); }
 
 .selbar {
@@ -285,7 +299,7 @@ a { color:var(--accent); }
 @media (min-width:560px) { .msheet { align-items:center; } .msheet-panel { border-radius:16px; } }
 .msheet-head { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
   padding:12px 14px; border-bottom:1px solid var(--line); font-weight:650; }
-.msheet-head .iconbtn { width:32px; height:32px; border:none; background:transparent; }
+.msheet-head .iconbtn { width:36px; height:36px; border:none; background:transparent; }
 .msheet-body { flex:1 1 auto; min-height:0; overflow-y:auto;
   padding:14px; padding-bottom:calc(14px + var(--safe-bottom)); display:flex; flex-direction:column; gap:8px; }
 .msheet-body input, .msheet-body select { width:100%; }
@@ -350,8 +364,8 @@ a { color:var(--accent); }
 .up-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(72px, 1fr)); gap:6px; margin:10px 0; }
 .up-thumb { position:relative; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#000; }
 .up-thumb img { width:100%; height:100%; object-fit:cover; }
-.up-x { position:absolute; top:2px; right:2px; width:22px; height:22px; border-radius:50%;
-  background:#000a; color:#fff; border:none; font-size:12px; display:flex; align-items:center; justify-content:center; }
+.up-x { position:absolute; top:4px; right:4px; width:30px; height:30px; border-radius:50%;
+  background:#000a; color:#fff; border:none; font-size:14px; display:flex; align-items:center; justify-content:center; }
 .up-bar { height:10px; background:#0d0f14; border:1px solid var(--line); border-radius:6px; overflow:hidden; margin:10px 0; }
 .up-bar #barFill { height:100%; width:0; background:var(--accent); transition:width .2s; }
 .up-stats { font-size:13px; color:var(--muted); margin-bottom:12px; }
@@ -456,7 +470,7 @@ a { color:var(--accent); }
 .field-sec { margin:16px 0 8px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
 .adminonly { color:#ffd479; text-transform:none; letter-spacing:0; }
 
-.conf-pill { width:26px; height:26px; padding:0; border-radius:50%; font-size:11px; color:var(--muted); flex:0 0 auto; }
+.conf-pill { width:32px; height:32px; padding:0; border-radius:50%; font-size:12px; color:var(--muted); flex:0 0 auto; }
 .conf-pill.conf-high { color:#86e8a0; border-color:#22643a; }
 .conf-pill.conf-medium { color:#ffd479; border-color:#6b5600; }
 .conf-pill.conf-low { color:#ffb3b8; border-color:#6e2329; }

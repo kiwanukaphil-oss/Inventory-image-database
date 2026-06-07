@@ -1,5 +1,5 @@
 import { supabase } from "./db.js";
-import { confirmSheet } from "./ui.js";
+import { confirmSheet, trapFocus, isTopOverlay } from "./ui.js";
 
 // Users admin screen — for people with can_manage_users. Create login accounts,
 // set role/capabilities, and deactivate/reactivate accounts. Account create and
@@ -38,6 +38,9 @@ export async function openUsers(currentCaps) {
 
   const modal = document.createElement("div");
   modal.className = "bulkai"; // reuse the centered-modal backdrop
+  modal.setAttribute("role", "dialog");
+  modal.setAttribute("aria-modal", "true");
+  modal.setAttribute("aria-label", "Users & permissions");
   modal.innerHTML = `
     <div class="bulkai-panel users-panel">
       <div class="users-head">
@@ -58,12 +61,16 @@ export async function openUsers(currentCaps) {
         <div class="muted" style="font-size:12px">Creates a login immediately; share the email + temporary password with them.</div>
       </div>
       <div id="usersBody"><div class="spinner"></div></div>
-      <div class="users-status" id="usersStatus"></div>
+      <div class="users-status" id="usersStatus" aria-live="polite"></div>
     </div>`;
   document.body.appendChild(modal);
-  const close = () => modal.remove();
+  const releaseFocus = trapFocus(modal);
+  const close = () => { releaseFocus(); document.removeEventListener("keydown", onKey); modal.remove(); };
+  const onKey = (e) => { if (e.key === "Escape" && isTopOverlay(modal)) close(); };
+  document.addEventListener("keydown", onKey);
   modal.querySelector("#closeUsers").onclick = close;
   modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+  requestAnimationFrame(() => modal.querySelector("#newEmail")?.focus());
 
   const body = modal.querySelector("#usersBody");
   const statusEl = modal.querySelector("#usersStatus");

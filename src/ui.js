@@ -17,6 +17,48 @@ export function esc(v) {
   );
 }
 
+// --- Overlay stacking --------------------------------------------------------
+// All overlays are appended to <body> as they open and removed as they close,
+// so the LAST one in document order is the top-most. Esc handlers use this so
+// that, when dialogs are stacked (e.g. a confirm over the category screen),
+// only the top dialog reacts — the ones beneath stay put.
+const OVERLAY_SEL = ".msheet, .sheet, .screen, .bulkai, .webcam";
+export function isTopOverlay(el) {
+  const all = document.querySelectorAll(OVERLAY_SEL);
+  return all.length === 0 || all[all.length - 1] === el;
+}
+// True if any modal overlay is currently open (used to suppress background
+// shortcuts like "Esc exits selection" while a sheet/dialog is up).
+export function anyOverlayOpen() {
+  return document.querySelector(OVERLAY_SEL) != null;
+}
+
+// --- Focus trap --------------------------------------------------------------
+// Keep keyboard focus inside an overlay while it's open, and hand focus back to
+// whatever was focused before once it closes — so keyboard and screen-reader
+// users can't tab into the page behind a modal and aren't dumped at the top of
+// the document on close. Returns a release() to call when the overlay closes.
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+export function trapFocus(container) {
+  const prevFocus = document.activeElement;
+  const onKey = (e) => {
+    if (e.key !== "Tab") return;
+    const items = [...container.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null);
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    const active = document.activeElement;
+    // Pull focus back in if it ever escapes, then cycle at the ends.
+    if (!container.contains(active)) { e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && active === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && active === last) { e.preventDefault(); first.focus(); }
+  };
+  document.addEventListener("keydown", onKey, true);
+  return () => {
+    document.removeEventListener("keydown", onKey, true);
+    try { prevFocus?.focus?.(); } catch { /* element gone — ignore */ }
+  };
+}
+
 // --- Toast --------------------------------------------------------------------
 // A single reusable bottom-center toast for transient success/error feedback.
 // Re-shows on each call and auto-hides; callers never manage the element.
@@ -43,14 +85,25 @@ export function toast(msg) {
 export function openBottomSheet(title, bodyHtml) {
   const el = document.createElement("div");
   el.className = "msheet";
-  el.innerHTML = `<div class="msheet-panel">
+  el.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true" aria-label="${esc(title)}">
       <div class="msheet-head"><span>${esc(title)}</span><button class="iconbtn" data-x aria-label="Close">✕</button></div>
       <div class="msheet-body">${bodyHtml}</div>
     </div>`;
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add("open"));
-  const close = () => { el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
+  const release = trapFocus(el);
+  const close = () => {
+    document.removeEventListener("keydown", onKey);
+    release();
+    el.classList.remove("open");
+    setTimeout(() => el.remove(), 200);
+  };
+  // Esc dismisses, matching the click-on-backdrop affordance (top overlay only).
+  const onKey = (e) => { if (e.key === "Escape" && isTopOverlay(el)) close(); };
+  document.addEventListener("keydown", onKey);
   el.addEventListener("click", (e) => { if (e.target === el || e.target.closest("[data-x]")) close(); });
+  // Focus the first interactive control so keyboard users start inside the sheet.
+  requestAnimationFrame(() => el.querySelector(FOCUSABLE)?.focus());
   return { el, close, body: el.querySelector(".msheet-body") };
 }
 
@@ -80,6 +133,7 @@ export function confirmSheet({
       </div>`;
     document.body.appendChild(el);
     requestAnimationFrame(() => el.classList.add("open"));
+    const release = trapFocus(el);
 
     // Resolve once, then animate out and clean up the listener + node.
     let done = false;
@@ -87,11 +141,13 @@ export function confirmSheet({
       if (done) return;
       done = true;
       document.removeEventListener("keydown", onKey);
+      release();
       el.classList.remove("open");
       setTimeout(() => el.remove(), 200);
       resolve(result);
     };
     const onKey = (e) => {
+      if (!isTopOverlay(el)) return; // ignore while a deeper dialog is on top
       if (e.key === "Escape") finish(false);
       else if (e.key === "Enter") finish(true);
     };
@@ -137,6 +193,7 @@ export function promptSheet({
       </div>`;
     document.body.appendChild(el);
     requestAnimationFrame(() => el.classList.add("open"));
+    const release = trapFocus(el);
 
     const input = el.querySelector("#dlgInput");
     const okBtn = el.querySelector("[data-ok]");
@@ -150,6 +207,7 @@ export function promptSheet({
       if (done) return;
       done = true;
       document.removeEventListener("keydown", onKey);
+      release();
       el.classList.remove("open");
       setTimeout(() => el.remove(), 200);
       resolve(result);
@@ -160,6 +218,7 @@ export function promptSheet({
       finish(v);
     };
     const onKey = (e) => {
+      if (!isTopOverlay(el)) return; // ignore while a deeper dialog is on top
       if (e.key === "Escape") finish(null);
       else if (e.key === "Enter") submit();
     };

@@ -1,6 +1,6 @@
 import { supabase } from "./db.js";
 import { refreshRefData } from "./data.js";
-import { toast, confirmSheet } from "./ui.js";
+import { toast, confirmSheet, trapFocus, isTopOverlay } from "./ui.js";
 
 // Category & field manager (for user-managers): create/edit/delete categories
 // and their children, and manage the fields each category defines. Writes to
@@ -24,6 +24,9 @@ export async function openCategoryManager(caps) {
 
   const screen = document.createElement("div");
   screen.className = "screen";
+  screen.setAttribute("role", "dialog");
+  screen.setAttribute("aria-modal", "true");
+  screen.setAttribute("aria-label", "Categories & fields");
   screen.innerHTML = `
     <div class="screen-head">
       <button class="iconbtn" id="scBack" hidden>‹</button>
@@ -33,13 +36,20 @@ export async function openCategoryManager(caps) {
     <div class="screen-body" id="scBody"><div class="spinner"></div></div>`;
   document.body.appendChild(screen);
   requestAnimationFrame(() => screen.classList.add("open"));
+  const releaseFocus = trapFocus(screen);
 
   let dirty = false;
   const close = () => {
+    releaseFocus();
+    document.removeEventListener("keydown", onKey);
     screen.classList.remove("open");
     setTimeout(() => screen.remove(), 200);
     if (dirty) refreshRefData(); // so gallery/editor/find see the changes
   };
+  // Esc steps back through the drill-down if possible, otherwise closes.
+  // (Ignored while a confirm/prompt dialog is stacked on top.)
+  const onKey = (e) => { if (e.key === "Escape" && isTopOverlay(screen)) (backFn ? backFn() : close()); };
+  document.addEventListener("keydown", onKey);
   const body = screen.querySelector("#scBody");
   const titleEl = screen.querySelector("#scTitle");
   const backBtn = screen.querySelector("#scBack");

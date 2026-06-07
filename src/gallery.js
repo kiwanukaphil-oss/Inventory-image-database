@@ -7,7 +7,7 @@ import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
 import { openCategoryManager } from "./categories_admin.js";
-import { toast, openBottomSheet, confirmSheet, promptSheet } from "./ui.js";
+import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen } from "./ui.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -295,7 +295,7 @@ async function renderGallery(view, caps) {
       </div>
       <div class="ghdr ghdr-sel" id="hdrSelect" hidden>
         <button class="iconbtn" id="selExit" aria-label="Cancel">${ICON.x}</button>
-        <span class="selcount" id="selCount">0 selected</span>
+        <span class="selcount" id="selCount" aria-live="polite">0 selected</span>
         <span class="spacer"></span>
         <button class="linkbtn" id="selAll">Select all</button>
       </div>
@@ -752,7 +752,8 @@ async function renderGallery(view, caps) {
   // Esc exits selection mode (the lightbox handles its own Esc). Replace any
   // prior handler so listeners don't accumulate across re-renders.
   if (_galEsc) document.removeEventListener("keydown", _galEsc);
-  _galEsc = (e) => { if (e.key === "Escape" && selectionMode) exitSelection(); };
+  // Esc exits selection — but not while a sheet/dialog is open (it owns Esc then).
+  _galEsc = (e) => { if (e.key === "Escape" && selectionMode && !anyOverlayOpen()) exitSelection(); };
   document.addEventListener("keydown", _galEsc);
 
   draw();
@@ -1087,6 +1088,9 @@ function ensureLightbox() {
   if (lbState.el) return lbState.el;
   const lb = document.createElement("div");
   lb.id = "lb";
+  lb.setAttribute("role", "dialog");
+  lb.setAttribute("aria-modal", "true");
+  lb.setAttribute("aria-label", "Image viewer");
   lb.innerHTML = `
     <button class="lb-close" aria-label="Close">✕</button>
     <button class="lb-nav lb-prev" aria-label="Previous">‹</button>
@@ -1125,8 +1129,14 @@ function openLightbox(slides, i) {
   lbState.i = i;
   paintLightbox();
   lbState.el.classList.add("open");
+  lbState.release = trapFocus(lbState.el); // keep focus in the viewer; restore on close
+  requestAnimationFrame(() => lbState.el.querySelector(".lb-close")?.focus());
 }
-function closeLightbox() { lbState.el?.classList.remove("open"); }
+function closeLightbox() {
+  lbState.release?.();
+  lbState.release = null;
+  lbState.el?.classList.remove("open");
+}
 function moveLightbox(d) {
   const n = lbState.slides.length;
   if (!n) return;
@@ -1136,7 +1146,9 @@ function moveLightbox(d) {
 function paintLightbox() {
   const s = lbState.slides[lbState.i];
   if (!s) return;
-  lbState.el.querySelector("#lbimg").src = s.url;
+  const img = lbState.el.querySelector("#lbimg");
+  img.src = s.url;
+  img.alt = s.caption || "Product photo"; // describe the image for screen readers
   lbState.el.querySelector("#lbcap").innerHTML =
     `${s.caption} <span style="color:var(--muted)">· ${lbState.i + 1}/${lbState.slides.length}</span>`;
 }

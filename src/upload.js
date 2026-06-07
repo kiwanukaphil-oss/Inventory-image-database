@@ -1,7 +1,7 @@
 import { supabase } from "./db.js";
 import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue } from "./data.js";
 import { compressImage } from "./imageCompress.js";
-import { toast } from "./ui.js";
+import { toast, trapFocus } from "./ui.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
 // grid you can prune), set fields common to the whole batch once, then upload
@@ -133,7 +133,7 @@ export async function renderUpload(view, caps, onDone) {
       <div id="runArea" hidden>
         <div class="field-sec">Uploading…</div>
         <div class="up-bar"><div id="barFill"></div></div>
-        <div class="up-stats" id="runStats"></div>
+        <div class="up-stats" id="runStats" aria-live="polite"></div>
         <button class="danger up-go" id="stopBtn">Stop</button>
       </div>
 
@@ -228,20 +228,28 @@ export async function renderUpload(view, caps, onDone) {
     catch (e) { toast("Couldn't access the camera: " + (e?.message || e)); return; }
     const ov = document.createElement("div");
     ov.className = "webcam";
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-label", "Webcam capture");
     ov.innerHTML = `<div class="webcam-inner">
         <video id="wcVid" autoplay playsinline></video>
         <div class="webcam-bar">
           <button class="ghost" id="wcClose">Close</button>
-          <span id="wcCount" class="muted"></span>
+          <span id="wcCount" class="muted" aria-live="polite"></span>
           <button class="primary" id="wcSnap">Capture</button>
         </div>
       </div>`;
     document.body.appendChild(ov);
+    const releaseFocus = trapFocus(ov);
     const vid = ov.querySelector("#wcVid");
     vid.srcObject = stream;
     let snapped = 0;
-    const close = () => { stream.getTracks().forEach((t) => t.stop()); ov.remove(); };
+    const close = () => { releaseFocus(); stream.getTracks().forEach((t) => t.stop()); ov.remove(); };
     ov.querySelector("#wcClose").onclick = close;
+    // Esc closes the webcam overlay.
+    ov.tabIndex = -1;
+    ov.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+    requestAnimationFrame(() => ov.querySelector("#wcSnap")?.focus());
     ov.querySelector("#wcSnap").onclick = () => {
       const c = document.createElement("canvas");
       c.width = vid.videoWidth; c.height = vid.videoHeight;
