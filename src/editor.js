@@ -83,6 +83,7 @@ export async function openEditor(itemId, caps, onSaved) {
         <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>Save</button>
       </header>
       <div class="sheet-body">
+        <div class="ed-offline" id="edOffline" hidden>● Offline — your changes are kept; tap Save once you reconnect.</div>
         ${imgUrl ? `<div class="sheet-img"><img src="${imgUrl}" alt="${imgAlt}"></div>` : ""}
 
         ${canEdit && imgUrl ? `<button class="ghost aibtn" id="aiBtn">✨ AI suggest fields from photo</button>` : ""}
@@ -144,13 +145,57 @@ export async function openEditor(itemId, caps, onSaved) {
   requestAnimationFrame(() => sheet.querySelector("#cancelBtn")?.focus());
 
   // ---- interactions ----
-  const close = () => {
+  let close = () => {
     releaseFocus();
     sheet.classList.remove("open");
     setTimeout(() => sheet.remove(), 200);
   };
-  sheet.querySelector("#cancelBtn").onclick = close;
-  sheet.addEventListener("click", (e) => { if (e.target === sheet) close(); });
+  // Are there unsaved edits? (status changed, any highlighted field, or a
+  // confidence pill the user touched). Used to guard accidental dismissal.
+  let confDirty = false;
+  let savedOk = false; // set true after a successful save so close doesn't prompt
+  const isDirty = () => !savedOk && canEdit &&
+    (status !== item.status || confDirty || !!sheet.querySelector("[data-key].changed"));
+  // Cancel / backdrop: confirm before throwing away unsaved work.
+  const requestClose = async () => {
+    if (isDirty()) {
+      const ok = await confirmSheet({
+        title: "Discard changes?",
+        message: "Your edits to this item haven't been saved.",
+        confirmText: "Discard",
+        cancelText: "Keep editing",
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    close();
+  };
+  sheet.querySelector("#cancelBtn").onclick = requestClose;
+  sheet.addEventListener("click", (e) => { if (e.target === sheet) requestClose(); });
+
+  // Offline awareness: surface the state up front (banner + Save button) instead
+  // of only failing on tap. Edits stay in the form; the user saves on reconnect.
+  const offlineNote = sheet.querySelector("#edOffline");
+  const reflectOnline = () => {
+    const off = !navigator.onLine;
+    offlineNote.hidden = !off;
+    const btn = sheet.querySelector("#saveBtn");
+    // Don't fight the not-editable disable or an in-flight "Saving…".
+    if (btn && canEdit && btn.textContent !== "Saving…") {
+      btn.disabled = off;
+      btn.textContent = off ? "Offline" : "Save";
+    }
+  };
+  window.addEventListener("online", reflectOnline);
+  window.addEventListener("offline", reflectOnline);
+  reflectOnline();
+  // Tear the listeners down when the sheet closes (wrap the base close once).
+  const baseClose = close;
+  close = () => {
+    window.removeEventListener("online", reflectOnline);
+    window.removeEventListener("offline", reflectOnline);
+    baseClose();
+  };
 
   // Status pills
   let status = item.status;
@@ -172,6 +217,7 @@ export async function openEditor(itemId, caps, onSaved) {
       const next = CONF_CYCLE[(idx + 1) % CONF_CYCLE.length];
       if (next) conf[key] = next;
       else delete conf[key];
+      confDirty = true;
       paintConfPill(pill, next);
     });
   });
@@ -255,6 +301,7 @@ export async function openEditor(itemId, caps, onSaved) {
       await saveItem(sheet, item, fields, conf, status, canViewCost);
       const newSku = await refreshSkuAndDupCheck(sheet, itemId);
       toast(`Saved · SKU ${newSku}`);
+      savedOk = true; // don't prompt "discard changes?" on the post-save close
       onSaved?.();
       close();
     } catch (err) {

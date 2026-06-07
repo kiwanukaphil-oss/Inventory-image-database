@@ -73,6 +73,9 @@ a { color:var(--accent); }
 /* Offline banner (thin bar under the top bar). */
 .offline-banner { position:sticky; top:0; z-index:21; text-align:center; font-size:12.5px;
   padding:6px 10px; background:#3a2a12; color:#ffcf8a; border-bottom:1px solid #6e4a1f; }
+/* Inline offline note inside the editor sheet. */
+.ed-offline { font-size:12.5px; padding:8px 10px; border-radius:8px;
+  background:#3a2a12; color:#ffcf8a; border:1px solid #6e4a1f; }
 
 /* Back-to-top floating button (sits above the bottom bar). */
 .fab-top {
