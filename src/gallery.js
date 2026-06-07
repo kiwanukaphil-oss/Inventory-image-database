@@ -62,6 +62,7 @@ export function renderApp(mount, profile, onSignOut) {
         <button class="iconbtn" id="menuBtn" aria-label="Menu">${ICON.kebab}</button>
       </header>
       <main class="content" id="view"></main>
+      <button class="fab-top" id="fabTop" hidden aria-label="Back to top">${ICON.up}</button>
       <nav class="bottomnav" id="nav"></nav>
     </div>`;
 
@@ -73,7 +74,10 @@ export function renderApp(mount, profile, onSignOut) {
     (n) => `<button data-view="${n.id}"><span class="ico">${n.ico}</span>${n.label}</button>`
   ).join("");
 
+  let currentViewId = "gallery";
   function setView(id) {
+    currentViewId = id;
+    window.scrollTo(0, 0);
     nav.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === id)
     );
@@ -111,8 +115,18 @@ export function renderApp(mount, profile, onSignOut) {
 
   nav.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-view]");
-    if (btn) setView(btn.dataset.view);
+    if (!btn) return;
+    // Tapping the already-active tab scrolls back to top (mobile convention).
+    if (btn.dataset.view === currentViewId) window.scrollTo({ top: 0, behavior: "smooth" });
+    else setView(btn.dataset.view);
   });
+
+  // Back-to-top: appears once you've scrolled down a bit.
+  const fab = mount.querySelector("#fabTop");
+  const onScroll = () => { fab.hidden = window.scrollY < 500; };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  fab.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+  onScroll();
 
   setView("gallery");
 }
@@ -156,12 +170,28 @@ function dateCutoff(v) {
 
 const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
 
+// Remember the gallery's search + filters for the session (until reload).
+const galState = { q: "", stFilter: "all", dtFilter: "all" };
+let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
+
+// Fade each thumbnail in over its shimmer once the image has loaded, so the
+// grid layout never jumps as photos arrive.
+function fadeInImages(container) {
+  container.querySelectorAll(".thumb").forEach((thumb) => {
+    const img = thumb.querySelector("img");
+    if (!img) { thumb.classList.add("loaded"); return; }
+    if (img.complete) thumb.classList.add("loaded");
+    else img.addEventListener("load", () => thumb.classList.add("loaded"), { once: true });
+  });
+}
+
 // Small inline icons for a cleaner, premium toolbar.
 const ICON = {
   filter: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
   check: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>`,
   x: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
   kebab: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>`,
+  up: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>`,
 };
 
 // A reusable bottom sheet (filters, status picker, more-actions menu).
@@ -221,7 +251,7 @@ async function renderGallery(view, caps) {
   view.innerHTML = `
     <div class="galtop">
       <div class="ghdr" id="hdrNormal">
-        <input id="q" class="fb-search" type="search" placeholder="Search…">
+        <input id="q" class="fb-search" type="search" placeholder="Search…" value="${esc(galState.q)}">
         <button class="iconbtn" id="filterBtn" aria-label="Filters">${ICON.filter}<span class="fdot" id="fdot" hidden></span></button>
         ${canEdit ? `<button class="iconbtn" id="selectBtn" aria-label="Select">${ICON.check}</button>` : ""}
       </div>
@@ -249,10 +279,16 @@ async function renderGallery(view, caps) {
   const hdrNormal = view.querySelector("#hdrNormal");
   const hdrSelect = view.querySelector("#hdrSelect");
   const actionbar = view.querySelector("#actionbar");
-  let q = "";
-  let stFilter = "all";
-  let dtFilter = "all";
+  let q = galState.q;
+  let stFilter = galState.stFilter;
+  let dtFilter = galState.dtFilter;
   let filtered = []; // current filtered rows, used by bulk actions
+
+  // Re-render after an edit/bulk action without losing the user's scroll place.
+  const refresh = () => {
+    const y = window.scrollY;
+    return renderGallery(view, caps).then(() => window.scrollTo(0, y));
+  };
 
   // ---- selection mode (phone-gallery style multi-select) ----
   const byId = Object.fromEntries(data.map((d) => [d.id, d]));
@@ -271,6 +307,7 @@ async function renderGallery(view, caps) {
   function enterSelection() {
     if (!canEdit) return;
     selectionMode = true;
+    navigator.vibrate?.(15); // subtle "grab" feedback on mobile
     grid.classList.add("selecting");
     hdrNormal.hidden = true;
     hdrSelect.hidden = false;
@@ -300,6 +337,7 @@ async function renderGallery(view, caps) {
   function toggleSelect(id, cardEl) {
     if (selected.has(id)) { selected.delete(id); cardEl?.classList.remove("selected"); }
     else { selected.add(id); cardEl?.classList.add("selected"); }
+    navigator.vibrate?.(8);
     updateSelBar();
   }
 
@@ -357,6 +395,8 @@ async function renderGallery(view, caps) {
       .join("");
     countEl.textContent = `${rows.length} of ${data.length} item${data.length === 1 ? "" : "s"}`;
     grid._slides = slides;
+    galState.q = q; galState.stFilter = stFilter; galState.dtFilter = dtFilter; // remember for the session
+    fadeInImages(grid);
   }
 
   // ---- selection interactions: tap, shift-click range, drag/slide sweep ----
@@ -424,7 +464,7 @@ async function renderGallery(view, caps) {
     }
     const thumb = e.target.closest(".thumb[data-slide]");
     if (thumb) { openLightbox(grid._slides, Number(thumb.dataset.slide)); return; }
-    if (card) openEditor(card.dataset.id, caps, () => renderGallery(view, caps));
+    if (card) openEditor(card.dataset.id, caps, refresh);
   });
 
   let lpStart = null;
@@ -510,7 +550,7 @@ async function renderGallery(view, caps) {
     view.querySelector("#abAi").onclick = () => {
       if (!selected.size) return;
       const items = [...selected].map((id) => byId[id]).filter(Boolean);
-      openBulkAi(items, caps, () => renderGallery(view, caps));
+      openBulkAi(items, caps, refresh);
     };
     view.querySelector("#abStatus").onclick = () => {
       if (!selected.size) return;
@@ -524,7 +564,7 @@ async function renderGallery(view, caps) {
         sh.close();
         const { error } = await supabase.from("items").update({ status: b.dataset.set }).in("id", ids);
         if (error) { alert("Status update failed: " + error.message); return; }
-        renderGallery(view, caps);
+        refresh();
       });
     };
     view.querySelector("#abMore").onclick = () => {
@@ -543,11 +583,17 @@ async function renderGallery(view, caps) {
           const { error } = await supabase.from("items").delete().in("id", ids);
           if (error) { alert("Delete failed: " + error.message); return; }
           if (paths.length) await supabase.storage.from("product-images").remove(paths);
-          renderGallery(view, caps);
+          refresh();
         }
       });
     };
   }
+
+  // Esc exits selection mode (the lightbox handles its own Esc). Replace any
+  // prior handler so listeners don't accumulate across re-renders.
+  if (_galEsc) document.removeEventListener("keydown", _galEsc);
+  _galEsc = (e) => { if (e.key === "Escape" && selectionMode) exitSelection(); };
+  document.addEventListener("keydown", _galEsc);
 
   draw();
   pills();
@@ -723,6 +769,7 @@ async function renderFind(view, caps) {
     }
     resultsEl.innerHTML = results.length ? html : `<div class="empty"><div>No matches.</div></div>`;
     resultsEl._slides = slides;
+    fadeInImages(resultsEl);
   }
 
   function renderSavedViews() {
@@ -765,7 +812,10 @@ async function renderFind(view, caps) {
     const thumb = e.target.closest(".thumb[data-slide]");
     if (thumb) { openLightbox(resultsEl._slides, Number(thumb.dataset.slide)); return; }
     const card = e.target.closest(".card[data-id]");
-    if (card) openEditor(card.dataset.id, caps, () => renderFind(view, caps));
+    if (card) openEditor(card.dataset.id, caps, () => {
+      const y = window.scrollY;
+      return renderFind(view, caps).then(() => window.scrollTo(0, y)); // keep place after edit
+    });
   });
   fq.addEventListener("input", () => { q = fq.value.trim().toLowerCase(); refresh(); });
   groupSel.addEventListener("change", () => { groupBy = groupSel.value; renderResults(); });

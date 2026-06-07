@@ -55,6 +55,16 @@ a { color:var(--accent); }
 
 .content { flex:1; padding:12px 12px calc(78px + var(--safe-bottom)); }
 
+/* Back-to-top floating button (sits above the bottom bar). */
+.fab-top {
+  position:fixed; right:14px; bottom:calc(74px + var(--safe-bottom)); z-index:26;
+  width:46px; height:46px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--panel); color:var(--txt); border:1px solid var(--line);
+  box-shadow:0 4px 14px #0007;
+}
+.fab-top:active { transform:translateY(1px); }
+
 /* Bottom navigation — primary mobile navigation. */
 .bottomnav {
   position:fixed; left:0; right:0; bottom:0; z-index:30;
@@ -104,9 +114,14 @@ a { color:var(--accent); }
   overflow:hidden; display:flex; flex-direction:column;
 }
 .card .thumb {
-  aspect-ratio:1/1; background:#000; display:flex; align-items:center; justify-content:center;
+  aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
   overflow:hidden; cursor:zoom-in; position:relative;
+  /* shimmer placeholder until the photo loads (prevents the grid from jumping) */
+  background:linear-gradient(110deg, #14161c 30%, #1b1e26 50%, #14161c 70%);
+  background-size:200% 100%; animation:shimmer 1.4s linear infinite;
 }
+.card .thumb.loaded { background:#000; animation:none; }
+@keyframes shimmer { to { background-position:-200% 0; } }
 /* selection mode */
 .card .selcheck {
   position:absolute; top:6px; left:6px; width:24px; height:24px; border-radius:50%;
@@ -126,7 +141,8 @@ a { color:var(--accent); }
 .selbar #selCount { font-size:13px; color:var(--muted); white-space:nowrap; }
 .selbar button, .selbar select { padding:8px 10px; font-size:13px; }
 .selbar #selDone { margin-left:auto; }
-.card .thumb img { width:100%; height:100%; object-fit:contain; }
+.card .thumb img { width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity .3s; }
+.card .thumb.loaded img { opacity:1; }
 .card .body { padding:8px 10px; }
 
 /* ---------------- filter bar + cards ---------------- */
