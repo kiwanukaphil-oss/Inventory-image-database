@@ -239,6 +239,7 @@ async function renderGallery(view, caps) {
       <button class="ab-btn" id="abAi"><span class="ab-ico">✨</span>AI-fill</button>
       <button class="ab-btn" id="abStatus"><span class="ab-ico">◧</span>Status</button>
       <button class="ab-btn" id="abMore"><span class="ab-ico">⋯</span>More</button>
+      <button class="ab-btn" id="abDone"><span class="ab-ico">✓</span>Done</button>
     </div>` : ""}`;
 
   const grid = view.querySelector("#grid");
@@ -500,6 +501,7 @@ async function renderGallery(view, caps) {
   // ---- wiring: selection header + action bar ----
   if (canEdit) {
     view.querySelector("#selExit").onclick = exitSelection;
+    view.querySelector("#abDone").onclick = exitSelection; // exit from the bottom too
     view.querySelector("#selAll").onclick = () => {
       for (const it of filtered) selected.add(it.id);
       grid.querySelectorAll(".card[data-id]").forEach((c) => c.classList.add("selected"));
