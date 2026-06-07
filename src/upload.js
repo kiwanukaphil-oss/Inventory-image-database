@@ -1,16 +1,26 @@
 import { supabase } from "./db.js";
-import {
-  loadRefData,
-  resolveFields,
-  categoryPath,
-  vocabSuggestions,
-  normalizeValue,
-} from "./data.js";
+import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue } from "./data.js";
 import { compressImage } from "./imageCompress.js";
 
-// The Add flow: pick/take multiple photos, choose the target category, set any
-// fields common to the whole batch once (e.g. 100 shots all Khaki), then each
-// photo is compressed, uploaded, and inserted as a draft item to refine later.
+// The Add flow, built for large batches: pick/take many photos (with a preview
+// grid you can prune), set fields common to the whole batch once, then upload
+// in parallel with a progress bar, Stop, and retry of any failures.
+
+const CONCURRENCY = 5; // parallel uploads
+
+// crypto.randomUUID() only exists in secure contexts (HTTPS/localhost), so it's
+// missing when testing on a phone over the plain-http LAN URL. Fall back to a
+// v4 UUID from getRandomValues (or Math.random as a last resort).
+function uuid() {
+  try { if (globalThis.crypto?.randomUUID) return crypto.randomUUID(); } catch {}
+  const b = new Uint8Array(16);
+  try { crypto.getRandomValues(b); }
+  catch { for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256); }
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0"));
+  return `${h.slice(0, 4).join("")}-${h.slice(4, 6).join("")}-${h.slice(6, 8).join("")}-${h.slice(8, 10).join("")}-${h.slice(10, 16).join("")}`;
+}
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
@@ -36,12 +46,15 @@ export async function renderUpload(view, caps, onDone) {
 
   const cache = await loadRefData();
   const leaves = leafCategories(cache);
-  const state = { files: [] };
+  const entries = []; // { key, file, url }
+  const seen = new Set(); // dedupe key set
+  let stopFlag = false;
+  let wakeLock = null;
 
   view.innerHTML = `
     <div class="uploader">
       <h2 class="up-h">Add photos</h2>
-      <div class="pickrow">
+      <div class="pickrow" id="pickRow">
         <label class="pickbtn">
           <input id="camInput" type="file" accept="image/*" capture="environment" hidden>
           <span class="big">📷</span><span>Take photo</span>
@@ -51,60 +64,117 @@ export async function renderUpload(view, caps, onDone) {
           <span class="big">🖼️</span><span>Choose photos</span>
         </label>
       </div>
-      <div id="picked" class="picked"></div>
 
-      <div id="batchForm" style="display:none">
-        <div class="field-sec">Common to all photos in this batch</div>
-        <div class="frow">
-          <label for="catSel">Category</label>
-          <div class="fctl">
-            <select id="catSel">
-              <option value="">Choose…</option>
-              ${leaves.map((l) => `<option value="${l.id}">${esc(l.path)}</option>`).join("")}
-            </select>
+      <div id="composeArea">
+        <div id="picked" class="picked"></div>
+        <div class="up-grid" id="grid"></div>
+
+        <div id="batchForm" style="display:none">
+          <div class="field-sec">Common to all photos in this batch</div>
+          <div class="frow">
+            <label for="catSel">Category</label>
+            <div class="fctl">
+              <select id="catSel"><option value="">Choose…</option>
+                ${leaves.map((l) => `<option value="${l.id}">${esc(l.path)}</option>`).join("")}
+              </select>
+            </div>
           </div>
-        </div>
-        <div id="commonFields"></div>
-        <div class="frow">
-          <label for="statusSel">Status</label>
-          <div class="fctl">
-            <select id="statusSel">
-              <option value="draft" selected>draft</option>
-              <option value="needs-review">needs-review</option>
-            </select>
+          <div id="commonFields"></div>
+          <div class="frow">
+            <label for="statusSel">Status</label>
+            <div class="fctl">
+              <select id="statusSel"><option value="draft" selected>draft</option><option value="needs-review">needs-review</option></select>
+            </div>
           </div>
+          <button class="primary up-go" id="uploadBtn" disabled>Upload</button>
         </div>
-        <button class="primary up-go" id="uploadBtn" disabled>Upload</button>
-        <div id="progress" class="progress"></div>
+      </div>
+
+      <div id="runArea" hidden>
+        <div class="field-sec">Uploading…</div>
+        <div class="up-bar"><div id="barFill"></div></div>
+        <div class="up-stats" id="runStats"></div>
+        <button class="danger up-go" id="stopBtn">Stop</button>
+      </div>
+
+      <div id="doneArea" hidden>
+        <div class="up-done" id="doneMsg"></div>
+        <div class="up-actions" id="doneActions"></div>
       </div>
 
       <datalist id="dl-brand">${vocabSuggestions("brand").map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
     </div>`;
 
-  const camInput = view.querySelector("#camInput");
-  const libInput = view.querySelector("#libInput");
-  const picked = view.querySelector("#picked");
-  const batchForm = view.querySelector("#batchForm");
-  const catSel = view.querySelector("#catSel");
-  const commonFields = view.querySelector("#commonFields");
-  const uploadBtn = view.querySelector("#uploadBtn");
-  const progress = view.querySelector("#progress");
+  const $ = (sel) => view.querySelector(sel);
+  const camInput = $("#camInput");
+  const libInput = $("#libInput");
+  const pickRow = $("#pickRow");
+  const composeArea = $("#composeArea");
+  const runArea = $("#runArea");
+  const doneArea = $("#doneArea");
+  const pickedEl = $("#picked");
+  const gridEl = $("#grid");
+  const batchForm = $("#batchForm");
+  const catSel = $("#catSel");
+  const commonFields = $("#commonFields");
+  const uploadBtn = $("#uploadBtn");
 
-  // Both pickers accumulate into the same batch, so you can take several photos
-  // one at a time and/or add some from the library before uploading.
+  function setMode(m) {
+    pickRow.hidden = m !== "compose";
+    composeArea.hidden = m !== "compose";
+    runArea.hidden = m !== "running";
+    doneArea.hidden = m !== "done";
+  }
+
+  // ---- selection ----
+  const keyOf = (f) => `${f.name}|${f.size}|${f.lastModified}`;
   function addFiles(list) {
-    state.files.push(...list);
+    for (const f of list) {
+      const key = keyOf(f);
+      if (seen.has(key)) continue; // de-dupe
+      seen.add(key);
+      entries.push({ key, file: f, url: URL.createObjectURL(f) });
+    }
     renderPicked();
-    batchForm.style.display = state.files.length ? "block" : "none";
-    refreshUploadEnabled();
+    renderGrid();
+    batchForm.style.display = entries.length ? "block" : "none";
+    refreshEnabled();
+  }
+  function removeFile(key) {
+    const i = entries.findIndex((e) => e.key === key);
+    if (i < 0) return;
+    URL.revokeObjectURL(entries[i].url);
+    entries.splice(i, 1);
+    seen.delete(key);
+    renderPicked();
+    renderGrid();
+    batchForm.style.display = entries.length ? "block" : "none";
+    refreshEnabled();
+  }
+  function clearAll() {
+    entries.forEach((e) => URL.revokeObjectURL(e.url));
+    entries.length = 0;
+    seen.clear();
+    renderPicked();
+    renderGrid();
+    batchForm.style.display = "none";
+    refreshEnabled();
   }
   function renderPicked() {
-    picked.innerHTML = state.files.length
-      ? `${state.files.length} photo${state.files.length === 1 ? "" : "s"} selected ·
-         <a href="#" id="clearPick">clear</a>`
+    pickedEl.innerHTML = entries.length
+      ? `${entries.length} photo${entries.length === 1 ? "" : "s"} selected · <a href="#" id="clearPick">clear all</a>`
       : "";
-    const c = view.querySelector("#clearPick");
-    if (c) c.onclick = (e) => { e.preventDefault(); state.files = []; renderPicked(); batchForm.style.display = "none"; refreshUploadEnabled(); };
+    const c = $("#clearPick");
+    if (c) c.onclick = (e) => { e.preventDefault(); clearAll(); };
+  }
+  function renderGrid() {
+    gridEl.innerHTML = entries
+      .map((e) => `<div class="up-thumb" data-key="${esc(e.key)}">
+        <img loading="lazy" src="${e.url}" alt="">
+        <button class="up-x" data-rm="${esc(e.key)}" aria-label="Remove">✕</button>
+      </div>`).join("");
+    gridEl.querySelectorAll("[data-rm]").forEach((b) =>
+      (b.onclick = () => removeFile(b.dataset.rm)));
   }
   camInput.addEventListener("change", () => { addFiles([...camInput.files]); camInput.value = ""; });
   libInput.addEventListener("change", () => { addFiles([...libInput.files]); libInput.value = ""; });
@@ -115,80 +185,132 @@ export async function renderUpload(view, caps, onDone) {
     commonFields.innerHTML =
       `<div class="frow"><label for="c-brand">Brand</label>
          <div class="fctl"><input id="c-brand" data-ck="brand" list="dl-brand"></div></div>` +
-      fields
-        .map((f) => {
-          const dl = f.vocab ? ` list="dl-${f.vocab}"` : "";
-          if (f.vocab && !view.querySelector(`#dl-${f.vocab}`)) {
-            // add a datalist for this vocab field on the fly
-            const d = document.createElement("datalist");
-            d.id = `dl-${f.vocab}`;
-            d.innerHTML = vocabSuggestions(f.vocab).map((o) => `<option value="${esc(o)}">`).join("");
-            view.querySelector(".uploader").appendChild(d);
-          }
-          const type = f.type === "number" ? "number" : "text";
-          return `<div class="frow"><label for="c-${f.key}">${esc(f.label)}</label>
-            <div class="fctl"><input id="c-${f.key}" type="${type}"${dl}
-              data-ck="${f.key}" data-vocab="${f.vocab || ""}" data-type="${f.type}"></div></div>`;
-        })
-        .join("");
-    refreshUploadEnabled();
+      fields.map((f) => {
+        const dl = f.vocab ? ` list="dl-${f.vocab}"` : "";
+        if (f.vocab && !view.querySelector(`#dl-${f.vocab}`)) {
+          const d = document.createElement("datalist");
+          d.id = `dl-${f.vocab}`;
+          d.innerHTML = vocabSuggestions(f.vocab).map((o) => `<option value="${esc(o)}">`).join("");
+          view.querySelector(".uploader").appendChild(d);
+        }
+        const type = f.type === "number" ? "number" : "text";
+        return `<div class="frow"><label for="c-${f.key}">${esc(f.label)}</label>
+          <div class="fctl"><input id="c-${f.key}" type="${type}"${dl}
+            data-ck="${f.key}" data-vocab="${f.vocab || ""}" data-type="${f.type}"></div></div>`;
+      }).join("");
+    refreshEnabled();
   });
 
-  function refreshUploadEnabled() {
-    uploadBtn.disabled = !(state.files.length && catSel.value);
+  function refreshEnabled() {
+    uploadBtn.disabled = !(entries.length && catSel.value);
+    uploadBtn.textContent = entries.length ? `Upload ${entries.length}` : "Upload";
   }
 
-  uploadBtn.addEventListener("click", async () => {
-    uploadBtn.disabled = true;
+  // Gather the batch-common values once.
+  function gatherCommon() {
     const categoryId = catSel.value;
-    const slug = cache.byId[categoryId]?.slug || "misc";
-    const status = view.querySelector("#statusSel").value;
-
-    // Gather common attributes + brand once for the whole batch.
+    if (!categoryId) return null;
     const attributes = {};
     let brand = null;
     commonFields.querySelectorAll("[data-ck]").forEach((el) => {
       let val = el.value.trim();
       if (!val) return;
-      if (el.dataset.ck === "brand") {
-        brand = normalizeValue("brand", val);
-        return;
-      }
+      if (el.dataset.ck === "brand") { brand = normalizeValue("brand", val); return; }
       if (el.dataset.vocab) val = normalizeValue(el.dataset.vocab, val);
       attributes[el.dataset.ck] = el.dataset.type === "number" ? Number(val) : val;
     });
+    return { categoryId, slug: cache.byId[categoryId]?.slug || "misc", status: $("#statusSel").value, brand, attributes };
+  }
 
-    let ok = 0;
-    let failed = 0;
-    for (let i = 0; i < state.files.length; i++) {
-      const file = state.files[i];
-      progress.textContent = `Uploading ${i + 1} of ${state.files.length}…`;
-      try {
-        const { blob, ext } = await compressImage(file);
-        const id = crypto.randomUUID();
-        const path = `${slug}/${id}.${ext}`;
-        const up = await supabase.storage
-          .from("product-images")
-          .upload(path, blob, { contentType: blob.type || "image/webp", upsert: false });
-        if (up.error) throw up.error;
-        const ins = await supabase.from("items").insert({
-          id,
-          category_id: categoryId,
-          brand,
-          attributes,
-          status,
-          image_path: path,
-          original_filename: file.name,
-        });
-        if (ins.error) throw ins.error;
-        ok++;
-      } catch (err) {
-        failed++;
-        console.error("upload failed", file.name, err);
+  async function uploadOne(entry, common) {
+    const { blob, ext } = await compressImage(entry.file);
+    const id = uuid();
+    const path = `${common.slug}/${id}.${ext}`;
+    const up = await supabase.storage.from("product-images")
+      .upload(path, blob, { contentType: blob.type || "image/webp", upsert: false });
+    if (up.error) throw up.error;
+    const ins = await supabase.from("items").insert({
+      id, category_id: common.categoryId, brand: common.brand,
+      attributes: common.attributes, status: common.status,
+      image_path: path, original_filename: entry.file.name,
+    });
+    if (ins.error) throw ins.error;
+  }
+
+  const barFill = $("#barFill");
+  const runStats = $("#runStats");
+  const stopBtn = $("#stopBtn");
+  function paintRun(p, total, done, failed) {
+    if (!barFill?.isConnected) return;
+    barFill.style.width = `${total ? Math.round((p / total) * 100) : 0}%`;
+    runStats.innerHTML = `${p}/${total} processed · <b>${done}</b> added${failed ? ` · <span style="color:#ffb3b8">${failed} failed</span>` : ""}`;
+  }
+
+  async function startUpload(list) {
+    const common = gatherCommon();
+    if (!common) { alert("Choose a category first."); return; }
+    stopFlag = false;
+    stopBtn.disabled = false;
+    stopBtn.textContent = "Stop";
+    setMode("running");
+    const total = list.length;
+    let done = 0, failed = 0, processed = 0, firstError = "";
+    const doneEntries = [];
+    paintRun(0, total, 0, 0);
+
+    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* best effort */ }
+
+    let idx = 0;
+    const worker = async () => {
+      while (!stopFlag) {
+        const i = idx++;
+        if (i >= list.length) return;
+        const entry = list[i];
+        try { await uploadOne(entry, common); done++; doneEntries.push(entry); }
+        catch (err) {
+          failed++;
+          if (!firstError) firstError = err?.message || String(err);
+          console.error("upload failed", entry.file.name, err);
+        }
+        processed++;
+        paintRun(processed, total, done, failed);
       }
-    }
+    };
+    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
-    progress.textContent = `Done — ${ok} added${failed ? `, ${failed} failed` : ""}.`;
-    setTimeout(() => onDone?.(), 1200); // back to the gallery to review the new drafts
-  });
+    try { await wakeLock?.release(); } catch {} wakeLock = null;
+
+    // Drop the successfully-uploaded photos from the batch (failed/unprocessed stay).
+    for (const e of doneEntries) {
+      URL.revokeObjectURL(e.url);
+      const k = entries.findIndex((x) => x.key === e.key);
+      if (k >= 0) entries.splice(k, 1);
+      seen.delete(e.key);
+    }
+    finishUpload(done, failed, firstError);
+  }
+
+  function finishUpload(added, failed, firstError) {
+    if (!doneArea?.isConnected) return; // user navigated away mid-upload
+    setMode("done");
+    const remaining = entries.length;
+    $("#doneMsg").innerHTML =
+      `Added ${added}${failed ? ` · ${failed} failed` : ""}${remaining ? ` · ${remaining} remaining` : ""}.` +
+      (firstError ? `<div class="up-err">${esc(firstError)}</div>` : "");
+    const acts = [];
+    if (remaining > 0) acts.push(`<button class="primary up-go" data-d="retry">Upload remaining ${remaining}</button>`);
+    acts.push(`<button class="ghost up-go" data-d="more">Add more photos</button>`);
+    acts.push(`<button class="ghost up-go" data-d="review">Review in gallery</button>`);
+    $("#doneActions").innerHTML = acts.join("");
+    $("#doneActions").querySelectorAll("[data-d]").forEach((b) => (b.onclick = () => {
+      if (b.dataset.d === "retry") startUpload(entries.slice());
+      else if (b.dataset.d === "more") { setMode("compose"); renderPicked(); renderGrid(); refreshEnabled(); }
+      else { entries.forEach((e) => URL.revokeObjectURL(e.url)); onDone?.(); }
+    }));
+  }
+
+  stopBtn.onclick = () => { stopFlag = true; stopBtn.disabled = true; stopBtn.textContent = "Stopping…"; };
+  uploadBtn.addEventListener("click", () => startUpload(entries.slice()));
+
+  setMode("compose");
 }
