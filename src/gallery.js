@@ -8,6 +8,7 @@ import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
 import { openCategoryManager } from "./categories_admin.js";
 import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen } from "./ui.js";
+import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -132,13 +133,16 @@ export function renderApp(mount, profile, onSignOut) {
          <button class="menu-item" data-m="cats">Categories & fields</button>
          <button class="menu-item" data-m="settings">Settings</button>`
       : "";
+    const install = installAvailable() ? `<button class="menu-item" data-m="install">Install app</button>` : "";
     const sh = openBottomSheet(caps.email || "Account",
       `<div class="menu-sub">Signed in as ${esc(role)}</div>
        ${admin}
+       ${install}
        <button class="menu-item danger" data-m="signout">Sign out</button>`);
     sh.body.addEventListener("click", async (e) => {
       const b = e.target.closest("[data-m]");
       if (!b) return;
+      if (b.dataset.m === "install") { sh.close(); installApp(); return; }
       sh.close();
       if (b.dataset.m === "users") openUsers(caps);
       else if (b.dataset.m === "cats") openCategoryManager(caps);
@@ -146,6 +150,22 @@ export function renderApp(mount, profile, onSignOut) {
       else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
     });
   };
+
+  // Install to home screen: use the native prompt where available, otherwise
+  // (iOS Safari) show the manual Share-sheet instructions.
+  async function installApp() {
+    if (canPromptInstall()) {
+      const accepted = await promptInstall();
+      if (accepted) toast("Installing K-LINE MEN…");
+    } else if (isIOS()) {
+      await confirmSheet({
+        title: "Add to Home Screen",
+        message: "In Safari, tap the Share button, then choose “Add to Home Screen” to install K-LINE MEN.",
+        confirmText: "Got it",
+        cancelText: "Close",
+      });
+    }
+  }
 
   nav.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-view]");

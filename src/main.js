@@ -4,6 +4,7 @@ import { isConfigured } from "./db.js";
 
 // Register the service worker (auto-updates on new deploys). No-op in dev.
 registerSW({ immediate: true });
+import "./install.js"; // capture beforeinstallprompt early (side-effect import)
 import { onAuthChange, getMyProfile, signOut } from "./auth.js";
 import { renderLogin } from "./login.js";
 import { renderApp } from "./gallery.js";

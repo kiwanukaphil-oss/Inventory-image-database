@@ -5,6 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0f1115" />
   <title>K-LINE MEN Catalog</title>
+  <!-- Home-screen install support. The VitePWA plugin injects the manifest link;
+       iOS needs these explicit tags to install cleanly (standalone display, the
+       right icon, and a dark status bar that respects our safe-area insets). -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="K-LINE MEN" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <!-- styles.css is imported by main.js so Vite bundles & fingerprints it. -->
 </head>
 <body>
