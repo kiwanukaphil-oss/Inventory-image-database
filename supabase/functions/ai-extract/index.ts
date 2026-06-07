@@ -21,10 +21,10 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-// Sonnet reads small/stylised product text much better than Haiku. Override with
-// the ANTHROPIC_MODEL secret (e.g. claude-opus-4-8 for max accuracy, or
-// claude-haiku-4-5 for lowest cost).
-const MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-sonnet-4-6";
+// Default to Opus for the most reliable reads of small/stylised product text.
+// Override with the ANTHROPIC_MODEL secret to economise at volume
+// (claude-sonnet-4-6 ~half the cost; claude-haiku-4-5 cheapest).
+const MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-opus-4-8";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
