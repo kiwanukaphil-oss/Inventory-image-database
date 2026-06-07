@@ -6,6 +6,7 @@ import {
   vocabSuggestions,
   normalizeValue,
 } from "./data.js";
+import { toast, confirmSheet } from "./ui.js";
 
 // The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
 // the item's category. Universal columns (name/brand/price/stock) plus the
@@ -265,7 +266,13 @@ export async function openEditor(itemId, caps, onSaved) {
   if (deleteBtn) {
     deleteBtn.onclick = async () => {
       if (!navigator.onLine) { toast("You're offline — reconnect to delete."); return; }
-      if (!confirm("Delete this item and its photo? This cannot be undone.")) return;
+      const ok = await confirmSheet({
+        title: "Delete item?",
+        message: "This item and its photo will be permanently deleted. This cannot be undone.",
+        confirmText: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
       deleteBtn.disabled = true;
       try {
         const { error: delErr } = await supabase.from("items").delete().eq("id", itemId);
@@ -433,17 +440,4 @@ async function openHistory(itemId) {
   ov.addEventListener("click", (e) => { if (e.target === ov || e.target.closest("[data-x]")) close(); });
 }
 
-// Lightweight toast.
-let toastTimer;
-function toast(msg) {
-  let t = document.getElementById("toast");
-  if (!t) {
-    t = document.createElement("div");
-    t.id = "toast";
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
-}
+// (toast now lives in ui.js — imported above.)

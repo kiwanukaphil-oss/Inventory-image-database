@@ -84,6 +84,10 @@
 
 > **Colour rule (decided):** where an image carries a **colour caption** (overlay / handwritten / printed colour word), the captioned colour **takes precedence** and no change is proposed — even over fabric appearance. The five images below marked **CAPTION — KEEP** were withdrawn for this reason (all captions matched the existing filename colour).
 
+> **Photographer's note (decided):** a small paper/note is sometimes placed in the shot listing details not obvious on the tag (material, fit, size, composition). The AI must read it and use those details to fill the matching fields.
+
+> **Other-language tags (decided):** tags are often partly/fully in another language (commonly Chinese). The AI must read and translate them and extract useful details (material, size, composition, care) the photographer may have overlooked — keeping the original text in `visible_text` and the interpreted English value in the field.
+
 | Image file | Current | Image shows | Conf | Proposed action |
 |---|---|---|---|---|
 | Cargo__Generic_BC002__Gray__38 | Gray | Slate-blue, but overlay caption "gray" | — | **CAPTION — KEEP Gray** |

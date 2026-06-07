@@ -1,5 +1,6 @@
 import { supabase } from "./db.js";
 import { refreshRefData } from "./data.js";
+import { toast, confirmSheet } from "./ui.js";
 
 // Category & field manager (for user-managers): create/edit/delete categories
 // and their children, and manage the fields each category defines. Writes to
@@ -146,7 +147,7 @@ export async function openCategoryManager(caps) {
 
     body.querySelector("#cSave").onclick = async () => {
       const name = body.querySelector("#cName").value.trim();
-      if (!name) { alert("Name is required."); return; }
+      if (!name) { toast("Name is required."); return; }
       const row = {
         name,
         parent_id: body.querySelector("#cParent").value || null,
@@ -163,21 +164,29 @@ export async function openCategoryManager(caps) {
       } else {
         res = await supabase.from("categories").update(row).eq("id", cat.id);
       }
-      if (res.error) { alert("Save failed: " + res.error.message); return; }
+      if (res.error) { toast("Save failed: " + res.error.message); return; }
       dirty = true;
+      toast(isNew ? "Category created" : "Category saved");
       await load();
       renderTree();
     };
   }
 
   async function deleteCategory(cat) {
-    if (childrenOf(cat.id).length) { alert("This category has subcategories — delete those first."); return; }
+    if (childrenOf(cat.id).length) { toast("This category has subcategories — delete those first."); return; }
     const { count } = await supabase.from("items").select("id", { count: "exact", head: true }).eq("category_id", cat.id);
-    if (count) { alert(`This category has ${count} item(s). Move or delete them first.`); return; }
-    if (!confirm(`Delete category "${cat.name}" and its field definitions?`)) return;
+    if (count) { toast(`This category has ${count} item(s). Move or delete them first.`); return; }
+    const ok = await confirmSheet({
+      title: "Delete category?",
+      message: `“${cat.name}” and its field definitions will be deleted.`,
+      confirmText: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     const { error } = await supabase.from("categories").delete().eq("id", cat.id);
-    if (error) { alert("Delete failed: " + error.message); return; }
+    if (error) { toast("Delete failed: " + error.message); return; }
     dirty = true;
+    toast("Category deleted");
     await load();
     renderTree();
   }
@@ -236,7 +245,7 @@ export async function openCategoryManager(caps) {
     body.querySelector("#fSave").onclick = async () => {
       const key = body.querySelector("#fKey").value.trim();
       const label = body.querySelector("#fLabel").value.trim();
-      if (!key || !label) { alert("Key and label are required."); return; }
+      if (!key || !label) { toast("Key and label are required."); return; }
       const optsRaw = body.querySelector("#fOptions").value.trim();
       const row = {
         label,
@@ -249,23 +258,31 @@ export async function openCategoryManager(caps) {
       };
       let res;
       if (isNew) {
-        if (ownFields(cat.id).some((f) => f.key === key)) { alert("A field with that key already exists here."); return; }
+        if (ownFields(cat.id).some((f) => f.key === key)) { toast("A field with that key already exists here."); return; }
         res = await supabase.from("category_fields").insert({ ...row, key, category_id: cat.id });
       } else {
         res = await supabase.from("category_fields").update(row).eq("id", field.id);
       }
-      if (res.error) { alert("Save failed: " + res.error.message); return; }
+      if (res.error) { toast("Save failed: " + res.error.message); return; }
       dirty = true;
+      toast(isNew ? "Field added" : "Field saved");
       await load();
       manageFields(cat);
     };
   }
 
   async function deleteField(cat, field) {
-    if (!confirm(`Delete field "${field.label}"?`)) return;
+    const ok = await confirmSheet({
+      title: "Delete field?",
+      message: `“${field.label}” will be removed from this category.`,
+      confirmText: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
     const { error } = await supabase.from("category_fields").delete().eq("id", field.id);
-    if (error) { alert("Delete failed: " + error.message); return; }
+    if (error) { toast("Delete failed: " + error.message); return; }
     dirty = true;
+    toast("Field deleted");
     await load();
     manageFields(cat);
   }

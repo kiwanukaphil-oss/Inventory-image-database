@@ -7,6 +7,7 @@ import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
 import { openCategoryManager } from "./categories_admin.js";
+import { toast, openBottomSheet, confirmSheet, promptSheet } from "./ui.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -105,8 +106,9 @@ export function renderApp(mount, profile, onSignOut) {
     sh.body.querySelector("#setSave").onclick = async () => {
       const v = sh.body.querySelector("#setCurrency").value.trim();
       const { error } = await supabase.from("app_settings").upsert({ key: "currency", value: v });
-      if (error) { alert("Save failed: " + error.message); return; }
+      if (error) { toast("Save failed: " + error.message); return; }
       sh.close();
+      toast("Currency saved");
       refreshRefData();
       await loadRefData();
       setView(currentViewId); // re-render so prices show the new prefix
@@ -201,6 +203,21 @@ function dateCutoff(v) {
 
 const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
 
+// Hard caps on how many rows each browse surface loads at once. Exposed so the
+// UI can warn when a result set is truncated rather than silently hiding items.
+const GALLERY_LIMIT = 1000;
+const FIND_LIMIT = 2000;
+
+// A grid of shimmering placeholder cards shown while data loads, so the screen
+// shows the eventual layout immediately instead of a lone centered spinner.
+function skeletonGrid(n = 8) {
+  const card = `<div class="card sk-card" aria-hidden="true">
+      <div class="thumb"></div>
+      <div class="body"><div class="sk-line w70"></div><div class="sk-line w45"></div></div>
+    </div>`;
+  return `<div class="grid">${card.repeat(n)}</div>`;
+}
+
 // Remember the gallery's search + filters for the session (until reload).
 const galState = { q: "", stFilter: "all", dtFilter: "all", needsReview: false };
 // True if an item has any field marked Low confidence.
@@ -228,19 +245,7 @@ const ICON = {
 };
 
 // A reusable bottom sheet (filters, status picker, more-actions menu).
-function openBottomSheet(title, bodyHtml) {
-  const el = document.createElement("div");
-  el.className = "msheet";
-  el.innerHTML = `<div class="msheet-panel">
-      <div class="msheet-head"><span>${esc(title)}</span><button class="iconbtn" data-x aria-label="Close">✕</button></div>
-      <div class="msheet-body">${bodyHtml}</div>
-    </div>`;
-  document.body.appendChild(el);
-  requestAnimationFrame(() => el.classList.add("open"));
-  const close = () => { el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
-  el.addEventListener("click", (e) => { if (e.target === el || e.target.closest("[data-x]")) close(); });
-  return { el, close, body: el.querySelector(".msheet-body") };
-}
+// (openBottomSheet now lives in ui.js — imported above.)
 
 // Premium gallery: clean top bar (search · filters · select), active-filter
 // pills, and a contextual selection action bar (replaces the app nav while
@@ -250,13 +255,13 @@ async function renderGallery(view, caps) {
   const canDelete = !!caps.can_delete;
   const appNav = document.querySelector(".bottomnav");
   if (appNav) appNav.style.display = ""; // restore if a prior selection hid it
-  view.innerHTML = `<div class="spinner"></div>`;
+  view.innerHTML = skeletonGrid();
   await loadRefData(); // category tree + field definitions drive the card summary
   const { data, error } = await supabase
     .from("items")
     .select("id, name, brand, sku, price, status, image_path, attributes, confidence, category_id, created_at, categories(name)")
     .order("created_at", { ascending: false })
-    .limit(1000);
+    .limit(GALLERY_LIMIT);
 
   if (error) {
     view.innerHTML = `<div class="empty"><div class="big">⚠️</div>
@@ -390,6 +395,27 @@ async function renderGallery(view, caps) {
       return hay.includes(q);
     });
     filtered = rows; // expose current filtered set for bulk actions
+    galState.q = q; galState.stFilter = stFilter; galState.dtFilter = dtFilter; galState.needsReview = needsReview; // remember for the session
+
+    // Note when the load hit the row cap so a truncated set never looks complete.
+    const capped = data.length >= GALLERY_LIMIT;
+    const countNote = capped ? ` · <span class="cap-note">showing the first ${GALLERY_LIMIT.toLocaleString()} — refine to see all</span>` : "";
+
+    // Search/filters matched nothing — show an actionable empty state rather than
+    // a blank grid. (The "no items at all" case is handled earlier, on load.)
+    if (rows.length === 0) {
+      countEl.innerHTML = `0 of ${data.length} item${data.length === 1 ? "" : "s"}${countNote}`;
+      grid.innerHTML = `<div class="empty"><div class="big">🔍</div>
+        <div>No items match your search or filters.</div>
+        <button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button></div>`;
+      grid._slides = [];
+      grid.querySelector("#clearFiltersBtn").onclick = () => {
+        q = ""; stFilter = "all"; dtFilter = "all"; needsReview = false;
+        if (qEl) qEl.value = "";
+        draw(); pills();
+      };
+      return;
+    }
 
     // Slides for the lightbox follow the currently filtered, ordered rows.
     const slides = [];
@@ -428,9 +454,8 @@ async function renderGallery(view, caps) {
         </div>`;
       })
       .join("");
-    countEl.textContent = `${rows.length} of ${data.length} item${data.length === 1 ? "" : "s"}`;
+    countEl.innerHTML = `${rows.length} of ${data.length} item${data.length === 1 ? "" : "s"}${countNote}`;
     grid._slides = slides;
-    galState.q = q; galState.stFilter = stFilter; galState.dtFilter = dtFilter; galState.needsReview = needsReview; // remember for the session
     fadeInImages(grid);
   }
 
@@ -651,7 +676,7 @@ async function renderGallery(view, caps) {
       });
 
       if (!Object.keys(col).length && costVal === undefined && !Object.keys(attrChanges).length) {
-        alert("Enter at least one field to apply."); return;
+        toast("Enter at least one field to apply."); return;
       }
       sh.close();
       try {
@@ -672,8 +697,9 @@ async function renderGallery(view, caps) {
             if (error) throw error;
           }
         }
+        toast(`Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`);
       } catch (e) {
-        alert("Bulk edit failed: " + (e.message || e));
+        toast("Bulk edit failed: " + (e.message || e));
       }
       refresh();
     };
@@ -704,12 +730,19 @@ async function renderGallery(view, caps) {
         if (e.target.closest("[data-clearsel]")) { sh.close(); clearSel(); return; }
         if (e.target.closest("[data-del]")) {
           const ids = [...selected];
-          if (!confirm(`Delete ${ids.length} item(s) and their photos? This cannot be undone.`)) return;
+          const ok = await confirmSheet({
+            title: `Delete ${ids.length} item${ids.length === 1 ? "" : "s"}?`,
+            message: "The selected items and their photos will be permanently deleted. This cannot be undone.",
+            confirmText: "Delete",
+            danger: true,
+          });
+          if (!ok) return;
           sh.close();
           const paths = ids.map((id) => byId[id]?.image_path).filter(Boolean);
           const { error } = await supabase.from("items").delete().in("id", ids);
-          if (error) { alert("Delete failed: " + error.message); return; }
+          if (error) { toast("Delete failed: " + error.message); return; }
           if (paths.length) await supabase.storage.from("product-images").remove(paths);
+          toast(`Deleted ${ids.length} item${ids.length === 1 ? "" : "s"}`);
           refresh();
         }
       });
@@ -729,13 +762,13 @@ async function renderGallery(view, caps) {
 // ---- Find tab: faceted finder (AND across facets / OR within), group-by, saved views ----
 // Saved views live in the `saved_views` table (per-user), so they sync across devices.
 async function renderFind(view, caps) {
-  view.innerHTML = `<div class="spinner"></div>`;
+  view.innerHTML = skeletonGrid();
   await loadRefData();
   const { data, error } = await supabase
     .from("items")
     .select("id, name, brand, sku, price, status, image_path, attributes, category_id, created_at")
     .order("created_at", { ascending: false })
-    .limit(2000);
+    .limit(FIND_LIMIT);
   if (error) {
     view.innerHTML = `<div class="empty"><div class="big">⚠️</div><div>Couldn't load items.</div>
       <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
@@ -889,7 +922,9 @@ async function renderFind(view, caps) {
 
   function renderResults() {
     const results = data.filter((it) => matches(it, null));
-    countEl.textContent = `${results.length} result${results.length === 1 ? "" : "s"}`;
+    const capped = data.length >= FIND_LIMIT;
+    const countNote = capped ? ` · <span class="cap-note">showing the first ${FIND_LIMIT.toLocaleString()} — refine to see all</span>` : "";
+    countEl.innerHTML = `${results.length} result${results.length === 1 ? "" : "s"}${countNote}`;
     const slides = [];
     let html;
     if (groupBy === "none") {
@@ -906,7 +941,25 @@ async function renderFind(view, caps) {
           <div class="grid">${groups.get(g).map((it) => cardHtml(it, slides)).join("")}</div></details>`
       ).join("");
     }
-    resultsEl.innerHTML = results.length ? html : `<div class="empty"><div>No matches.</div></div>`;
+    if (results.length) {
+      resultsEl.innerHTML = html;
+    } else {
+      // Offer a reset only if something is actually narrowing the results.
+      const anyFilter = q || priceMin || priceMax || datePreset !== "all"
+        || Object.keys(active).some((k) => active[k]?.size);
+      resultsEl.innerHTML = `<div class="empty"><div class="big">🔍</div>
+        <div>No matches.</div>
+        ${anyFilter ? `<button class="ghost" id="fClear" style="margin-top:10px">Clear all filters</button>` : ""}</div>`;
+      const fc = resultsEl.querySelector("#fClear");
+      if (fc) fc.onclick = () => {
+        for (const k in active) delete active[k];
+        q = ""; fq.value = "";
+        priceMin = ""; pMin.value = "";
+        priceMax = ""; pMax.value = "";
+        datePreset = "all"; dPreset.value = "all";
+        refresh();
+      };
+    }
     resultsEl._slides = slides;
     fadeInImages(resultsEl);
   }
@@ -963,26 +1016,41 @@ async function renderFind(view, caps) {
 
   // Saved views (cloud-synced via the saved_views table; per-user).
   view.querySelector("#saveViewBtn").onclick = async () => {
-    const name = prompt("Name this saved view:");
+    const name = await promptSheet({
+      title: "Save this view",
+      label: "View name",
+      placeholder: "e.g. Low stock, New arrivals",
+      confirmText: "Save view",
+    });
     if (!name) return;
     const serial = {};
     for (const k in active) serial[k] = [...active[k]];
     const payload = { active: serial, q, groupBy, priceMin, priceMax, datePreset };
     const { data, error } = await supabase.from("saved_views")
-      .insert({ name: name.trim(), payload }).select("id, name, payload").single();
-    if (error) { alert("Couldn't save view: " + error.message); return; }
+      .insert({ name, payload }).select("id, name, payload").single();
+    if (error) { toast("Couldn't save view: " + error.message); return; }
     savedViews.push(data);
     renderSavedViews();
+    toast("View saved");
   };
   savedEl.addEventListener("click", async (e) => {
     const del = e.target.closest("[data-del]");
     if (del) {
       e.stopPropagation();
       const id = del.dataset.del;
+      const sv = savedViews.find((x) => x.id === id);
+      const ok = await confirmSheet({
+        title: "Delete saved view?",
+        message: sv ? `“${sv.name}” will be removed from all your devices.` : "",
+        confirmText: "Delete",
+        danger: true,
+      });
+      if (!ok) return;
       const { error } = await supabase.from("saved_views").delete().eq("id", id);
-      if (error) { alert("Couldn't delete view: " + error.message); return; }
+      if (error) { toast("Couldn't delete view: " + error.message); return; }
       savedViews = savedViews.filter((v) => v.id !== id);
       renderSavedViews();
+      toast("View deleted");
       return;
     }
     const sv = e.target.closest(".sview[data-apply]");

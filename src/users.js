@@ -1,4 +1,5 @@
 import { supabase } from "./db.js";
+import { confirmSheet } from "./ui.js";
 
 // Users admin screen — for people with can_manage_users. Create login accounts,
 // set role/capabilities, and deactivate/reactivate accounts. Account create and
@@ -122,7 +123,15 @@ export async function openUsers(currentCaps) {
       btn.addEventListener("click", async () => {
         const id = btn.dataset.deact;
         const activate = btn.dataset.active === "false";
-        if (!activate && !confirm("Deactivate this account? They won't be able to log in until reactivated.")) return;
+        if (!activate) {
+          const ok = await confirmSheet({
+            title: "Deactivate account?",
+            message: "They won't be able to log in until the account is reactivated.",
+            confirmText: "Deactivate",
+            danger: true,
+          });
+          if (!ok) return;
+        }
         btn.disabled = true;
         const res = await callManage({ action: activate ? "reactivate" : "deactivate", user_id: id });
         if (res) { notify(activate ? "Reactivated" : "Deactivated"); loadList(); }

@@ -140,6 +140,19 @@ a { color:var(--accent); }
 .card .lowdot { position:absolute; top:6px; right:6px; width:11px; height:11px; border-radius:50%;
   background:#ffb020; box-shadow:0 0 0 2px #0009; }
 
+/* Skeleton loading cards — reuse the card shell + thumb shimmer so the grid
+   doesn't jump when real data arrives. The thumb shimmers for free (no .loaded);
+   .sk-line draws shimmering text-placeholder bars in the body. */
+.grid > .empty { grid-column:1 / -1; } /* let an empty/zero state span all columns */
+.sk-card .thumb { cursor:default; }
+.sk-line { height:10px; border-radius:5px; margin-top:8px;
+  background:linear-gradient(110deg, #14161c 30%, #1b1e26 50%, #14161c 70%);
+  background-size:200% 100%; animation:shimmer 1.4s linear infinite; }
+.sk-line.w70 { width:70%; }
+.sk-line.w45 { width:45%; }
+@media (prefers-reduced-motion: reduce) { .sk-line, .card .thumb { animation:none; } }
+.cap-note { color:var(--muted); }
+
 .selbar {
   position:fixed; left:0; right:0; bottom:calc(60px + var(--safe-bottom)); z-index:28;
   display:flex; align-items:center; gap:6px; padding:8px 10px;
@@ -286,6 +299,15 @@ a { color:var(--accent); }
   border-radius:10px; background:#0d0f14; color:var(--txt); }
 .menu-item.danger { color:#ffb3b8; border-color:#6e2329; }
 .menu-sub { color:var(--muted); font-size:12px; margin-bottom:2px; }
+
+/* Confirm/prompt dialogs (ui.js) — reuse the .msheet shell but sit above every
+   other overlay (.screen=70, .bulkai/.webcam=65, .sheet=55) since they can be
+   summoned from inside those surfaces. */
+.msheet.dlg { z-index:80; }
+.dlg-msg { font-size:14px; color:var(--txt); line-height:1.45; margin:2px 0 4px; }
+.dlg-label { font-size:12px; color:var(--muted); }
+.dlg-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:14px; }
+.dlg-actions button { min-width:90px; }
 
 /* ---------------- full-screen admin manager (categories & fields) ---------------- */
 .screen { position:fixed; inset:0; z-index:70; background:var(--bg); display:flex; flex-direction:column;
@@ -447,7 +469,7 @@ a { color:var(--accent); }
 /* toast */
 #toast { position:fixed; left:50%; bottom:calc(86px + var(--safe-bottom)); transform:translateX(-50%);
   background:#000d; border:1px solid var(--line); color:var(--txt); padding:10px 16px;
-  border-radius:10px; font-size:13px; z-index:70; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; text-align:center; }
+  border-radius:10px; font-size:13px; z-index:90; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; text-align:center; }
 #toast.show { opacity:1; }
 
 /* ---------------- lightbox ---------------- */

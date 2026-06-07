@@ -1,6 +1,7 @@
 import { supabase } from "./db.js";
 import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue } from "./data.js";
 import { compressImage } from "./imageCompress.js";
+import { toast } from "./ui.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
 // grid you can prune), set fields common to the whole batch once, then upload
@@ -221,10 +222,10 @@ export async function renderUpload(view, caps, onDone) {
   // Webcam capture (mainly for desktop; needs HTTPS/localhost). Snap multiple
   // frames, each added to the batch; the stream stops on close.
   view.querySelector("#webcamBtn").onclick = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) { alert("Camera not available in this browser/context."); return; }
+    if (!navigator.mediaDevices?.getUserMedia) { toast("Camera not available in this browser/context."); return; }
     let stream;
     try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); }
-    catch (e) { alert("Couldn't access the camera: " + (e?.message || e)); return; }
+    catch (e) { toast("Couldn't access the camera: " + (e?.message || e)); return; }
     const ov = document.createElement("div");
     ov.className = "webcam";
     ov.innerHTML = `<div class="webcam-inner">
@@ -329,8 +330,8 @@ export async function renderUpload(view, caps, onDone) {
 
   async function startUpload(list) {
     const common = gatherCommon();
-    if (!common) { alert("Choose a category first."); return; }
-    if (!navigator.onLine) { alert("You're offline — connect to upload. The batch is kept; tap Upload again when you're back online."); return; }
+    if (!common) { toast("Choose a category first."); return; }
+    if (!navigator.onLine) { toast("You're offline — connect to upload. The batch is kept; tap Upload again when you're back online."); return; }
     stopFlag = false;
     stopBtn.disabled = false;
     stopBtn.textContent = "Stop";

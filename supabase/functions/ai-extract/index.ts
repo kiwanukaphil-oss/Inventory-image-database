@@ -125,7 +125,9 @@ Deno.serve(async (req) => {
       `identified the exact fragrance from its brand + product name, infer its scent family from your ` +
       `general knowledge of that fragrance. If you don't recognise the specific fragrance, leave it ` +
       `blank — do not guess. Mark any inferred scent_family as Medium or Low confidence.\n` +
-      `- If the item has an overlay/handwritten colour caption, that colour wins.\n` +
+      `- COLOUR CAPTION OVERRIDE: if the image has a caption, overlay, sticker or handwritten note stating a COLOUR, that stated colour is authoritative — use it for the colour field even if the item looks like a different colour in the photo.\n` +
+      `- PHOTOGRAPHER'S NOTE: a small paper/note is sometimes placed in the shot listing extra details (e.g. material, fit, size, composition) for things not obvious on the tag — read it and use those details to fill the matching fields.\n` +
+      `- OTHER LANGUAGES: tags are often partly or fully in another language (commonly Chinese). Read and translate them, and extract any useful details (material, size, composition, care, etc.) the photographer may have overlooked. Keep the original text in visible_text and put the interpreted English value in the field.\n` +
       `- If a field genuinely cannot be determined, OMIT it entirely — do NOT output placeholder values ` +
       `like "unknown", "n/a", "none", "unspecified" or "-". Leaving it out is correct. Use Low confidence ` +
       `only for values you do provide but are unsure of.\n` +
