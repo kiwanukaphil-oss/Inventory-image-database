@@ -195,6 +195,7 @@ async function runBatch(modal, items, onlyEmpty, onDone, close) {
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
   modal.querySelector("#runStep h2").textContent = stopped ? "Stopped" : "Done";
+  if (!stopped) navigator.vibrate?.([12, 40, 12]); // affirmative "batch done" buzz
   stopBtn.style.display = "none";
   closeBtn.style.display = "inline-block";
   closeBtn.onclick = () => { close(); onDone?.(); };

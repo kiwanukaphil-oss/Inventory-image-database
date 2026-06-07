@@ -88,14 +88,15 @@ export async function openEditor(itemId, caps, onSaved) {
 
         ${canEdit && imgUrl ? `<button class="ghost aibtn" id="aiBtn">✨ AI suggest fields from photo</button>` : ""}
 
-        <div class="status-row" id="statusRow">
+        <div class="status-row" id="statusRow" role="group" aria-label="Status">
           ${["draft", "needs-review", "approved", "flag"]
             .map(
               (s) =>
-                `<button class="status-pill ${item.status === s ? "on" : ""}" data-status="${s}">${s}</button>`
+                `<button class="status-pill ${item.status === s ? "on" : ""}" data-status="${s}" aria-pressed="${item.status === s}">${s}</button>`
             )
             .join("")}
         </div>
+        <button type="button" class="linkbtn legend-btn" id="legendBtn">What do these labels mean?</button>
 
         <div id="dupWarn" class="dup-warn" style="display:none"></div>
 
@@ -203,10 +204,28 @@ export async function openEditor(itemId, caps, onSaved) {
     const b = e.target.closest("button[data-status]");
     if (!b || !canEdit) return;
     status = b.dataset.status;
-    sheet.querySelectorAll(".status-pill").forEach((p) =>
-      p.classList.toggle("on", p.dataset.status === status)
-    );
+    sheet.querySelectorAll(".status-pill").forEach((p) => {
+      const on = p.dataset.status === status;
+      p.classList.toggle("on", on);
+      p.setAttribute("aria-pressed", on);
+    });
   });
+
+  // Legend: explain what the status labels and H/M/L confidence dots mean.
+  sheet.querySelector("#legendBtn").onclick = () => {
+    openBottomSheet("What the labels mean", `
+      <div class="legend">
+        <div class="sheet-sec">Status</div>
+        <div class="legend-row"><span class="stbadge st-draft">draft</span> Not reviewed yet.</div>
+        <div class="legend-row"><span class="stbadge st-review">needs-review</span> Flagged for a closer look.</div>
+        <div class="legend-row"><span class="stbadge st-ok">approved</span> Checked and good to go.</div>
+        <div class="legend-row"><span class="stbadge st-flag">flag</span> Has a problem to fix.</div>
+        <div class="sheet-sec">Confidence</div>
+        <div class="legend-row"><span class="conf-pill conf-high">H</span> High — the AI was sure.</div>
+        <div class="legend-row"><span class="conf-pill conf-medium">M</span> Medium — likely right; worth a glance.</div>
+        <div class="legend-row"><span class="conf-pill conf-low">L</span> Low — please double-check this field.</div>
+      </div>`);
+  };
 
   // Confidence pills cycle —/High/Medium/Low
   sheet.querySelectorAll("[data-conf]").forEach((pill) => {
@@ -309,6 +328,7 @@ export async function openEditor(itemId, caps, onSaved) {
       await saveItem(sheet, item, fields, conf, status, canViewCost);
       const newSku = await refreshSkuAndDupCheck(sheet, itemId);
       toast(`Saved · SKU ${newSku}`);
+      navigator.vibrate?.([12, 40, 12]); // affirmative "done" buzz
       savedOk = true; // don't prompt "discard changes?" on the post-save close
       onSaved?.();
       close();
@@ -343,6 +363,8 @@ export async function openEditor(itemId, caps, onSaved) {
           await supabase.storage.from("product-images").remove([item.image_path]);
         }
         toast("Item deleted");
+        navigator.vibrate?.(20);
+        savedOk = true; // it's gone — no discard prompt
         onSaved?.();
         close();
       } catch (err) {
@@ -377,7 +399,7 @@ function fieldRow(def, value, conf, showConf) {
 
   const confPill = showConf
     ? `<button class="conf-pill ${confClass(conf[def.key])}" data-conf="${def.key}"
-         title="confidence">${conf[def.key] ? conf[def.key][0] : "·"}</button>`
+         aria-label="Confidence: ${conf[def.key] || "not set"}" title="Confidence (tap to cycle)">${conf[def.key] ? conf[def.key][0] : "·"}</button>`
     : "";
 
   return `<div class="frow">
@@ -392,6 +414,7 @@ function confClass(level) {
 function paintConfPill(pill, level) {
   pill.className = `conf-pill ${confClass(level)}`;
   pill.textContent = level ? level[0] : "·";
+  pill.setAttribute("aria-label", `Confidence: ${level || "not set"}`);
 }
 
 // Collect values, normalise vocab fields, and write to Supabase.

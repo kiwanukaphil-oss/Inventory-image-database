@@ -37,11 +37,13 @@ function summarizeItem(it) {
 // tapping its photo opens the lightbox. Upload, grouping, and bulk ops land
 // in later phases.
 
+// `ico` is a key into the ICON set (resolved at render time, since ICON is
+// defined further down). Keeps one consistent line-icon vocabulary.
 const NAV = [
-  { id: "gallery", label: "Gallery", ico: "▦" },
-  { id: "add", label: "Add", ico: "＋" },
-  { id: "review", label: "Review", ico: "⚑", badge: true },
-  { id: "export", label: "Export", ico: "⤓" },
+  { id: "gallery", label: "Gallery", ico: "navGallery" },
+  { id: "add", label: "Add", ico: "navAdd" },
+  { id: "review", label: "Review", ico: "navReview", badge: true },
+  { id: "export", label: "Export", ico: "navExport" },
 ];
 
 // Update the Review tab's count badge (needs-review + low-confidence items).
@@ -82,7 +84,7 @@ export function renderApp(mount, profile, onSignOut) {
 
   // Build bottom nav buttons.
   nav.innerHTML = NAV.map(
-    (n) => `<button data-view="${n.id}"><span class="ico">${n.ico}</span>${n.label}${
+    (n) => `<button data-view="${n.id}"><span class="ico">${ICON[n.ico] || ""}</span>${n.label}${
       n.badge ? `<span class="navbadge" id="reviewBadge" hidden></span>` : ""
     }</button>`
   ).join("");
@@ -293,6 +295,11 @@ const ICON = {
   x: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
   kebab: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>`,
   up: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>`,
+  // ---- bottom-nav glyphs (one consistent line-icon set, replacing emoji) ----
+  navGallery: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`,
+  navAdd: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
+  navReview: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V4"/><path d="M5 4h12l-2.5 4L17 12H5"/></svg>`,
+  navExport: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M5 20h14"/></svg>`,
 };
 
 // A reusable bottom sheet (filters, status picker, more-actions menu).
@@ -1060,6 +1067,7 @@ async function renderGallery(view, caps, opts = {}) {
           }
         }
         toast(`Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`);
+        navigator.vibrate?.([12, 40, 12]);
       } catch (e) {
         toast("Bulk edit failed: " + (e.message || e));
       }

@@ -400,6 +400,7 @@ export async function renderUpload(view, caps, onDone) {
   function finishUpload(added, failed, firstError) {
     if (!doneArea?.isConnected) return; // user navigated away mid-upload
     setMode("done");
+    if (added) navigator.vibrate?.([12, 40, 12]); // affirmative "batch done" buzz
     const remaining = entries.length;
     $("#doneMsg").innerHTML =
       `Added ${added}${failed ? ` · ${failed} failed` : ""}${remaining ? ` · ${remaining} remaining` : ""}.` +
