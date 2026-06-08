@@ -698,6 +698,10 @@ a { color:var(--accent); }
   position:fixed; bottom:calc(16px + var(--safe-bottom)); left:0; right:0;
   text-align:center; color:#ddd; font-size:13px; padding:0 16px;
 }
+/* The lightbox is an immersive dark photo viewer in BOTH themes, so its controls
+   must stay light-on-dark regardless of --txt (which goes dark in light mode and
+   would otherwise hide these glyphs against the dark circles). */
+#lb .lb-close, #lb .lb-nav { color:#fff; border:1px solid rgba(255,255,255,.18); }
 #lb .lb-close {
   position:fixed; top:calc(10px + var(--safe-top)); right:12px;
   width:40px; height:40px; border-radius:50%; background:#0009; font-size:18px;
