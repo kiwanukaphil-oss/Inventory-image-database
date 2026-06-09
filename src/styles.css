@@ -458,7 +458,10 @@ a { color:var(--accent); }
 .ab-approve:not(:disabled) { color:var(--ok-txt); font-weight:650; }
 
 /* bottom sheets (filters / status / more) */
-.msheet { position:fixed; inset:0; z-index:60; background:var(--scrim); display:flex;
+/* z-index 80 keeps sheets/dialogs above the full-screen tool overlays
+   (.calib / pricing at 70) so a sheet opened from within them is on top, and
+   below the toast (90) so an Undo action stays reachable. */
+.msheet { position:fixed; inset:0; z-index:80; background:var(--scrim); display:flex;
   align-items:flex-end; justify-content:center; opacity:0; transition:opacity .2s; }
 .msheet.open { opacity:1; }
 .msheet-panel { width:100%; max-width:520px; max-height:88dvh; display:flex; flex-direction:column;
@@ -798,3 +801,55 @@ a { color:var(--accent); }
 .cs-name { flex:1; font-size:14px; }
 .cs-rate { font-size:15px; font-weight:650; }
 .cs-approve { width:100%; margin-top:6px; }
+
+/* ---------------- pricing (set prices by group) ---------------- */
+.pg-controls { flex:0 0 auto; padding:12px 14px; border-bottom:1px solid var(--line);
+  display:flex; flex-direction:column; gap:8px; }
+.pg-bylabel { font-size:11px; text-transform:uppercase; letter-spacing:.03em; }
+.pg-chips { display:flex; flex-wrap:wrap; gap:6px; }
+.pg-chip { font-size:13px; padding:5px 11px; border-radius:16px; border:1px solid var(--line);
+  background:var(--panel); color:var(--txt); }
+.pg-chip.on { background:var(--accent-soft); border-color:var(--accent); color:var(--accent-soft-txt); font-weight:600; }
+.pg-summary { font-size:12.5px; color:var(--warn); }
+.pg-summary.pg-done { color:var(--ok-txt); }
+.pg-group { border:1px solid var(--line); border-radius:10px; background:var(--panel);
+  padding:10px 12px; margin-bottom:8px; }
+.pg-top { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:6px; }
+.pg-label { font-weight:600; font-size:14px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pg-count { flex:0 0 auto; font-size:12px; color:var(--muted); }
+.pg-row { display:flex; flex-direction:column; gap:6px; }
+.pg-state { font-size:12px; }
+.pg-state.pg-unpriced { color:var(--warn); font-weight:600; }
+.pg-state.pg-mixed { color:var(--review-txt); }
+.pg-state.pg-uniform { color:var(--ok-txt); }
+.pg-input { display:flex; align-items:center; gap:6px; }
+.pg-cur { font-size:13px; color:var(--muted); flex:0 0 auto; }
+.pg-input input { flex:1; min-width:0; text-align:right; padding:9px 10px; font-size:15px;
+  border:1px solid var(--line); border-radius:8px; background:var(--elevated); color:var(--txt); }
+.pg-set { flex:0 0 auto; padding:9px 16px; border-radius:8px; border:1px solid var(--accent-hi);
+  background:linear-gradient(180deg, var(--accent-hi), var(--accent)); color:var(--on-accent); font-weight:650; }
+/* band-split */
+.pg-splitrow { margin-top:8px; }
+.pg-splitbtn { font-size:12.5px; padding:4px 0; background:none; border:none; color:var(--accent); font-weight:600; }
+.pg-splitctl { display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:13px; margin-bottom:8px; }
+.pg-splitctl select { padding:7px 8px; border:1px solid var(--line); border-radius:8px;
+  background:var(--elevated); color:var(--txt); font-size:13px; }
+.pg-thresh { width:90px; padding:7px 8px; border:1px solid var(--line); border-radius:8px;
+  background:var(--elevated); color:var(--txt); font-size:13px; text-align:right; }
+.pg-bandhint { font-size:12.5px; padding:4px 0 8px; }
+.pg-band { border-left:2px solid var(--accent); padding-left:10px; margin:8px 0; }
+.pg-bandhdr { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin-bottom:4px; }
+.pg-bandlabel { font-size:13px; font-weight:600; }
+/* scope (narrow the working set) + unpriced toggle */
+.pg-scoperow { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.pg-scopepill { font-size:12px; padding:4px 9px; border-radius:14px; border:1px solid var(--flag-border);
+  background:var(--flag); color:var(--flag-txt); }
+.pg-scopeadd { font-size:12.5px; padding:4px 10px; border-radius:14px; border:1px dashed var(--line);
+  background:none; color:var(--accent); font-weight:600; }
+.pg-toggle { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--txt); }
+.pg-toggle input { width:18px; height:18px; }
+.pg-modeseg { display:flex; gap:6px; margin:8px 0; }
+.pg-modebtn { flex:1; padding:8px; border-radius:8px; border:1px solid var(--line);
+  background:var(--panel); color:var(--txt); font-size:13px; }
+.pg-modebtn.on { background:var(--accent-soft); border-color:var(--accent); color:var(--accent-soft-txt); font-weight:600; }
+.pg-vallist { display:flex; flex-direction:column; max-height:46dvh; overflow-y:auto; margin-bottom:12px; }

@@ -4,6 +4,7 @@ import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
 import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, vocabSuggestions, AI_BLIND_FIELDS } from "./data.js";
 import { openCalibration } from "./calibration.js";
+import { openPricing } from "./pricing.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -168,9 +169,11 @@ export function renderApp(mount, profile, onSignOut) {
     // Calibration is a reviewer task (validates AI confidence), so it's offered
     // to anyone who can edit, not just user-managers.
     const calib = caps.can_edit ? `<button class="menu-item" data-m="calib">Calibration check</button>` : "";
+    const pricing = caps.can_edit ? `<button class="menu-item" data-m="pricing">Set prices</button>` : "";
     const sh = openBottomSheet(caps.email || "Account",
       `<div class="menu-sub">Signed in as ${esc(role)}</div>
        ${admin}
+       ${pricing}
        ${calib}
        <button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
        ${install}
@@ -184,6 +187,7 @@ export function renderApp(mount, profile, onSignOut) {
       if (b.dataset.m === "users") openUsers(caps);
       else if (b.dataset.m === "cats") openCategoryManager(caps);
       else if (b.dataset.m === "settings") openSettings();
+      else if (b.dataset.m === "pricing") openPricing(caps, () => setView(currentViewId));
       else if (b.dataset.m === "calib") openCalibration(caps, () => setView(currentViewId));
       else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
     });
@@ -1223,12 +1227,23 @@ async function renderGallery(view, caps, opts = {}) {
   async function approveSelected() {
     if (!selected.size) return;
     const ids = [...selected];
-    const prior = ids.map((id) => ({ id, status: byId[id]?.status }));
-    const { error } = await supabase.from("items").update({ status: "approved" }).in("id", ids);
+    // No price ⇒ not sellable ⇒ can't be approved. Approve the priced ones and
+    // report how many were skipped, rather than blocking the whole batch.
+    const priced = ids.filter((id) => byId[id]?.price != null);
+    const skipped = ids.length - priced.length;
+    if (!priced.length) {
+      toast(`Can't approve — ${skipped} item${skipped === 1 ? "" : "s"} have no price.`);
+      return;
+    }
+    const prior = priced.map((id) => ({ id, status: byId[id]?.status }));
+    const { error } = await supabase.from("items").update({ status: "approved" }).in("id", priced);
     if (error) { toast("Approve failed: " + error.message); return; }
     navigator.vibrate?.([12, 40, 12]);
     exitSelection();
-    toast(`Approved ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
+    const msg = skipped
+      ? `Approved ${priced.length} · ${skipped} skipped (no price)`
+      : `Approved ${priced.length} item${priced.length === 1 ? "" : "s"}`;
+    toast(msg, {
       label: "Undo",
       onClick: async () => {
         for (const p of prior) {

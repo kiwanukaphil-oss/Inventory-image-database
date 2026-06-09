@@ -321,6 +321,12 @@ export async function openEditor(itemId, caps, onSaved) {
   sheet.querySelector("#saveBtn").onclick = async () => {
     if (!canEdit) return;
     if (!navigator.onLine) { toast("You're offline — reconnect to save your changes."); return; }
+    // An approved item must be sellable, so it can't be approved without a price.
+    const priceEl = sheet.querySelector('[data-key="price"]');
+    if (status === "approved" && (!priceEl || priceEl.value.trim() === "")) {
+      toast("Set a price before approving this item.");
+      return;
+    }
     const btn = sheet.querySelector("#saveBtn");
     btn.disabled = true;
     btn.textContent = "Saving…";

@@ -52,7 +52,7 @@ export async function openCalibration(caps, onClose) {
   // so a resumed pass shows prior verdicts instead of starting blank.
   const { data: rows, error } = await supabase
     .from("items")
-    .select("id, brand, name, attributes, confidence, category_id, image_path, status")
+    .select("id, brand, name, attributes, confidence, category_id, image_path, status, price")
     .not("confidence", "is", null)
     .order("created_at", { ascending: true });
   if (error) { toast("Couldn't load items: " + error.message); return; }
@@ -210,7 +210,8 @@ export async function openCalibration(caps, onClose) {
   // one-tap approve for the items whose every field came back correct.
   function renderSummary() {
     const byLevel = Object.fromEntries(LEVELS.map((l) => [l, { total: 0, correct: 0 }]));
-    const allCorrectItems = [];
+    const allCorrectItems = []; // all-correct AND priced — eligible to approve
+    let noPriceHeld = 0;        // all-correct but unpriced, so can't be approved
     for (const { it, fields } of items) {
       const verdicts = marks.get(it.id);
       if (!verdicts) continue;
@@ -222,7 +223,10 @@ export async function openCalibration(caps, onClose) {
         byLevel[f.level].total++;
         if (v === "correct") byLevel[f.level].correct++; else everyCorrect = false;
       }
-      if (anyMarked && everyCorrect && it.status !== "approved") allCorrectItems.push(it.id);
+      if (anyMarked && everyCorrect && it.status !== "approved") {
+        if (it.price != null) allCorrectItems.push(it.id);
+        else noPriceHeld++;
+      }
     }
 
     const pct = (c, t) => (t === 0 ? "—" : `${Math.round((100 * c) / t)}%`);
@@ -250,6 +254,9 @@ export async function openCalibration(caps, onClose) {
         <div class="calib-hint">${esc(verdict)}</div>
         ${allCorrectItems.length
           ? `<button class="primary cs-approve" id="cApprove">Approve ${allCorrectItems.length} all-correct item${allCorrectItems.length === 1 ? "" : "s"}</button>`
+          : ""}
+        ${noPriceHeld
+          ? `<div class="calib-hint">${noPriceHeld} all-correct item${noPriceHeld === 1 ? "" : "s"} held back — no price set yet.</div>`
           : ""}
       </div>
       <div class="calib-foot"><button class="ghost" id="cDone">Done</button></div>
