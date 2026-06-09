@@ -40,10 +40,25 @@ Backlog close-out (this round):
   IndexedDB write-queue with conflict→flag was consciously not built; revisit
   only if real-world offline use demands it.)
 
+Review efficiency (2026-06-09 round):
+- ✅ Triage gate fix (approved items no longer re-enter Review; `AI_BLIND_FIELDS`
+  like `fit` excluded from the low-confidence signal).
+- ✅ Bulk **Approve** as a first-class selection action (green ✓ + Undo toast).
+- ✅ Dense **scan/report list** view (density toggle; Review defaults to it),
+  Medium/Low fields tinted inline.
+- ✅ Manual **calibration tool** (⋮ → Calibration check) → `calibration_marks`;
+  accuracy-by-confidence report + one-tap approve of all-correct items.
+
 ## Open ideas (not requested)
+- **Swipe-review card stack** (deferred from the 2026-06-09 review-efficiency
+  round): full-screen, one item at a time, big photo + AI fields — swipe right to
+  approve, left to flag, up (or tap a field) to fix inline; progress + Undo last;
+  haptics. Targets the "needs a look" pile (Medium/Low-confidence items) as a
+  faster alternative to the tap-card→sheet→back loop. Build only if review still
+  feels slow after the calibration pass proves out confidence trust.
 - Full offline write-queue (IndexedDB + conflict→flag) if offline editing is
   needed in the field.
 - Shared (team-wide) saved views in addition to per-user.
 - Thumbnail variants to cut image egress.
 
-_Last updated: 2026-06-07._
+_Last updated: 2026-06-09._
