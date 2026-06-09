@@ -124,9 +124,11 @@ Deno.serve(async (req) => {
       `Step 2: using only what you read, fill "values": brand, ${fieldList}.\n` +
       `Guidance:\n` +
       `- brand: the maker/brand exactly as printed; keep look-alike/knock-off names as printed (do NOT normalise toward a famous brand).\n` +
-      `- name (Product name): the product's FULL name as printed, INCLUDING any variant/flanker — ` +
-      `e.g. "Polo Red", "Stronger With You Intensely", "Sauvage Elixir", "Diamonds". ` +
-      `It is usually the largest text after the brand; read it in full. Omit only for generic garments with no model name.\n` +
+      `- name (Product name): ALWAYS start the name with the brand. ` +
+      `If a model/variant name is printed (common for fragrances), use "<Brand> <Model name>" read in full ` +
+      `including any flanker — e.g. "Dior Sauvage Elixir", "Ralph Lauren Polo Red", "Armani Stronger With You Intensely". ` +
+      `If it is a generic garment with no model name, build "<Brand> <garment type>" from the category — ` +
+      `e.g. "Charles Tyrwhitt Formal Shirt", "Cobb Cargo Pants". Never leave the name blank.\n` +
       `- For fragrances the brand, product name, concentration (EDT/EDP/Parfum) and size (in ml) are almost always clearly printed — read and fill them.\n` +
       `- scent_family is a CLASSIFICATION that is NOT printed on the box (e.g. Woody, Amber/Oriental, ` +
       `Fresh, Citrus, Aromatic/Fougère, Floral, Gourmand, Leather, Chypre, Aquatic). Once you've ` +
