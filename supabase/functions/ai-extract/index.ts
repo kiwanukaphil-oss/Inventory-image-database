@@ -87,10 +87,18 @@ Deno.serve(async (req) => {
     };
     for (const f of fields) {
       if (f.key === "brand") continue;
-      valueProps[f.key] =
+      // Options are GUIDANCE, not a hard enum. A hard enum forces the model to
+      // snap an unlisted real value (e.g. a 4XL size when the list stops at XXL)
+      // to the nearest listed one — confidently wrong, which poisons review. So we
+      // surface the expected values in the description and let it read what's
+      // actually printed when none of them fit.
+      const desc =
         Array.isArray(f.options) && f.options.length
-          ? { type: "string", enum: f.options, description: f.label }
-          : { type: "string", description: f.label };
+          ? `${f.label}. Prefer one of: ${f.options.join(", ")}. ` +
+            `But if the value printed on the product clearly differs from all of these, ` +
+            `use the exact value as printed — do NOT round to the nearest listed option.`
+          : f.label;
+      valueProps[f.key] = { type: "string", description: desc };
       confProps[f.key] = { type: "string", enum: ["High", "Medium", "Low"] };
     }
 
@@ -125,6 +133,7 @@ Deno.serve(async (req) => {
       `identified the exact fragrance from its brand + product name, infer its scent family from your ` +
       `general knowledge of that fragrance. If you don't recognise the specific fragrance, leave it ` +
       `blank — do not guess. Mark any inferred scent_family as Medium or Low confidence.\n` +
+      `- SIZE: record the size EXACTLY as printed (e.g. XS, S, M, L, XL, XXL, 3XL, 4XL, 5XL, or a numeric size). Never round or clamp to the nearest common size — a tag reading 4XL must be recorded as 4XL, not XXL.\n` +
       `- COLOUR CAPTION OVERRIDE: if the image has a caption, overlay, sticker or handwritten note stating a COLOUR, that stated colour is authoritative — use it for the colour field even if the item looks like a different colour in the photo.\n` +
       `- PHOTOGRAPHER'S NOTE: a small paper/note is sometimes placed in the shot listing extra details (e.g. material, fit, size, composition) for things not obvious on the tag — read it and use those details to fill the matching fields.\n` +
       `- OTHER LANGUAGES: tags are often partly or fully in another language (commonly Chinese). Read and translate them, and extract any useful details (material, size, composition, care, etc.) the photographer may have overlooked. Keep the original text in visible_text and put the interpreted English value in the field.\n` +
