@@ -70,7 +70,10 @@ export function trapFocus(container) {
 // A single reusable bottom-center toast for transient success/error feedback.
 // Re-shows on each call and auto-hides; callers never manage the element.
 let toastTimer;
-export function toast(msg) {
+// Optional `action` = { label, onClick } renders an inline button (e.g. "Undo")
+// for reversible bulk actions. When present the toast lingers longer so the user
+// has time to react, and tapping the action dismisses it.
+export function toast(msg, action = null) {
   let t = document.getElementById("toast");
   if (!t) {
     t = document.createElement("div");
@@ -79,10 +82,18 @@ export function toast(msg) {
     t.setAttribute("aria-live", "polite");
     document.body.appendChild(t);
   }
-  t.textContent = msg;
+  if (action && action.label) {
+    t.innerHTML = `<span class="toast-msg"></span><button class="toast-action" type="button"></button>`;
+    t.querySelector(".toast-msg").textContent = msg;
+    const btn = t.querySelector(".toast-action");
+    btn.textContent = action.label;
+    btn.onclick = () => { t.classList.remove("show"); action.onClick?.(); };
+  } else {
+    t.textContent = msg;
+  }
   t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove("show"), 2600);
+  toastTimer = setTimeout(() => t.classList.remove("show"), action ? 5200 : 2600);
 }
 
 // --- Bottom sheet -------------------------------------------------------------

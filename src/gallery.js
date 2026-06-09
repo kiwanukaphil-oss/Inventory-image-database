@@ -2,7 +2,8 @@ import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
-import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, vocabSuggestions } from "./data.js";
+import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, vocabSuggestions, AI_BLIND_FIELDS } from "./data.js";
+import { openCalibration } from "./calibration.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -29,6 +30,33 @@ function summarizeItem(it) {
       const unit = (f.label.match(/\(([^)]+)\)/) || [])[1];
       parts.push(unit ? `${v} ${unit}` : String(v));
     }
+  }
+  return parts.join(" · ");
+}
+
+// Like summarizeItem, but returns HTML and tints the fields the AI was unsure
+// about (Medium/Low, excluding AI-blind fields it can never read), so on the
+// dense scan list a reviewer's eye lands straight on what to verify. Each part
+// is escaped individually, so the joined string is safe to inject as HTML.
+function summarizeItemRich(it) {
+  const attrs = it.attributes || {};
+  const conf = it.confidence || {};
+  const parts = [];
+  for (const f of resolveFields(it.category_id)) {
+    const v = attrs[f.key];
+    if (v === null || v === undefined || v === "") continue;
+    let text;
+    if (f.type === "boolean") {
+      if (v === true || v === "true") text = f.label; else continue;
+    } else {
+      const unit = (f.label.match(/\(([^)]+)\)/) || [])[1];
+      text = unit ? `${v} ${unit}` : String(v);
+    }
+    const lvl = conf[f.key];
+    const doubt = (lvl === "Low" || lvl === "Medium") && !AI_BLIND_FIELDS.has(f.key);
+    parts.push(doubt
+      ? `<span class="lc lc-${lvl.toLowerCase()}" title="${esc(f.label)}: ${lvl} confidence — verify">${esc(text)}</span>`
+      : esc(text));
   }
   return parts.join(" · ");
 }
@@ -137,9 +165,13 @@ export function renderApp(mount, profile, onSignOut) {
          <button class="menu-item" data-m="settings">Settings</button>`
       : "";
     const install = installAvailable() ? `<button class="menu-item" data-m="install">Install app</button>` : "";
+    // Calibration is a reviewer task (validates AI confidence), so it's offered
+    // to anyone who can edit, not just user-managers.
+    const calib = caps.can_edit ? `<button class="menu-item" data-m="calib">Calibration check</button>` : "";
     const sh = openBottomSheet(caps.email || "Account",
       `<div class="menu-sub">Signed in as ${esc(role)}</div>
        ${admin}
+       ${calib}
        <button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
        ${install}
        <button class="menu-item danger" data-m="signout">Sign out</button>`);
@@ -152,6 +184,7 @@ export function renderApp(mount, profile, onSignOut) {
       if (b.dataset.m === "users") openUsers(caps);
       else if (b.dataset.m === "cats") openCategoryManager(caps);
       else if (b.dataset.m === "settings") openSettings();
+      else if (b.dataset.m === "calib") openCalibration(caps, () => setView(currentViewId));
       else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
     });
   };
@@ -305,15 +338,27 @@ const SORTS = [
 // Session-remembered view state, kept separate per surface so the Gallery and
 // Review tabs don't clobber each other's search/filters/sort. `active` holds
 // facet selections serialised as arrays (rehydrated to Sets on render).
+// `density` is the card-grid vs scan-list view mode. Review defaults to the
+// dense list (built for skimming many uploads at once); Gallery to the grid.
 const browseState = {
-  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", datePreset: "all", active: {} },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", datePreset: "all", active: {} },
+  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", datePreset: "all", active: {}, density: "grid" },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", datePreset: "all", active: {}, density: "list" },
 };
 
-// True if an item has any field marked Low confidence.
-const hasLowConf = (it) => it.confidence && Object.values(it.confidence).some((v) => v === "Low");
-// Triage predicate: flagged / explicitly needs-review / has a low-confidence field.
-const needsReviewItem = (it) => it.status === "flag" || it.status === "needs-review" || hasLowConf(it);
+// AI_BLIND_FIELDS (fit, …) is imported from data.js — fields the AI can never
+// read from a photo, so a Low there is structural, not genuine doubt.
+// True when the AI flagged genuine doubt: a Low on a field it was actually
+// expected to read (AI-blind fields excluded).
+const hasLowConf = (it) =>
+  !!it.confidence &&
+  Object.entries(it.confidence).some(([k, v]) => v === "Low" && !AI_BLIND_FIELDS.has(k));
+// Triage predicate: an item needs review while it's flagged or still unreviewed,
+// or while it's a draft the AI is unsure about. An APPROVED item is finished — a
+// human signed off, low-confidence fields and all — so it never returns here.
+const needsReviewItem = (it) =>
+  it.status === "flag" ||
+  it.status === "needs-review" ||
+  (it.status === "draft" && hasLowConf(it));
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 
 // Fade each thumbnail in over its shimmer once the image has loaded, so the
@@ -330,6 +375,9 @@ function fadeInImages(container) {
 // Small inline icons for a cleaner, premium toolbar.
 const ICON = {
   filter: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
+  // Density toggle: `rows` shows the scan-list affordance, `grid` the card view.
+  rows: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>`,
+  grid: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.4"/></svg>`,
   check: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>`,
   x: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
   kebab: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>`,
@@ -426,6 +474,7 @@ async function renderGallery(view, caps, opts = {}) {
   // ---- view state (restored from the session, per surface) ----
   let q = state.q;
   let needsReview = review ? true : state.needsReview; // Review tab forces it on
+  let density = state.density === "list" ? "list" : "grid";
   let sortBy = state.sortBy;
   let priceMin = state.priceMin, priceMax = state.priceMax, datePreset = state.datePreset;
   const active = {}; // facetKey -> Set(values); AND across keys, OR within a key
@@ -437,6 +486,7 @@ async function renderGallery(view, caps, opts = {}) {
     <div class="galtop">
       <div class="ghdr" id="hdrNormal">
         <input id="q" class="fb-search" type="search" placeholder="Search…" value="${esc(q)}">
+        <button class="iconbtn" id="densityBtn" aria-label="${density === "list" ? "Switch to grid view" : "Switch to list view"}">${density === "list" ? ICON.grid : ICON.rows}</button>
         <button class="iconbtn" id="filterBtn" aria-label="Filters &amp; sort">${ICON.filter}<span class="fcount" id="fcount" hidden></span></button>
         ${canEdit ? `<button class="iconbtn" id="selectBtn" aria-label="Select">${ICON.check}</button>` : ""}
       </div>
@@ -451,10 +501,11 @@ async function renderGallery(view, caps, opts = {}) {
     </div>
     <div class="results" id="grid"></div>
     ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
+      <button class="ab-btn ab-approve" id="abApprove"><span class="ab-ico">✓</span>Approve</button>
       <button class="ab-btn" id="abAi"><span class="ab-ico">✨</span>AI-fill</button>
       <button class="ab-btn" id="abEdit"><span class="ab-ico">✎</span>Edit</button>
       <button class="ab-btn" id="abMore"><span class="ab-ico">⋯</span>More</button>
-      <button class="ab-btn" id="abDone"><span class="ab-ico">✓</span>Done</button>
+      <button class="ab-btn" id="abDone"><span class="ab-ico">✕</span>Done</button>
     </div>` : ""}`;
 
   const grid = view.querySelector("#grid");
@@ -469,7 +520,7 @@ async function renderGallery(view, caps, opts = {}) {
   const saveState = () => {
     state.q = q; state.needsReview = needsReview; state.sortBy = sortBy;
     state.priceMin = priceMin; state.priceMax = priceMax;
-    state.datePreset = datePreset;
+    state.datePreset = datePreset; state.density = density;
     state.active = {};
     for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
   };
@@ -489,7 +540,7 @@ async function renderGallery(view, caps, opts = {}) {
     const n = selected.size;
     const c = hdrSelect.querySelector("#selCount");
     if (c) c.textContent = `${n} selected`;
-    ["abAi", "abEdit", "abMore"].forEach((id) => {
+    ["abApprove", "abAi", "abEdit", "abMore"].forEach((id) => {
       const el = view.querySelector("#" + id);
       if (el) el.disabled = n === 0;
     });
@@ -613,6 +664,41 @@ async function renderGallery(view, caps, opts = {}) {
     </div>`;
   }
 
+  // One dense scan-list row: small thumb + brand/status on top, then the
+  // category-driven summary with AI-doubt fields tinted, then price/date. Built
+  // for skimming many uploads to judge AI quality without opening each one. It
+  // reuses the `.card[data-id]` contract so all the selection/tap/lightbox
+  // interactions below work unchanged.
+  function rowHtml(it, slides) {
+    const url = signed[it.image_path];
+    const cat = it.categories?.name || "";
+    const brand = it.brand || it.name || "—";
+    const variant = summarizeItemRich(it);
+    let slideIdx = -1;
+    if (url) { slideIdx = slides.length; slides.push({ url, caption: esc([brand, cat].filter(Boolean).join(" · ")) }); }
+    const inner = url
+      ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
+      : `<span class="row-noimg">—</span>`;
+    const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
+      ${inner}<span class="selcheck">✓</span>${hasLowConf(it) ? '<span class="lowdot" title="Has a low-confidence field"></span>' : ""}</div>`;
+    return `<div class="card card-row${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
+      ${thumb}
+      <div class="row-main">
+        <div class="row-top">
+          <span class="row-brand">${esc(brand)}</span>
+          <span class="stbadge ${stClass2[it.status] || ""}">${esc(it.status)}</span>
+        </div>
+        <div class="row-sub">
+          ${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}${variant ? `<span class="row-attr">${variant}</span>` : ""}
+        </div>
+        <div class="row-meta">
+          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : "<span></span>"}
+          <span class="cdate">${fmtDate(it.created_at)}</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
   function draw() {
     const rows = applySort(data.filter((it) => matches(it, null)));
     filtered = rows;          // expose current filtered+sorted set for bulk actions
@@ -636,7 +722,9 @@ async function renderGallery(view, caps, opts = {}) {
 
     // Slides for the lightbox follow the currently filtered, ordered rows.
     const slides = [];
-    grid.innerHTML = `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
+    grid.innerHTML = density === "list"
+      ? `<div class="scanlist">${rows.map((it) => rowHtml(it, slides)).join("")}</div>`
+      : `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
     countEl.innerHTML = `${rows.length} of ${data.length} item${data.length === 1 ? "" : "s"}${countNote}`;
     grid._slides = slides;
     fadeInImages(grid);
@@ -1017,6 +1105,16 @@ async function renderGallery(view, caps, opts = {}) {
   const selectBtn = view.querySelector("#selectBtn");
   if (selectBtn) selectBtn.onclick = enterSelection;
 
+  // Toggle the card-grid vs scan-list density. Updates the button's own icon +
+  // label in place, then redraws the results in the new layout.
+  const densityBtn = view.querySelector("#densityBtn");
+  if (densityBtn) densityBtn.onclick = () => {
+    density = density === "list" ? "grid" : "list";
+    densityBtn.innerHTML = density === "list" ? ICON.grid : ICON.rows;
+    densityBtn.setAttribute("aria-label", density === "list" ? "Switch to grid view" : "Switch to list view");
+    draw();
+  };
+
   // Bulk-edit common fields across the selection. Only the fields you fill are
   // applied; category-specific fields appear when the whole selection is one
   // category. Cost is gated by can_view_cost.
@@ -1118,6 +1216,31 @@ async function renderGallery(view, caps, opts = {}) {
     };
   }
 
+  // One-tap bulk approve for the current selection. Approving is fully
+  // reversible, so instead of a confirm-tap on every batch we apply immediately
+  // and offer a 5-second Undo that restores each item's prior status (items may
+  // have been needs-review, draft, or flag, so we snapshot per item).
+  async function approveSelected() {
+    if (!selected.size) return;
+    const ids = [...selected];
+    const prior = ids.map((id) => ({ id, status: byId[id]?.status }));
+    const { error } = await supabase.from("items").update({ status: "approved" }).in("id", ids);
+    if (error) { toast("Approve failed: " + error.message); return; }
+    navigator.vibrate?.([12, 40, 12]);
+    exitSelection();
+    toast(`Approved ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
+      label: "Undo",
+      onClick: async () => {
+        for (const p of prior) {
+          if (p.status) await supabase.from("items").update({ status: p.status }).eq("id", p.id);
+        }
+        toast("Approval undone");
+        refresh();
+      },
+    });
+    refresh();
+  }
+
   // ---- wiring: selection header + action bar ----
   if (canEdit) {
     view.querySelector("#selExit").onclick = exitSelection;
@@ -1127,6 +1250,7 @@ async function renderGallery(view, caps, opts = {}) {
       grid.querySelectorAll(".card[data-id]").forEach((c) => c.classList.add("selected"));
       updateSelBar();
     };
+    view.querySelector("#abApprove").onclick = approveSelected;
     view.querySelector("#abAi").onclick = () => {
       if (!selected.size) return;
       const items = [...selected].map((id) => byId[id]).filter(Boolean);

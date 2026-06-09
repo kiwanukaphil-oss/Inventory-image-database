@@ -391,6 +391,35 @@ a { color:var(--accent); }
 .card .cprice { font-size:13px; color:var(--accent-soft-txt); }
 .card .cmeta { display:flex; justify-content:space-between; align-items:baseline; gap:6px; margin-top:2px; }
 .card .cdate { font-size:11px; color:var(--muted); white-space:nowrap; }
+
+/* ---------------- scan / report list (dense review surface) ---------------- */
+/* A compact one-row-per-item view for skimming many uploads at once: tiny thumb
+   + brand/status, the AI summary with doubtful fields tinted, and price/date.
+   Reuses .card so selection, tap-to-edit, and tap-thumb-to-zoom all carry over. */
+.scanlist { display:flex; flex-direction:column; gap:8px; }
+.card-row { flex-direction:row; align-items:stretch; }
+.card-row .thumb { width:56px; min-width:56px; height:56px; aspect-ratio:auto;
+  border-right:1px solid var(--line); border-radius:0; }
+.card-row .thumb img { object-fit:cover; }
+.card-row .row-noimg { color:var(--muted); font-size:18px; }
+.card-row .row-main { flex:1; min-width:0; padding:7px 10px; display:flex; flex-direction:column;
+  gap:1px; justify-content:center; }
+.row-top { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.row-brand { flex:1; min-width:0; font-weight:600; font-size:14px; line-height:1.2;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.row-sub { font-size:12.5px; line-height:1.3; color:var(--txt);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.row-cat { color:var(--muted); }
+.row-cat + .row-attr::before { content:" · "; color:var(--muted); }
+.row-meta { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.card-row .cprice { font-size:12px; color:var(--accent-soft-txt); }
+.card-row .cdate { font-size:11px; color:var(--muted); white-space:nowrap; }
+/* Fields the AI was unsure about — drawn so the reviewer's eye lands on exactly
+   what to verify. Low = warning amber; Medium = the softer review tint. */
+.lc { text-decoration:underline dotted; text-underline-offset:2px; }
+.lc-low { color:var(--warn); font-weight:600; }
+.lc-medium { color:var(--review-txt); }
+
 .readonly-val { color:var(--txt); font-size:14px; }
 .added-line { margin-top:6px; font-size:12px; color:var(--muted); }
 
@@ -424,6 +453,9 @@ a { color:var(--accent); }
 }
 .ab-btn:disabled { color:var(--muted); opacity:.45; }
 .ab-ico { font-size:20px; line-height:1; }
+/* Approve is the primary review action — tint it success-green so it reads as
+   "good to go", distinct from the teal that marks selection state. */
+.ab-approve:not(:disabled) { color:var(--ok-txt); font-weight:650; }
 
 /* bottom sheets (filters / status / more) */
 .msheet { position:fixed; inset:0; z-index:60; background:var(--scrim); display:flex;
@@ -684,8 +716,13 @@ a { color:var(--accent); }
 /* toast */
 #toast { position:fixed; left:50%; bottom:calc(86px + var(--safe-bottom)); transform:translateX(-50%);
   background:var(--toast-bg); border:1px solid var(--toast-line); color:var(--toast-txt); padding:10px 16px;
-  border-radius:10px; font-size:13px; z-index:90; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; text-align:center; }
+  border-radius:10px; font-size:13px; z-index:90; opacity:0; transition:opacity .2s; pointer-events:none; max-width:90vw; text-align:center;
+  display:inline-flex; align-items:center; gap:12px; }
 #toast.show { opacity:1; }
+/* The inline action (e.g. Undo) must stay tappable even though the toast itself
+   ignores pointer events, so it re-enables them and uses the accent colour. */
+.toast-action { pointer-events:auto; background:transparent; border:none; color:var(--accent);
+  font-size:13px; font-weight:650; padding:2px 4px; margin:-2px -2px -2px 0; cursor:pointer; flex:0 0 auto; }
 
 /* ---------------- lightbox ---------------- */
 #lb {
@@ -712,3 +749,52 @@ a { color:var(--accent); }
 }
 #lb .lb-prev { left:6px; } #lb .lb-next { right:6px; }
 @media (min-width:700px) { #lb .lb-nav { width:56px; height:80px; } }
+
+/* ---------------- calibration tool ---------------- */
+.calib { position:fixed; inset:0; z-index:70; background:var(--scrim); display:flex;
+  align-items:stretch; justify-content:center; opacity:0; transition:opacity .18s; }
+.calib.open { opacity:1; }
+.calib-panel { width:100%; max-width:560px; background:var(--bg); display:flex; flex-direction:column;
+  max-height:100dvh; }
+@media (min-width:600px) { .calib { align-items:center; } .calib-panel { max-height:92dvh; border-radius:16px;
+  border:1px solid var(--line); overflow:hidden; box-shadow:var(--shadow-pop); } }
+.calib-head { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding:12px 14px; border-bottom:1px solid var(--line); font-weight:650; }
+.calib-prog { flex:0 0 auto; height:3px; background:var(--line); }
+.calib-prog > span { display:block; height:100%; background:var(--accent); transition:width .2s; }
+.calib-body { flex:1 1 auto; overflow-y:auto; padding:14px; }
+.calib-photo { display:flex; align-items:center; justify-content:center; background:var(--thumb-bg);
+  border-radius:12px; height:38dvh; overflow:hidden; }
+.calib-photo img { max-width:100%; max-height:100%; object-fit:contain; }
+.calib-brand { font-weight:650; font-size:16px; margin:12px 2px 2px; }
+.calib-hint { font-size:12.5px; margin:2px 2px 12px; }
+.cf-list { display:flex; flex-direction:column; gap:8px; }
+.cf-row { display:flex; align-items:center; gap:10px; padding:8px 10px;
+  border:1px solid var(--line); border-radius:10px; background:var(--panel); }
+.cf-info { flex:1; min-width:0; display:flex; flex-direction:column; }
+.cf-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+.cf-val { font-size:14px; font-weight:550; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* confidence chip — green High, amber Medium, warning Low */
+.calib-lvl { flex:0 0 auto; width:22px; height:22px; border-radius:50%; display:flex; align-items:center;
+  justify-content:center; font-size:12px; font-weight:700; border:1px solid; }
+.lvl-high { color:var(--ok-txt); border-color:var(--ok-border); background:var(--ok); }
+.lvl-medium { color:var(--review-txt); border-color:var(--review-border); }
+.lvl-low { color:var(--warn); border-color:var(--warn); }
+.cf-seg { flex:0 0 auto; display:flex; gap:4px; }
+.cf-ok, .cf-no { width:34px; height:34px; border-radius:8px; border:1px solid var(--line);
+  background:var(--elevated); color:var(--muted); font-size:15px; font-weight:700; }
+.cf-ok.on { background:var(--ok); color:var(--ok-txt); border-color:var(--ok-border); }
+.cf-no.on { background:var(--flag); color:var(--flag-txt); border-color:var(--flag-border); }
+.calib-foot { flex:0 0 auto; display:flex; gap:10px; padding:12px 14px;
+  border-top:1px solid var(--line); padding-bottom:calc(12px + var(--safe-bottom)); }
+.calib-foot .ghost { flex:0 0 auto; }
+.calib-foot .primary { flex:1; }
+.calib-empty { padding:48px 24px; text-align:center; display:flex; flex-direction:column; gap:8px; }
+.calib-empty .big { font-size:40px; }
+/* results */
+.cs-card { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+.cs-row { display:flex; align-items:center; gap:10px; padding:10px 12px;
+  border:1px solid var(--line); border-radius:10px; background:var(--panel); }
+.cs-name { flex:1; font-size:14px; }
+.cs-rate { font-size:15px; font-weight:650; }
+.cs-approve { width:100%; margin-top:6px; }

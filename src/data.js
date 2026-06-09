@@ -44,6 +44,12 @@ export function refreshRefData() {
   cache = null;
 }
 
+// Fields the AI structurally cannot read from a single product photo (e.g. the
+// cut/fit of a garment), so its confidence on them is always Low and carries no
+// information. Shared so the gallery triage predicate and the calibration tool
+// exclude them identically.
+export const AI_BLIND_FIELDS = new Set(["fit"]);
+
 /**
  * Resolve the effective field set for a category: its own fields plus any
  * inheritable fields from ancestor categories. Own fields override inherited
