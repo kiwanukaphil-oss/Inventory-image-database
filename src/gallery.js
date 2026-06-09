@@ -1275,10 +1275,18 @@ async function renderGallery(view, caps, opts = {}) {
     view.querySelector("#abMore").onclick = () => {
       if (!selected.size) return;
       const body = `
+        <button class="menu-item" data-pricesel>Set prices for ${selected.size} item(s)…</button>
         <button class="menu-item" data-clearsel>Clear selection</button>
         ${canDelete ? `<button class="menu-item danger" data-del>Delete ${selected.size} item(s)</button>` : ""}`;
       const sh = openBottomSheet("More actions", body);
       sh.body.addEventListener("click", async (e) => {
+        if (e.target.closest("[data-pricesel]")) {
+          const ids = [...selected];
+          sh.close();
+          exitSelection();
+          openPricing(caps, refresh, { itemIds: ids });
+          return;
+        }
         if (e.target.closest("[data-clearsel]")) { sh.close(); clearSel(); return; }
         if (e.target.closest("[data-del]")) {
           const ids = [...selected];

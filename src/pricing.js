@@ -18,11 +18,16 @@ import { toast, trapFocus, openBottomSheet } from "./ui.js";
 // Grouping key chosen last time, remembered across opens (per the "I pick the
 // grouping each time" workflow — start sensible, never force a default).
 let lastGroupKeys = ["subcategory", "brand"];
+// Whether the group-by/scope controls are expanded; collapsed by default to give
+// the group list room. Remembered across opens.
+let controlsExpanded = false;
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+
+const CHEVRON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`;
 
 // The value of a grouping key for an item (mirrors the gallery's facet engine).
 // Category levels: `top` = broadest (Clothing), `category` = most specific leaf
@@ -44,8 +49,9 @@ function valueOf(it, key) {
  * Open the full-screen pricing surface.
  * @param {object} caps     signed-in profile (needs can_edit)
  * @param {Function} onClose called after the overlay closes (e.g. to refresh)
+ * @param {object} [opts]    { itemIds } to price only a selected subset
  */
-export async function openPricing(caps, onClose) {
+export async function openPricing(caps, onClose, opts = {}) {
   await loadRefData(); // category tree + field labels drive grouping + labels
 
   const { data: rows, error } = await supabase
@@ -53,8 +59,18 @@ export async function openPricing(caps, onClose) {
     .select("id, brand, attributes, category_id, price")
     .limit(5000);
   if (error) { toast("Couldn't load items: " + error.message); return; }
-  const items = rows || [];
+  // When launched from a gallery selection, price only those items.
+  const idset = opts.itemIds?.length ? new Set(opts.itemIds) : null;
+  const items = (rows || []).filter((it) => !idset || idset.has(it.id));
   const byId = Object.fromEntries(items.map((it) => [it.id, it]));
+
+  // Cost lives in the admin-only item_costs table, so only load it (and offer the
+  // Cost mode) when the user may view cost. Attached as it.cost for the surface.
+  const canViewCost = !!caps.can_view_cost;
+  if (canViewCost) {
+    const { data: costs } = await supabase.from("item_costs").select("item_id, cost_price");
+    for (const c of costs || []) if (byId[c.item_id]) byId[c.item_id].cost = c.cost_price;
+  }
 
   // Available grouping dimensions: base facets + every attribute key in use.
   const attrKeys = [...new Set(items.flatMap((it) => Object.keys(it.attributes || {})))].sort();
@@ -76,11 +92,19 @@ export async function openPricing(caps, onClose) {
   const fmt = (n) => (cur ? `${cur} ` : "") + Number(n).toLocaleString();
   let filterText = "";
 
+  // The surface edits one price type at a time. priceOf() returns the active
+  // type's value for an item so grouping, state, and fan-out all follow the mode.
+  let priceMode = "retail"; // "retail" -> items.price | "cost" -> item_costs.cost_price
+  const priceOf = (it) => (priceMode === "cost" ? it.cost ?? null : it.price ?? null);
+
   // Scope narrows which items the whole surface prices. Each entry is
   // { key, mode:'include'|'exclude', values:Set }; an item must satisfy them all.
   // Example: exclude Brand "X" so no group/band price ever touches X's items.
   const scope = [];
-  let onlyUnpriced = false; // when on, applying a price fills only unpriced items
+  // Default by intent: opening the whole catalogue from the menu is usually about
+  // filling NEW prices (so protect existing ones); opening a hand-picked gallery
+  // selection is usually a deliberate edit, so allow overwrite. Toggle either way.
+  let onlyUnpriced = !idset;
   const matchesScope = (it) => scope.every((s) => {
     const v = valueOf(it, s.key);
     return s.mode === "include" ? s.values.has(v) : !s.values.has(v);
@@ -115,7 +139,8 @@ export async function openPricing(caps, onClose) {
       if (!map.has(label)) map.set(label, { label, ids: [], prices: new Set(), unpriced: 0 });
       const g = map.get(label);
       g.ids.push(it.id);
-      if (it.price == null) g.unpriced++; else g.prices.add(it.price);
+      const p = priceOf(it);
+      if (p == null) g.unpriced++; else g.prices.add(p);
     }
     // Sort: needs-attention first (unpriced, then mixed), then by size.
     const rank = (g) => (g.unpriced ? 0 : g.prices.size > 1 ? 1 : 2);
@@ -137,6 +162,22 @@ export async function openPricing(caps, onClose) {
     return { kind: "mixed", text: `mixed ${range}${unpriced ? ` · ${unpriced} unpriced` : ""}` };
   }
   const groupState = (g) => priceState(g.prices, g.unpriced);
+
+  // The single value of a field across a set of items, or null if they differ or
+  // any is missing — used to show a margin only when a group is cleanly priced.
+  function uniformVal(ids, getter) {
+    const vals = new Set();
+    for (const id of ids) { const v = getter(byId[id]); if (v == null) return null; vals.add(v); }
+    return vals.size === 1 ? [...vals][0] : null;
+  }
+  // Group margin when both retail and cost are uniform across it (admin-only).
+  function groupMargin(g) {
+    if (!canViewCost) return null;
+    const retail = uniformVal(g.ids, (it) => it.price);
+    const cost = uniformVal(g.ids, (it) => it.cost);
+    if (retail == null || cost == null || cost === 0) return null;
+    return { cost, retail, pct: Math.round(((retail - cost) / cost) * 100) };
+  }
 
   // Attributes a group can be split on: those with at least one numeric value in
   // the group (so a threshold is meaningful). Non-numeric values land in a
@@ -165,17 +206,35 @@ export async function openPricing(caps, onClose) {
       const v = raw === undefined || raw === null || raw === "" ? NaN : Number(raw);
       const band = !Number.isFinite(v) ? no : v <= T ? le : gt;
       band.ids.push(id);
-      if (byId[id].price == null) band.unpriced++; else band.prices.add(byId[id].price);
+      const p = priceOf(byId[id]);
+      if (p == null) band.unpriced++; else band.prices.add(p);
     }
     return [le, gt, no].filter((b) => b.ids.length);
   }
 
+  // Groups currently shown = the scoped groups narrowed by the text filter. This
+  // is the single source for the visible count, the summary, and Set all, so they
+  // always match exactly what's on screen.
+  function visibleGroups() {
+    const ft = filterText.trim().toLowerCase();
+    return groups.filter((g) => !ft || g.label.toLowerCase().includes(ft));
+  }
+  const visibleItemIds = () => visibleGroups().flatMap((g) => g.ids);
+
   // ---- render -------------------------------------------------------------
   function render() {
-    const inScope = scopedItems();
-    const priced = groups.filter((g) => groupState(g).kind === "uniform").length;
-    const totalUnpriced = inScope.filter((it) => it.price == null).length;
-    const excluded = items.length - inScope.length;
+    const visible = visibleGroups();
+    const visibleIds = visible.flatMap((g) => g.ids);
+    const visibleCount = visibleIds.length;
+    const noun = priceMode === "cost" ? "cost" : "price";
+    const totalUnpriced = visibleIds.filter((id) => priceOf(byId[id]) == null).length;
+    const priced = visible.filter((g) => groupState(g).kind === "uniform").length;
+    const excluded = items.length - scopedItems().length;
+    // Retail/Cost switch — only when the user may see cost (item_costs is admin-only).
+    const modeSwitch = canViewCost ? `<div class="pg-modeswitch">
+        <button class="pg-modesw${priceMode === "retail" ? " on" : ""}" data-pricemode="retail">Retail</button>
+        <button class="pg-modesw${priceMode === "cost" ? " on" : ""}" data-pricemode="cost">Cost</button>
+      </div>` : "";
     const chips = groupOptions.map((o) =>
       `<button class="pg-chip${groupKeys.includes(o.key) ? " on" : ""}" data-gk="${esc(o.key)}">${esc(o.label)}</button>`).join("");
 
@@ -183,25 +242,45 @@ export async function openPricing(caps, onClose) {
     const scopePills = scope.map((s, i) =>
       `<button class="pg-scopepill" data-scopedel="${i}">${esc(groupLabelFor(s.key))} ${s.mode === "exclude" ? "≠" : "="} ${esc([...s.values].slice(0, 2).join(", "))}${s.values.size > 2 ? `+${s.values.size - 2}` : ""} ✕</button>`).join("");
 
-    const visible = groups.filter((g) => !filterText || g.label.toLowerCase().includes(filterText));
     const groupCards = visible.map((g) => groupCardHtml(g)).join("");
+
+    // The collapsed controls show just a one-line summary of the grouping/scope.
+    const groupSummary = (groupKeys.length ? groupKeys.map(groupLabelFor).join(" · ") : "All items")
+      + (scope.length ? ` · ${scope.length} scope${scope.length > 1 ? "s" : ""}` : "");
+    const titleText = idset ? `Set prices · ${items.length} selected` : "Set prices";
+    const summaryLine = totalUnpriced
+      ? `<div class="pg-summary">${totalUnpriced} of ${visibleCount} shown ${totalUnpriced === 1 ? "has" : "have"} no ${noun}${excluded ? ` · ${excluded} excluded by scope` : ""}</div>`
+      : `<div class="pg-summary pg-done">All ${visibleCount} shown ${visibleCount === 1 ? "has" : "have"} a ${noun} ✓${excluded ? ` · ${excluded} excluded by scope` : ""}</div>`;
 
     el.innerHTML = `<div class="calib-panel">
       <div class="calib-head">
         <button class="iconbtn" id="pgX" aria-label="Close">✕</button>
-        <span>Set prices</span>
-        <span class="muted" style="font-size:12px">${priced}/${groups.length} groups</span>
+        <span>${esc(titleText)}</span>
+        <span class="muted" style="font-size:12px">${priced}/${visible.length} groups</span>
       </div>
       <div class="pg-controls">
-        <div class="pg-bylabel muted">Group by</div>
-        <div class="pg-chips">${chips}</div>
-        <div class="pg-scoperow">
-          ${scopePills}
-          <button class="pg-scopeadd" id="pgScopeAdd">＋ Scope</button>
+        ${modeSwitch}
+        <button class="pg-collapse" id="pgCollapse" aria-expanded="${controlsExpanded}">
+          <span class="pg-collapse-label">Group by</span>
+          <span class="pg-collapse-val">${esc(groupSummary)}</span>
+          <span class="pg-collapse-chev">${CHEVRON}</span>
+        </button>
+        ${controlsExpanded ? `
+          <div class="pg-hint muted">Tap dimensions to group by — combine as many as you like.</div>
+          <div class="pg-chips">${chips}</div>
+          <div class="pg-scoperow">${scopePills}<button class="pg-scopeadd" id="pgScopeAdd">＋ Scope</button></div>
+        ` : ""}
+        <div class="pg-setall">
+          <span class="pg-setall-label">${onlyUnpriced ? `Set the ${totalUnpriced} with no ${noun}` : `Set all ${visibleCount} shown`} at once</span>
+          <div class="pg-input">
+            ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
+            <input id="pgAllInput" type="number" inputmode="decimal" placeholder="${noun} for all" aria-label="Price for all shown items">
+            <button class="pg-set" id="pgSetAll">Set all</button>
+          </div>
         </div>
+        <label class="pg-toggle"><input type="checkbox" id="pgOnlyUnpriced"${onlyUnpriced ? " checked" : ""}> Only fill items with no ${noun}</label>
         <input id="pgFilter" class="fb-search" type="search" placeholder="Filter groups…" value="${esc(filterText)}">
-        <label class="pg-toggle"><input type="checkbox" id="pgOnlyUnpriced"${onlyUnpriced ? " checked" : ""}> Only fill unpriced items</label>
-        ${totalUnpriced ? `<div class="pg-summary">${totalUnpriced} item${totalUnpriced === 1 ? "" : "s"} still unpriced${excluded ? ` · ${excluded} excluded` : ""}</div>` : `<div class="pg-summary pg-done">Every in-scope item has a price ✓${excluded ? ` · ${excluded} excluded` : ""}</div>`}
+        ${summaryLine}
       </div>
       <div class="calib-body" id="pgBody">${groupCards || `<div class="muted" style="padding:24px;text-align:center">No groups match.</div>`}</div>
       <div class="calib-foot"><button class="ghost" id="pgDone">Done</button></div>
@@ -210,11 +289,12 @@ export async function openPricing(caps, onClose) {
     el.querySelector("#pgX").onclick = close;
     el.querySelector("#pgDone").onclick = close;
     el.querySelector("#pgFilter").oninput = (e) => {
-      filterText = e.target.value.trim().toLowerCase();
-      // Re-render just the body so the input keeps focus.
-      const body = el.querySelector("#pgBody");
-      const vis = groups.filter((g) => !filterText || g.label.toLowerCase().includes(filterText));
-      body.innerHTML = vis.length ? vis.map((g) => groupCardHtml(g)).join("") : `<div class="muted" style="padding:24px;text-align:center">No groups match.</div>`;
+      filterText = e.target.value; // raw, so the field shows what was typed
+      // Full re-render so the count, Set-all label, and groups all reflect the
+      // filter together; restore focus + caret to the field afterwards.
+      render();
+      const f = el.querySelector("#pgFilter");
+      if (f) { f.focus(); const n = f.value.length; f.setSelectionRange(n, n); }
     };
 
     el.querySelectorAll("[data-gk]").forEach((btn) => {
@@ -229,11 +309,18 @@ export async function openPricing(caps, onClose) {
       };
     });
 
-    el.querySelector("#pgScopeAdd").onclick = openScopeSheet;
+    el.querySelector("#pgCollapse").onclick = () => { controlsExpanded = !controlsExpanded; render(); };
+    // Scope + unpriced toggle only exist while the controls are expanded.
+    el.querySelector("#pgScopeAdd")?.addEventListener("click", openScopeSheet);
     el.querySelectorAll("[data-scopedel]").forEach((btn) => {
       btn.onclick = () => { scope.splice(Number(btn.dataset.scopedel), 1); splits.clear(); groups = buildGroups(); render(); };
     });
-    el.querySelector("#pgOnlyUnpriced").onchange = (e) => { onlyUnpriced = e.target.checked; };
+    el.querySelector("#pgOnlyUnpriced").onchange = (e) => { onlyUnpriced = e.target.checked; render(); };
+    el.querySelectorAll("[data-pricemode]").forEach((btn) => {
+      btn.onclick = () => { priceMode = btn.dataset.pricemode; groups = buildGroups(); render(); };
+    });
+    el.querySelector("#pgSetAll").onclick = setAll;
+    el.querySelector("#pgAllInput").addEventListener("keydown", (e) => { if (e.key === "Enter") setAll(); });
 
     const body = el.querySelector("#pgBody");
     // Set buttons (whole group or a band) + the "Split by…" toggle.
@@ -308,9 +395,14 @@ export async function openPricing(caps, onClose) {
     const splitToggle = cands.length
       ? `<button class="pg-splitbtn" data-splittoggle>${cfg ? "✕ Remove split" : "Split by…"}</button>`
       : "";
+    const m = groupMargin(g);
+    const marginLine = m
+      ? `<div class="pg-margin">cost ${fmt(m.cost)} · retail ${fmt(m.retail)} · <span class="${m.pct < 0 ? "pg-loss" : ""}">${m.pct >= 0 ? "+" : ""}${m.pct}%</span></div>`
+      : "";
     return `<div class="pg-group${cfg ? " pg-split" : ""}" data-idx="${idx}">
       <div class="pg-top"><span class="pg-label">${esc(g.label)}</span><span class="pg-count">${g.ids.length}</span></div>
       ${inner}
+      ${marginLine}
       ${splitToggle ? `<div class="pg-splitrow">${splitToggle}</div>` : ""}
     </div>`;
   }
@@ -340,6 +432,90 @@ export async function openPricing(caps, onClose) {
     if (card) card.outerHTML = groupCardHtml(groups[Number(idx)]);
   }
 
+  // A price change is risky enough to preview when it spans more than one
+  // sub-category (the "fragrances caught with the formal pants" mistake) or when
+  // it overwrites an existing price/cost. Clean single-category fills skip it.
+  function needsPreview(ids) {
+    const subs = new Set(ids.map((id) => valueOf(byId[id], "subcategory")));
+    return subs.size > 1 || ids.some((id) => priceOf(byId[id]) != null);
+  }
+
+  // Show a composition preview (count · by category · brands · price impact) and
+  // resolve true only if the user confirms. Cancel / Esc / backdrop → false.
+  function previewConfirm(ids, value) {
+    return new Promise((resolve) => {
+      const noun = priceMode === "cost" ? "cost" : "price";
+      const bySub = {}; const brands = new Set();
+      let overwrite = 0, lo = Infinity, hi = -Infinity;
+      for (const id of ids) {
+        const it = byId[id];
+        bySub[valueOf(it, "subcategory") || "—"] = (bySub[valueOf(it, "subcategory") || "—"] || 0) + 1;
+        if (it.brand) brands.add(it.brand);
+        const c = priceOf(it);
+        if (c != null) { overwrite++; lo = Math.min(lo, c); hi = Math.max(hi, c); }
+      }
+      const subs = Object.entries(bySub).sort((a, b) => b[1] - a[1]);
+      const brandList = [...brands].sort();
+      const newCount = ids.length - overwrite;
+      const subLine = subs.map(([s, n]) => `${esc(s)} — ${n}`).join("<br>");
+      const brandLine = brandList.length
+        ? `${brandList.length} brand${brandList.length === 1 ? "" : "s"}: ${esc(brandList.slice(0, 5).join(", "))}${brandList.length > 5 ? ` +${brandList.length - 5}` : ""}`
+        : "no brand set";
+      const impact = overwrite
+        ? `${newCount} new · ${overwrite} overwritten (was ${lo === hi ? fmt(lo) : `${fmt(lo)}–${fmt(hi)}`})`
+        : `all ${newCount} getting a ${noun} for the first time`;
+
+      const el2 = document.createElement("div");
+      el2.className = "msheet dlg";
+      el2.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true">
+        <div class="msheet-head"><span>Set ${noun} ${esc(fmt(value))}?</span></div>
+        <div class="msheet-body">
+          <div class="pv-count">${ids.length} product${ids.length === 1 ? "" : "s"}</div>
+          ${subs.length > 1 ? `<div class="pv-warn">⚠ Spans ${subs.length} categories — check nothing unexpected is included.</div>` : ""}
+          <div class="pv-sec">By category</div><div class="pv-list">${subLine}</div>
+          <div class="pv-sec">Brands</div><div class="pv-list">${brandLine}</div>
+          <div class="pv-sec">Price impact</div><div class="pv-list">${impact}</div>
+          <div class="dlg-actions">
+            <button class="ghost" data-cancel>Cancel</button>
+            <button class="primary" data-ok>Set ${noun}</button>
+          </div>
+        </div></div>`;
+      document.body.appendChild(el2);
+      requestAnimationFrame(() => el2.classList.add("open"));
+      const release = trapFocus(el2);
+      const done = (val) => { document.removeEventListener("keydown", onKey); release(); el2.classList.remove("open"); setTimeout(() => el2.remove(), 200); resolve(val); };
+      const onKey = (e) => { if (e.key === "Escape") done(false); };
+      document.addEventListener("keydown", onKey);
+      el2.addEventListener("click", (e) => { if (e.target === el2) done(false); });
+      el2.querySelector("[data-cancel]").onclick = () => done(false);
+      el2.querySelector("[data-ok]").onclick = () => done(true);
+      requestAnimationFrame(() => el2.querySelector("[data-ok]")?.focus());
+    });
+  }
+
+  // Single commit path: preview when risky, then write. Used by Set all + groups.
+  async function commitPrice(ids, value) {
+    if (!ids.length) return;
+    if (needsPreview(ids) && !(await previewConfirm(ids, value))) return;
+    await applyPrice(ids, value);
+  }
+
+  // Apply one price/cost to the ENTIRE visible set at once, so a perfectly-filtered
+  // set is never priced group-by-group.
+  async function setAll() {
+    const raw = el.querySelector("#pgAllInput").value.trim();
+    if (raw === "") { toast("Enter a price first."); return; }
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) { toast("Enter a valid price."); return; }
+    const noun = priceMode === "cost" ? "cost" : "price";
+    let ids = visibleItemIds(); // exactly what's on screen (scope + text filter)
+    if (onlyUnpriced) {
+      ids = ids.filter((id) => priceOf(byId[id]) == null);
+      if (!ids.length) { toast(`Every item already has a ${noun}.`); return; }
+    }
+    await commitPrice(ids, value);
+  }
+
   // Read the price typed next to a Set button and apply it to the whole group or
   // a single band, depending on whether the button carries a band key.
   async function applyFromSet(setBtn) {
@@ -359,27 +535,42 @@ export async function openPricing(caps, onClose) {
     }
     // "Only fill unpriced" protects manually-set exceptions from being overwritten.
     if (onlyUnpriced) {
-      targetIds = targetIds.filter((id) => byId[id].price == null);
-      if (!targetIds.length) { toast("Those items already have prices."); return; }
+      targetIds = targetIds.filter((id) => priceOf(byId[id]) == null);
+      if (!targetIds.length) { toast(`Those items already have a ${priceMode === "cost" ? "cost" : "price"}.`); return; }
     }
-    await applyPrice(targetIds, price);
+    await commitPrice(targetIds, price);
   }
 
-  // Bulk-write a price to the given items, snapshot prior prices for Undo, update
+  // Write the value to whichever price the surface is editing: retail → items.price
+  // (one update), cost → item_costs.cost_price (upsert). The mode is captured so a
+  // later Undo restores the right field even if the user has switched modes.
+  function writePrice(ids, value, mode) {
+    if (mode === "cost") {
+      return supabase.from("item_costs")
+        .upsert(ids.map((id) => ({ item_id: id, cost_price: value })), { onConflict: "item_id" });
+    }
+    return supabase.from("items").update({ price: value }).in("id", ids);
+  }
+  const setLocal = (it, value, mode) => { if (mode === "cost") it.cost = value; else it.price = value; };
+
+  // Bulk-write a price to the given items, snapshot prior values for Undo, update
   // local state, and re-render so every group/band state reflects the change.
-  async function applyPrice(ids, price) {
-    const prior = ids.map((id) => ({ id, price: byId[id].price }));
-    const { error } = await supabase.from("items").update({ price }).in("id", ids);
+  async function applyPrice(ids, value) {
+    const mode = priceMode;
+    const prior = ids.map((id) => ({ id, value: mode === "cost" ? byId[id].cost ?? null : byId[id].price ?? null }));
+    const { error } = await writePrice(ids, value, mode);
     if (error) { toast("Couldn't set price: " + error.message); return; }
-    for (const id of ids) byId[id].price = price;
+    for (const id of ids) setLocal(byId[id], value, mode);
     groups = buildGroups();
     navigator.vibrate?.([12, 40, 12]);
     render();
-    toast(`Set ${fmt(price)} on ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
+    const what = mode === "cost" ? "cost" : "price";
+    toast(`Set ${what} ${fmt(value)} on ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
       label: "Undo",
       onClick: async () => {
-        for (const p of prior) await supabase.from("items").update({ price: p.price }).eq("id", p.id);
-        for (const p of prior) byId[p.id].price = p.price;
+        // Restore each item's prior value in the changed field (null included, so
+        // an item that had no price/cost goes back to having none).
+        for (const p of prior) { await writePrice([p.id], p.value, mode); setLocal(byId[p.id], p.value, mode); }
         groups = buildGroups();
         render();
         toast("Price change undone");

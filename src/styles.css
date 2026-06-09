@@ -853,3 +853,30 @@ a { color:var(--accent); }
   background:var(--panel); color:var(--txt); font-size:13px; }
 .pg-modebtn.on { background:var(--accent-soft); border-color:var(--accent); color:var(--accent-soft-txt); font-weight:600; }
 .pg-vallist { display:flex; flex-direction:column; max-height:46dvh; overflow-y:auto; margin-bottom:12px; }
+/* retail/cost mode switch + per-group margin */
+.pg-modeswitch { display:flex; gap:0; border:1px solid var(--line); border-radius:9px; overflow:hidden; align-self:flex-start; }
+.pg-modesw { padding:7px 18px; background:var(--panel); color:var(--muted); border:none; font-size:13px; font-weight:600; }
+.pg-modesw.on { background:var(--accent); color:var(--on-accent); }
+/* collapsible group-by selector — styled like a dropdown control so it reads as
+   tappable/changeable, not static text. */
+.pg-collapse { display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  background:var(--control); border:1px solid var(--line); border-radius:10px; padding:10px 12px; color:var(--txt); }
+.pg-collapse:active { transform:translateY(1px); }
+.pg-collapse-label { flex:0 0 auto; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+.pg-collapse-val { flex:1; min-width:0; font-weight:650; font-size:14px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pg-collapse-chev { flex:0 0 auto; display:flex; color:var(--accent); transition:transform .2s; }
+.pg-collapse[aria-expanded="true"] .pg-collapse-chev { transform:rotate(180deg); }
+.pg-hint { font-size:12px; margin:8px 0 2px; }
+/* "Set all N" — price the whole scoped set in one action */
+.pg-setall { border:1px solid var(--accent); border-radius:10px; padding:8px 10px;
+  background:var(--accent-soft); display:flex; flex-direction:column; gap:6px; }
+.pg-setall-label { font-size:12px; font-weight:600; color:var(--accent-soft-txt); }
+/* price-change preview */
+.pv-count { font-size:18px; font-weight:700; margin-bottom:6px; }
+.pv-warn { background:var(--flag); color:var(--flag-txt); border:1px solid var(--flag-border);
+  border-radius:8px; padding:8px 10px; font-size:13px; margin-bottom:8px; }
+.pv-sec { font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-top:10px; }
+.pv-list { font-size:14px; line-height:1.5; margin-top:2px; }
+.pg-margin { margin-top:6px; font-size:12px; color:var(--muted); }
+.pg-margin .pg-loss { color:var(--warn); font-weight:600; }
