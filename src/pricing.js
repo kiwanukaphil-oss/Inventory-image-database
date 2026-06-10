@@ -105,6 +105,11 @@ export async function openPricing(caps, onClose, opts = {}) {
   // filling NEW prices (so protect existing ones); opening a hand-picked gallery
   // selection is usually a deliberate edit, so allow overwrite. Toggle either way.
   let onlyUnpriced = !idset;
+  // Hide groups where every item is already priced, so the list is just what still
+  // needs a price — the page's main job ("setting new prices" is the big use case).
+  // Defaults on for the whole catalogue and off for a hand-picked selection (which
+  // is usually a deliberate edit of items you already chose, priced or not).
+  let hideFullyPriced = !idset;
   const matchesScope = (it) => scope.every((s) => {
     const v = valueOf(it, s.key);
     return s.mode === "include" ? s.values.has(v) : !s.values.has(v);
@@ -124,7 +129,12 @@ export async function openPricing(caps, onClose, opts = {}) {
     setTimeout(() => { el.remove(); onClose?.(); }, 180);
   };
   // Don't steal Esc from a sheet opened on top (the scope picker closes itself).
-  const onKey = (e) => { if (e.key === "Escape" && !document.querySelector(".msheet.open")) close(); };
+  // Esc backs out one level at a time: leave select mode first, then close. Never
+  // steal Esc from a sheet/dialog opened on top (it owns Esc while open).
+  const onKey = (e) => {
+    if (e.key !== "Escape" || document.querySelector(".msheet.open")) return;
+    if (selectMode) exitSelect(); else close();
+  };
   document.addEventListener("keydown", onKey);
 
   // Build the current groups from the chosen keys. Each group carries its item
@@ -217,9 +227,50 @@ export async function openPricing(caps, onClose, opts = {}) {
   // always match exactly what's on screen.
   function visibleGroups() {
     const ft = filterText.trim().toLowerCase();
-    return groups.filter((g) => !ft || g.label.toLowerCase().includes(ft));
+    return groups.filter((g) =>
+      (!hideFullyPriced || g.unpriced > 0) &&
+      (!ft || g.label.toLowerCase().includes(ft)));
   }
+  // REMOVAL CANDIDATE: was the target of the old "Set all" box; unused since bulk
+  // pricing moved behind explicit group selection. Kept briefly in case the
+  // select-mode workflow needs an "all visible" shortcut.
   const visibleItemIds = () => visibleGroups().flatMap((g) => g.ids);
+
+  // ---- bulk select mode ---------------------------------------------------
+  // Pricing the WHOLE visible set at once is destructive, so it lives behind a
+  // deliberate selection instead of an always-present "Set all" box. The unit is
+  // the group (what's on screen): long-press a card — or the Select button — to
+  // enter select mode, then tap / drag-sweep groups and price them from the
+  // footer bar. Selection is held by group label (stable across re-render).
+  let selectMode = false;
+  const selectedLabels = new Set();
+  // Long-press enters select mode and that gesture's trailing click would
+  // otherwise immediately toggle the pressed card back off; this swallows it.
+  // Also used to swallow the click that ends a drag-sweep.
+  let suppressClick = false;
+  const selectedGroups = () => visibleGroups().filter((g) => selectedLabels.has(g.label));
+  const selectedItemIds = () => selectedGroups().flatMap((g) => g.ids);
+
+  function enterSelect(label) {
+    selectMode = true;
+    if (label) selectedLabels.add(label);
+    navigator.vibrate?.(15); // subtle "grab" feedback, matching the gallery
+    render();
+  }
+  function exitSelect() {
+    selectMode = false;
+    selectedLabels.clear();
+    render();
+  }
+  // Toggle one group from a tap — class + counters only, never a full re-render.
+  function toggleGroupSel(card) {
+    const label = card.dataset.label;
+    const on = !selectedLabels.has(label);
+    if (on) selectedLabels.add(label); else selectedLabels.delete(label);
+    card.classList.toggle("selected", on);
+    navigator.vibrate?.(8);
+    updateSelBar();
+  }
 
   // ---- render -------------------------------------------------------------
   function render() {
@@ -228,7 +279,6 @@ export async function openPricing(caps, onClose, opts = {}) {
     const visibleCount = visibleIds.length;
     const noun = priceMode === "cost" ? "cost" : "price";
     const totalUnpriced = visibleIds.filter((id) => priceOf(byId[id]) == null).length;
-    const priced = visible.filter((g) => groupState(g).kind === "uniform").length;
     const excluded = items.length - scopedItems().length;
     // Retail/Cost switch — only when the user may see cost (item_costs is admin-only).
     const modeSwitch = canViewCost ? `<div class="pg-modeswitch">
@@ -254,9 +304,9 @@ export async function openPricing(caps, onClose, opts = {}) {
 
     el.innerHTML = `<div class="calib-panel">
       <div class="calib-head">
-        <button class="iconbtn" id="pgX" aria-label="Close">✕</button>
-        <span>${esc(titleText)}</span>
-        <span class="muted" style="font-size:12px">${priced}/${visible.length} groups</span>
+        <button class="iconbtn" id="pgX" aria-label="${selectMode ? "Exit selection" : "Close"}">✕</button>
+        <span>${selectMode ? `<span id="pgSelHeadCount">${selectedGroups().length} selected</span>` : esc(titleText)}</span>
+        ${selectMode ? `<span></span>` : `<button class="pg-selectbtn" id="pgSelect" ${visible.length ? "" : "disabled"}>Select</button>`}
       </div>
       <div class="pg-controls">
         ${modeSwitch}
@@ -270,24 +320,26 @@ export async function openPricing(caps, onClose, opts = {}) {
           <div class="pg-chips">${chips}</div>
           <div class="pg-scoperow">${scopePills}<button class="pg-scopeadd" id="pgScopeAdd">＋ Scope</button></div>
         ` : ""}
-        <div class="pg-setall">
-          <span class="pg-setall-label">${onlyUnpriced ? `Set the ${totalUnpriced} with no ${noun}` : `Set all ${visibleCount} shown`} at once</span>
-          <div class="pg-input">
-            ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-            <input id="pgAllInput" type="number" inputmode="decimal" placeholder="${noun} for all" aria-label="Price for all shown items">
-            <button class="pg-set" id="pgSetAll">Set all</button>
-          </div>
-        </div>
+        <label class="pg-toggle"><input type="checkbox" id="pgHidePriced"${hideFullyPriced ? " checked" : ""}> Show only groups that need a ${noun}</label>
         <label class="pg-toggle"><input type="checkbox" id="pgOnlyUnpriced"${onlyUnpriced ? " checked" : ""}> Only fill items with no ${noun}</label>
         <input id="pgFilter" class="fb-search" type="search" placeholder="Filter groups…" value="${esc(filterText)}">
         ${summaryLine}
       </div>
-      <div class="calib-body" id="pgBody">${groupCards || `<div class="muted" style="padding:24px;text-align:center">No groups match.</div>`}</div>
-      <div class="calib-foot"><button class="ghost" id="pgDone">Done</button></div>
+      <div class="calib-body" id="pgBody">${groupCards || `<div class="muted" style="padding:24px;text-align:center">${hideFullyPriced && !filterText.trim() ? `Every group already has a ${noun} ✓` : "No groups match."}</div>`}</div>
+      <div class="calib-foot">${selectMode ? selectBarHtml() : `<button class="ghost" id="pgDone">Done</button>`}</div>
     </div>`;
 
-    el.querySelector("#pgX").onclick = close;
-    el.querySelector("#pgDone").onclick = close;
+    // ✕ backs out one level: leave select mode first, then close the overlay.
+    el.querySelector("#pgX").onclick = () => { if (selectMode) exitSelect(); else close(); };
+    if (selectMode) {
+      el.querySelector("#pgSelDone").onclick = exitSelect;
+      el.querySelector("#pgSelAll").onclick = toggleSelectAll;
+      el.querySelector("#pgSelSet").onclick = setSelectedPrice;
+      el.querySelector("#pgSelInput").addEventListener("keydown", (e) => { if (e.key === "Enter") setSelectedPrice(); });
+    } else {
+      el.querySelector("#pgDone").onclick = close;
+      el.querySelector("#pgSelect").onclick = () => enterSelect();
+    }
     el.querySelector("#pgFilter").oninput = (e) => {
       filterText = e.target.value; // raw, so the field shows what was typed
       // Full re-render so the count, Set-all label, and groups all reflect the
@@ -304,6 +356,7 @@ export async function openPricing(caps, onClose, opts = {}) {
         else groupKeys = [...groupKeys, k];
         lastGroupKeys = groupKeys.slice();
         splits.clear(); // groups change → any band-splits no longer apply
+        selectedLabels.clear(); // …and labels change, so any selection is stale
         groups = buildGroups();
         render();
       };
@@ -313,30 +366,97 @@ export async function openPricing(caps, onClose, opts = {}) {
     // Scope + unpriced toggle only exist while the controls are expanded.
     el.querySelector("#pgScopeAdd")?.addEventListener("click", openScopeSheet);
     el.querySelectorAll("[data-scopedel]").forEach((btn) => {
-      btn.onclick = () => { scope.splice(Number(btn.dataset.scopedel), 1); splits.clear(); groups = buildGroups(); render(); };
+      btn.onclick = () => { scope.splice(Number(btn.dataset.scopedel), 1); splits.clear(); selectedLabels.clear(); groups = buildGroups(); render(); };
     });
+    el.querySelector("#pgHidePriced").onchange = (e) => { hideFullyPriced = e.target.checked; render(); };
     el.querySelector("#pgOnlyUnpriced").onchange = (e) => { onlyUnpriced = e.target.checked; render(); };
     el.querySelectorAll("[data-pricemode]").forEach((btn) => {
       btn.onclick = () => { priceMode = btn.dataset.pricemode; groups = buildGroups(); render(); };
     });
-    el.querySelector("#pgSetAll").onclick = setAll;
-    el.querySelector("#pgAllInput").addEventListener("keydown", (e) => { if (e.key === "Enter") setAll(); });
 
-    const body = el.querySelector("#pgBody");
-    // Set buttons (whole group or a band) + the "Split by…" toggle.
+    wireBodyInteractions(el.querySelector("#pgBody"));
+  }
+
+  // Refresh the select-mode counters/buttons in place — no full render, so the
+  // scroll position survives rapid toggling.
+  function updateSelBar() {
+    const sel = selectedGroups();
+    const itemCount = sel.reduce((n, g) => n + g.ids.length, 0);
+    const head = el.querySelector("#pgSelHeadCount");
+    if (head) head.textContent = `${sel.length} selected`;
+    const count = el.querySelector("#pgSelCount");
+    if (count) count.textContent = sel.length
+      ? `${itemCount} item${itemCount === 1 ? "" : "s"} in ${sel.length} group${sel.length === 1 ? "" : "s"}`
+      : "Tap groups to price";
+    const setBtn = el.querySelector("#pgSelSet");
+    if (setBtn) setBtn.disabled = sel.length === 0;
+    const allBtn = el.querySelector("#pgSelAll");
+    if (allBtn) {
+      const vis = visibleGroups();
+      allBtn.textContent = vis.length && vis.every((g) => selectedLabels.has(g.label)) ? "Clear all" : "Select all";
+    }
+  }
+
+  // Select all visible groups, or clear them if all are already selected.
+  function toggleSelectAll() {
+    const vis = visibleGroups();
+    const allSel = vis.length && vis.every((g) => selectedLabels.has(g.label));
+    vis.forEach((g) => allSel ? selectedLabels.delete(g.label) : selectedLabels.add(g.label));
+    render();
+  }
+
+  // The footer action bar shown only in select mode: select-all + a live count,
+  // then the price input that fans to every item in the selected groups.
+  function selectBarHtml() {
+    const sel = selectedGroups();
+    const itemCount = sel.reduce((n, g) => n + g.ids.length, 0);
+    const vis = visibleGroups();
+    const allSel = vis.length && vis.every((g) => selectedLabels.has(g.label));
+    const noun = priceMode === "cost" ? "cost" : "price";
+    // Done sits bottom-left, deliberately apart from the destructive Set (bottom-
+    // right), so the two are never mis-tapped; the count anchors the middle.
+    return `<div class="pg-selbar">
+      <div class="pg-selbar-row">
+        <button class="pg-selexit" id="pgSelDone">Done</button>
+        <span class="pg-selcount" id="pgSelCount">${sel.length
+          ? `${itemCount} item${itemCount === 1 ? "" : "s"} in ${sel.length} group${sel.length === 1 ? "" : "s"}`
+          : "Tap groups to price"}</span>
+        <button class="pg-selall" id="pgSelAll">${allSel ? "Clear all" : "Select all"}</button>
+      </div>
+      <div class="pg-input">
+        ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
+        <input id="pgSelInput" type="number" inputmode="decimal" placeholder="${noun} for selected" aria-label="Price for selected groups">
+        <button class="pg-set" id="pgSelSet"${sel.length ? "" : " disabled"}>Set ${noun}</button>
+      </div>
+    </div>`;
+  }
+
+  // Body interactions differ by mode, mirroring the gallery's touch model so a
+  // vertical swipe still scrolls. Normal: price/split controls, plus a long-press
+  // that drops into select mode. Select: tap toggles a group; long-press (touch)
+  // or press-drag (mouse) sweeps a run. Toggles update classes + counters only,
+  // never a full re-render, so the scroll position holds.
+  function wireBodyInteractions(body) {
+    const cardOf = (t) => t && t.closest && t.closest(".pg-group[data-label]");
+    let lpTimer = null, lpStart = null, sweep = null;
+    const cancelLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+
+    // click: a tap toggles in select mode; otherwise drives the price/split rows.
+    // suppressClick swallows the click that ends a long-press or a sweep.
     body.addEventListener("click", (e) => {
+      if (suppressClick) { suppressClick = false; return; }
+      const card = cardOf(e.target);
+      if (selectMode) { if (card) toggleGroupSel(card); return; }
       const setBtn = e.target.closest("[data-set]");
       if (setBtn) { applyFromSet(setBtn); return; }
       const tog = e.target.closest("[data-splittoggle]");
       if (tog) toggleSplit(tog.closest(".pg-group"));
     });
-    // Enter commits a price (in a price input) or a threshold (in the split box).
     body.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
       if (e.target.matches(".pg-thresh")) commitThreshold(e.target);
       else if (e.target.closest(".pg-input")) applyFromSet(e.target.closest(".pg-input").querySelector("[data-set]"));
     });
-    // Attribute select change + threshold commit (blur) recompute the bands.
     body.addEventListener("change", (e) => {
       const card = e.target.closest(".pg-group");
       if (!card) return;
@@ -345,6 +465,67 @@ export async function openPricing(caps, onClose, opts = {}) {
       if (e.target.matches("[data-splitattr]")) { cfg.attr = e.target.value; cfg.threshold = ""; replaceCard(card.dataset.idx); }
       else if (e.target.matches("[data-splitthresh]")) commitThreshold(e.target);
     });
+
+    // -- drag-sweep selection (within select mode) --
+    // Toggle one card during a sweep, in the sweep's fixed direction (so dragging
+    // back over an already-handled card never flickers it).
+    function applySweep(card) {
+      const label = card.dataset.label;
+      if (sweep.processed.has(label)) return;
+      sweep.processed.add(label);
+      const on = sweep.action === "add";
+      if (on) selectedLabels.add(label); else selectedLabels.delete(label);
+      card.classList.toggle("selected", on);
+      updateSelBar();
+    }
+    const onMove = (e) => {
+      if (!sweep) return;
+      const card = cardOf(document.elementFromPoint(e.clientX, e.clientY));
+      if (card) applySweep(card);
+    };
+    const preventScroll = (e) => { if (sweep) e.preventDefault(); };
+    const endSweep = () => {
+      if (!sweep) return;
+      sweep = null;
+      suppressClick = true; // don't let the closing click re-toggle the last card
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", endSweep);
+      document.removeEventListener("touchmove", preventScroll, { passive: false });
+    };
+    // First touched card sets the direction (add if it wasn't selected, else
+    // remove); document-scoped listeners keep a sweep alive past the card edges.
+    function startSweep(card) {
+      sweep = { action: selectedLabels.has(card.dataset.label) ? "remove" : "add", processed: new Set() };
+      applySweep(card);
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", endSweep);
+      document.addEventListener("touchmove", preventScroll, { passive: false });
+    }
+
+    body.addEventListener("pointerdown", (e) => {
+      const card = cardOf(e.target);
+      if (!card) return;
+      if (selectMode) {
+        // Mouse: press-drag sweeps immediately. Touch/pen: long-press starts a
+        // sweep, so a quick vertical swipe still scrolls and a tap still toggles.
+        if (e.pointerType === "mouse") { e.preventDefault(); startSweep(card); }
+        else { lpStart = { x: e.clientX, y: e.clientY }; lpTimer = setTimeout(() => { lpTimer = null; startSweep(card); }, 380); }
+      } else if (e.pointerType !== "mouse") {
+        // Touch/pen long-press enters select mode — but never steal a tap aimed at
+        // a price input, Set button, or the split dropdown inside the card.
+        if (e.target.closest("input,button,select,textarea,a")) return;
+        lpStart = { x: e.clientX, y: e.clientY };
+        lpTimer = setTimeout(() => { lpTimer = null; suppressClick = true; enterSelect(card.dataset.label); }, 380);
+      }
+    });
+    // Cancel a pending long-press only on real movement (tolerate finger jitter).
+    body.addEventListener("pointermove", (e) => {
+      if (sweep || !lpTimer || !lpStart) return;
+      if (Math.hypot(e.clientX - lpStart.x, e.clientY - lpStart.y) > 12) cancelLp();
+    });
+    body.addEventListener("pointerup", cancelLp);
+    body.addEventListener("pointercancel", () => { cancelLp(); endSweep(); });
+    body.addEventListener("contextmenu", (e) => { if (selectMode) e.preventDefault(); });
   }
 
   // One price-input row. `bandKey` ties the Set button to a band (else the whole
@@ -389,6 +570,20 @@ export async function openPricing(caps, onClose, opts = {}) {
   // the group has any numeric attribute to split on.
   function groupCardHtml(g) {
     const idx = groups.indexOf(g);
+    // In select mode a card is just a tappable summary (label · state · count)
+    // with a checkmark — no price inputs, since pricing happens from the footer.
+    if (selectMode) {
+      const st = groupState(g);
+      const sel = selectedLabels.has(g.label);
+      return `<div class="pg-group pg-selectable${sel ? " selected" : ""}" data-idx="${idx}" data-label="${esc(g.label)}">
+        <span class="pg-selcheck">✓</span>
+        <div class="pg-selbody">
+          <span class="pg-label">${esc(g.label)}</span>
+          <span class="pg-state pg-${st.kind}">${esc(st.text)}</span>
+        </div>
+        <span class="pg-count">${g.ids.length}</span>
+      </div>`;
+    }
     const cfg = splits.get(g.label);
     const cands = numericAttrsForGroup(g);
     const inner = cfg ? splitControlsHtml(cfg, cands) + bandsHtml(g, cfg) : priceRowHtml(g.label, groupState(g), null);
@@ -399,7 +594,7 @@ export async function openPricing(caps, onClose, opts = {}) {
     const marginLine = m
       ? `<div class="pg-margin">cost ${fmt(m.cost)} · retail ${fmt(m.retail)} · <span class="${m.pct < 0 ? "pg-loss" : ""}">${m.pct >= 0 ? "+" : ""}${m.pct}%</span></div>`
       : "";
-    return `<div class="pg-group${cfg ? " pg-split" : ""}" data-idx="${idx}">
+    return `<div class="pg-group${cfg ? " pg-split" : ""}" data-idx="${idx}" data-label="${esc(g.label)}">
       <div class="pg-top"><span class="pg-label">${esc(g.label)}</span><span class="pg-count">${g.ids.length}</span></div>
       ${inner}
       ${marginLine}
@@ -493,25 +688,28 @@ export async function openPricing(caps, onClose, opts = {}) {
     });
   }
 
-  // Single commit path: preview when risky, then write. Used by Set all + groups.
+  // Single commit path: preview when risky, then write. Used by select-mode bulk
+  // set + per-group/band sets.
   async function commitPrice(ids, value) {
     if (!ids.length) return;
     if (needsPreview(ids) && !(await previewConfirm(ids, value))) return;
     await applyPrice(ids, value);
   }
 
-  // Apply one price/cost to the ENTIRE visible set at once, so a perfectly-filtered
-  // set is never priced group-by-group.
-  async function setAll() {
-    const raw = el.querySelector("#pgAllInput").value.trim();
+  // Apply one price/cost to every item in the selected groups — the deliberate
+  // bulk path that replaced the always-present "Set all" box. Honours "only fill
+  // unpriced" and runs through the same preview + Undo as every other write.
+  async function setSelectedPrice() {
+    const raw = el.querySelector("#pgSelInput").value.trim();
     if (raw === "") { toast("Enter a price first."); return; }
     const value = Number(raw);
     if (!Number.isFinite(value) || value < 0) { toast("Enter a valid price."); return; }
     const noun = priceMode === "cost" ? "cost" : "price";
-    let ids = visibleItemIds(); // exactly what's on screen (scope + text filter)
+    let ids = selectedItemIds();
+    if (!ids.length) { toast("Select at least one group."); return; }
     if (onlyUnpriced) {
       ids = ids.filter((id) => priceOf(byId[id]) == null);
-      if (!ids.length) { toast(`Every item already has a ${noun}.`); return; }
+      if (!ids.length) { toast(`Every selected item already has a ${noun}.`); return; }
     }
     await commitPrice(ids, value);
   }
@@ -613,6 +811,7 @@ export async function openPricing(caps, onClose, opts = {}) {
           if (!sel.size) { toast("Pick at least one value."); return; }
           scope.push({ key, mode, values: new Set(sel) });
           splits.clear();
+          selectedLabels.clear(); // scope changes the groups, so selection is stale
           groups = buildGroups();
           sh.close();
           render();
