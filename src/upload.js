@@ -1,7 +1,7 @@
 import { supabase } from "./db.js";
 import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue } from "./data.js";
 import { compressImage } from "./imageCompress.js";
-import { toast, trapFocus } from "./ui.js";
+import { toast, trapFocus, ICON } from "./ui.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
 // grid you can prune), set fields common to the whole batch once, then upload
@@ -50,17 +50,23 @@ async function aiFillItem(id, common) {
   const confidence = {};
   let brand = common.brand;
   let name = null;
+  let filled = 0; // fields the AI actually set (drives the needs-review promotion)
   for (const [key, raw] of Object.entries(data.values)) {
     if (raw === null || raw === undefined || raw === "") continue;
     let val = String(raw);
     if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
-    if (key === "brand") { if (!brand) brand = val; if (data.confidence?.brand) confidence.brand = data.confidence.brand; continue; }
-    if (key === "name") { if (!name) name = val; if (data.confidence?.name) confidence.name = data.confidence.name; continue; }
+    if (key === "brand") { if (!brand) { brand = val; filled++; } if (data.confidence?.brand) confidence.brand = data.confidence.brand; continue; }
+    if (key === "name") { if (!name) { name = val; filled++; } if (data.confidence?.name) confidence.name = data.confidence.name; continue; }
     if (attributes[key] !== undefined && attributes[key] !== "") continue; // keep batch-common values
     attributes[key] = typeByKey[key] === "number" ? Number(val) : val;
     if (data.confidence?.[key]) confidence[key] = data.confidence[key];
+    filled++;
   }
-  await supabase.from("items").update({ brand, name, attributes, confidence }).eq("id", id);
+  const update = { brand, name, attributes, confidence };
+  // Same rule as bulk AI-fill: an AI-touched draft surfaces in Review rather
+  // than sitting silently as a confident-but-unchecked draft.
+  if (filled && common.status === "draft") update.status = "needs-review";
+  await supabase.from("items").update(update).eq("id", id);
 }
 
 // Leaf categories (no children) are where items actually go.
@@ -93,14 +99,14 @@ export async function renderUpload(view, caps, onDone) {
       <div class="pickrow" id="pickRow">
         <label class="pickbtn">
           <input id="camInput" type="file" accept="image/*" capture="environment" hidden>
-          <span class="big">📷</span><span>Take photo</span>
+          <span class="big">${ICON.camera}</span><span>Take photo</span>
         </label>
         <label class="pickbtn">
           <input id="libInput" type="file" accept="image/*" multiple hidden>
-          <span class="big">🖼️</span><span>Choose photos</span>
+          <span class="big">${ICON.image}</span><span>Choose photos</span>
         </label>
         <button type="button" class="pickbtn" id="webcamBtn">
-          <span class="big">📸</span><span>Webcam</span>
+          <span class="big">${ICON.webcam}</span><span>Webcam</span>
         </button>
       </div>
 
@@ -125,7 +131,7 @@ export async function renderUpload(view, caps, onDone) {
               <select id="statusSel"><option value="draft" selected>draft</option><option value="needs-review">needs-review</option></select>
             </div>
           </div>
-          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"> ✨ Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost)</span></label>` : ""}
+          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost)</span></label>` : ""}
           <button class="primary up-go" id="uploadBtn" disabled>Upload</button>
           <div class="up-hint muted" id="upHint"></div>
         </div>
@@ -212,7 +218,7 @@ export async function renderUpload(view, caps, onDone) {
     gridEl.innerHTML = entries
       .map((e) => `<div class="up-thumb" data-key="${esc(e.key)}">
         <img loading="lazy" src="${e.url}" alt="">
-        <button class="up-x" data-rm="${esc(e.key)}" aria-label="Remove">✕</button>
+        <button class="up-x" data-rm="${esc(e.key)}" aria-label="Remove">${ICON.x}</button>
       </div>`).join("");
     gridEl.querySelectorAll("[data-rm]").forEach((b) =>
       (b.onclick = () => removeFile(b.dataset.rm)));

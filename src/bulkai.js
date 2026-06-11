@@ -1,6 +1,6 @@
 import { supabase } from "./db.js";
 import { resolveFields, normalizeValue, categoryPath } from "./data.js";
-import { trapFocus } from "./ui.js";
+import { trapFocus, isTopOverlay } from "./ui.js";
 
 // Bulk AI fill: run the ai-extract Edge Function across a set of items (the
 // gallery's currently-filtered rows), filling empty fields with AI suggestions.
@@ -69,9 +69,21 @@ export function openBulkAi(items, caps, onDone) {
   const releaseFocus = trapFocus(modal);
   requestAnimationFrame(() => modal.querySelector("#startBtn")?.focus());
 
-  const close = () => { releaseFocus(); modal.remove(); };
-  modal.querySelector("#cancelBtn").onclick = close;
-  modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+  // confirm → running → done. Gates how the modal may be dismissed: a backdrop
+  // tap mid-run used to remove the modal while the workers kept writing items
+  // headlessly — no progress, no refresh. Now a running batch can only be ended
+  // via Stop, and a dismissal after the run still triggers the gallery refresh.
+  let phase = "confirm";
+  const close = () => { releaseFocus(); document.removeEventListener("keydown", onKey); modal.remove(); };
+  const dismiss = () => {
+    if (phase === "running") return; // use Stop — never orphan a run in flight
+    close();
+    if (phase === "done") onDone?.();
+  };
+  const onKey = (e) => { if (e.key === "Escape" && isTopOverlay(modal)) dismiss(); };
+  document.addEventListener("keydown", onKey);
+  modal.querySelector("#cancelBtn").onclick = dismiss;
+  modal.addEventListener("click", (e) => { if (e.target === modal) dismiss(); });
 
   // For large batches, Start stays disabled until the user acknowledges.
   const ack = modal.querySelector("#ackBig");
@@ -81,11 +93,12 @@ export function openBulkAi(items, caps, onDone) {
     const onlyEmpty = modal.querySelector("#onlyEmpty").checked;
     modal.querySelector("#confirmStep").style.display = "none";
     modal.querySelector("#runStep").style.display = "block";
-    runBatch(modal, withImages, onlyEmpty, onDone, close);
+    phase = "running";
+    runBatch(modal, withImages, onlyEmpty, onDone, close, () => { phase = "done"; });
   };
 }
 
-async function runBatch(modal, items, onlyEmpty, onDone, close) {
+async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
   const total = items.length;
   let done = 0, filled = 0, skipped = 0, failed = 0;
   let stopped = false;
@@ -194,6 +207,7 @@ async function runBatch(modal, items, onlyEmpty, onDone, close) {
   }
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
+  onFinished?.(); // the modal may be dismissed again (and will refresh on close)
   modal.querySelector("#runStep h2").textContent = stopped ? "Stopped" : "Done";
   if (!stopped) navigator.vibrate?.([12, 40, 12]); // affirmative "batch done" buzz
   stopBtn.style.display = "none";

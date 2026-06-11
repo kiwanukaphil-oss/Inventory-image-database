@@ -12,7 +12,7 @@
 
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, AI_BLIND_FIELDS } from "./data.js";
-import { toast, trapFocus } from "./ui.js";
+import { toast, trapFocus, openLightbox, lightboxOpen, ICON } from "./ui.js";
 
 const LEVELS = ["High", "Medium", "Low"];
 
@@ -71,12 +71,13 @@ export async function openCalibration(caps, onClose) {
     el.classList.remove("open");
     setTimeout(() => { el.remove(); onClose?.(); }, 180);
   };
-  const onKey = (e) => { if (e.key === "Escape") close(); };
+  // While the photo is zoomed the lightbox owns Esc — don't also close the tool.
+  const onKey = (e) => { if (e.key === "Escape" && !lightboxOpen()) close(); };
   document.addEventListener("keydown", onKey);
 
   if (!items.length) {
     el.innerHTML = `<div class="calib-panel"><div class="calib-head">
-        <span>Calibration</span><button class="iconbtn" id="cX" aria-label="Close">✕</button></div>
+        <span>Calibration</span><button class="iconbtn" id="cX" aria-label="Close">${ICON.x}</button></div>
       <div class="calib-empty"><div class="big">🧪</div>
         <div>No AI-extracted items to calibrate yet.</div>
         <div class="muted">Items the AI has filled (with confidence) will appear here.</div></div></div>`;
@@ -130,7 +131,7 @@ export async function openCalibration(caps, onClose) {
 
     el.innerHTML = `<div class="calib-panel">
       <div class="calib-head">
-        <button class="iconbtn" id="cX" aria-label="Close">✕</button>
+        <button class="iconbtn" id="cX" aria-label="Close">${ICON.x}</button>
         <span>Calibration · ${done}/${total}</span>
         <button class="linkbtn" id="cAllOk">All correct</button>
       </div>
@@ -152,6 +153,8 @@ export async function openCalibration(caps, onClose) {
     el.querySelector("#cX").onclick = close;
     el.querySelector("#cPrev").onclick = () => { if (idx > 0) { idx--; renderItem(); } };
     el.querySelector("#cNext").onclick = onNext;
+    // Tap the photo to zoom — reading a label off the photo is the whole job here.
+    if (url) el.querySelector(".calib-photo").onclick = () => openLightbox([{ url, caption: esc(brand) }], 0);
     el.querySelector("#cAllOk").onclick = () => {
       const v = marks.get(it.id) || {};
       for (const f of fields) v[f.key] = "correct";
@@ -248,7 +251,7 @@ export async function openCalibration(caps, onClose) {
 
     el.innerHTML = `<div class="calib-panel">
       <div class="calib-head"><span>Calibration results</span>
-        <button class="iconbtn" id="cX" aria-label="Close">✕</button></div>
+        <button class="iconbtn" id="cX" aria-label="Close">${ICON.x}</button></div>
       <div class="calib-body">
         <div class="cs-card">${levelRows}</div>
         <div class="calib-hint">${esc(verdict)}</div>

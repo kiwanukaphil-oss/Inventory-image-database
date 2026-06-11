@@ -13,7 +13,7 @@
 
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, getSetting } from "./data.js";
-import { toast, trapFocus, openBottomSheet } from "./ui.js";
+import { toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
 
 // Grouping key chosen last time, remembered across opens (per the "I pick the
 // grouping each time" workflow — start sensible, never force a default).
@@ -231,11 +231,6 @@ export async function openPricing(caps, onClose, opts = {}) {
       (!hideFullyPriced || g.unpriced > 0) &&
       (!ft || g.label.toLowerCase().includes(ft)));
   }
-  // REMOVAL CANDIDATE: was the target of the old "Set all" box; unused since bulk
-  // pricing moved behind explicit group selection. Kept briefly in case the
-  // select-mode workflow needs an "all visible" shortcut.
-  const visibleItemIds = () => visibleGroups().flatMap((g) => g.ids);
-
   // ---- bulk select mode ---------------------------------------------------
   // Pricing the WHOLE visible set at once is destructive, so it lives behind a
   // deliberate selection instead of an always-present "Set all" box. The unit is
@@ -304,7 +299,7 @@ export async function openPricing(caps, onClose, opts = {}) {
 
     el.innerHTML = `<div class="calib-panel">
       <div class="calib-head">
-        <button class="iconbtn" id="pgX" aria-label="${selectMode ? "Exit selection" : "Close"}">✕</button>
+        <button class="iconbtn" id="pgX" aria-label="${selectMode ? "Exit selection" : "Close"}">${ICON.x}</button>
         <span>${selectMode ? `<span id="pgSelHeadCount">${selectedGroups().length} selected</span>` : esc(titleText)}</span>
         ${selectMode ? `<span></span>` : `<button class="pg-selectbtn" id="pgSelect" ${visible.length ? "" : "disabled"}>Select</button>`}
       </div>
@@ -766,9 +761,22 @@ export async function openPricing(caps, onClose, opts = {}) {
     toast(`Set ${what} ${fmt(value)} on ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
       label: "Undo",
       onClick: async () => {
-        // Restore each item's prior value in the changed field (null included, so
-        // an item that had no price/cost goes back to having none).
-        for (const p of prior) { await writePrice([p.id], p.value, mode); setLocal(byId[p.id], p.value, mode); }
+        // Restore prior values (null included, so an item that had no price/cost
+        // goes back to having none) in batched writes — one upsert for cost, one
+        // update per distinct prior value for retail — instead of one per item.
+        if (mode === "cost") {
+          const { error: uErr } = await supabase.from("item_costs")
+            .upsert(prior.map((p) => ({ item_id: p.id, cost_price: p.value })), { onConflict: "item_id" });
+          if (uErr) { toast("Undo failed: " + uErr.message); return; }
+        } else {
+          const byVal = new Map();
+          for (const p of prior) { if (!byVal.has(p.value)) byVal.set(p.value, []); byVal.get(p.value).push(p.id); }
+          for (const [v, pids] of byVal) {
+            const { error: uErr } = await supabase.from("items").update({ price: v }).in("id", pids);
+            if (uErr) { toast("Undo failed: " + uErr.message); return; }
+          }
+        }
+        for (const p of prior) setLocal(byId[p.id], p.value, mode);
         groups = buildGroups();
         render();
         toast("Price change undone");

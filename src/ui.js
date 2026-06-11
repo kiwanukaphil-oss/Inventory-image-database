@@ -17,20 +17,59 @@ export function esc(v) {
   );
 }
 
+// --- Icons ---------------------------------------------------------------
+// One consistent inline-SVG line-icon vocabulary for ALL app chrome (moved here
+// from gallery.js so every surface shares it — no more stray ✕/‹/✨/emoji glyphs).
+export const ICON = {
+  filter: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
+  // Density toggle: `rows` shows the scan-list affordance, `grid` the card view.
+  rows: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>`,
+  grid: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.4"/></svg>`,
+  check: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>`,
+  tick: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4.5 4.5L19 7.5"/></svg>`,
+  x: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
+  kebab: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>`,
+  more: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/></svg>`,
+  pencil: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16.7 3.8l3.5 3.5L7.5 20 3 21l1-4.5z"/></svg>`,
+  sparkle: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M11 4l1.8 4.7L17.5 10.5l-4.7 1.8L11 17l-1.8-4.7L4.5 10.5l4.7-1.8z"/><path d="M18.5 14.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z"/></svg>`,
+  back: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>`,
+  fwd: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>`,
+  up: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>`,
+  // ---- uploader pick buttons ----
+  camera: `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3.2L9 5.5h6L16.8 8H20a1.5 1.5 0 0 1 1.5 1.5V18A1.5 1.5 0 0 1 20 19.5H4A1.5 1.5 0 0 1 2.5 18V9.5A1.5 1.5 0 0 1 4 8z"/><circle cx="12" cy="13.4" r="3.4"/></svg>`,
+  image: `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16.5l-5.5-5.5L6 20"/></svg>`,
+  webcam: `<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="9.5" r="5.5"/><circle cx="12" cy="9.5" r="2"/><path d="M12 15v3.5M7 21h10"/></svg>`,
+  // ---- appearance picker glyphs ----
+  sun: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/></svg>`,
+  moon: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 7.2 7.2 0 1 0 20 14.5z"/></svg>`,
+  auto: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`,
+  // ---- bottom-nav glyphs (one consistent line-icon set, replacing emoji) ----
+  navGallery: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`,
+  navAdd: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
+  navReview: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V4"/><path d="M5 4h12l-2.5 4L17 12H5"/></svg>`,
+  navExport: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M5 20h14"/></svg>`,
+};
+
 // --- Overlay stacking --------------------------------------------------------
 // All overlays are appended to <body> as they open and removed as they close,
 // so the LAST one in document order is the top-most. Esc handlers use this so
 // that, when dialogs are stacked (e.g. a confirm over the category screen),
 // only the top dialog reacts — the ones beneath stay put.
 const OVERLAY_SEL = ".msheet, .sheet, .screen, .bulkai, .webcam";
+// The lightbox element persists in the DOM after closing (it's reused), so it
+// can't take part in the document-order check above — it's tracked by its
+// `.open` class instead, and while open it is always the top-most layer.
+const LIGHTBOX_OPEN = "#lb.open";
+export const lightboxOpen = () => document.querySelector(LIGHTBOX_OPEN) != null;
 export function isTopOverlay(el) {
+  if (lightboxOpen()) return false; // the lightbox owns Esc while it's up
   const all = document.querySelectorAll(OVERLAY_SEL);
   return all.length === 0 || all[all.length - 1] === el;
 }
 // True if any modal overlay is currently open (used to suppress background
 // shortcuts like "Esc exits selection" while a sheet/dialog is up).
 export function anyOverlayOpen() {
-  return document.querySelector(OVERLAY_SEL) != null;
+  return document.querySelector(OVERLAY_SEL) != null || lightboxOpen();
 }
 
 // --- Focus trap --------------------------------------------------------------
@@ -104,7 +143,7 @@ export function openBottomSheet(title, bodyHtml) {
   const el = document.createElement("div");
   el.className = "msheet";
   el.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-      <div class="msheet-head"><span>${esc(title)}</span><button class="iconbtn" data-x aria-label="Close">✕</button></div>
+      <div class="msheet-head"><span>${esc(title)}</span><button class="iconbtn" data-x aria-label="Close">${ICON.x}</button></div>
       <div class="msheet-body">${bodyHtml}</div>
     </div>`;
   document.body.appendChild(el);
@@ -123,6 +162,85 @@ export function openBottomSheet(title, bodyHtml) {
   // Focus the first interactive control so keyboard users start inside the sheet.
   requestAnimationFrame(() => el.querySelector(FOCUSABLE)?.focus());
   return { el, close, body: el.querySelector(".msheet-body") };
+}
+
+// --- Lightbox -------------------------------------------------------------
+// A single reusable full-screen image viewer with keyboard + swipe navigation.
+// Moved here from gallery.js so the editor and calibration photos can zoom too.
+// Callers pass slides as [{ url, caption }] with captions ALREADY HTML-escaped.
+let lbState = { slides: [], i: 0, el: null };
+
+function ensureLightbox() {
+  if (lbState.el) return lbState.el;
+  const lb = document.createElement("div");
+  lb.id = "lb";
+  lb.setAttribute("role", "dialog");
+  lb.setAttribute("aria-modal", "true");
+  lb.setAttribute("aria-label", "Image viewer");
+  lb.innerHTML = `
+    <button class="lb-close" aria-label="Close">${ICON.x}</button>
+    <button class="lb-nav lb-prev" aria-label="Previous">${ICON.back}</button>
+    <img id="lbimg" alt="">
+    <button class="lb-nav lb-next" aria-label="Next">${ICON.fwd}</button>
+    <div class="lb-cap" id="lbcap"></div>`;
+  document.body.appendChild(lb);
+
+  lb.querySelector(".lb-close").onclick = closeLightbox;
+  lb.querySelector(".lb-prev").onclick = () => moveLightbox(-1);
+  lb.querySelector(".lb-next").onclick = () => moveLightbox(1);
+  lb.addEventListener("click", (e) => { if (e.target === lb) closeLightbox(); });
+
+  // Touch swipe (mobile) — horizontal drag to move between images.
+  let startX = 0;
+  lb.addEventListener("touchstart", (e) => { startX = e.touches[0].clientX; }, { passive: true });
+  lb.addEventListener("touchend", (e) => {
+    const dx = e.changedTouches[0].clientX - startX;
+    if (Math.abs(dx) > 50) moveLightbox(dx < 0 ? 1 : -1);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (!lb.classList.contains("open")) return;
+    if (e.key === "Escape") closeLightbox();
+    else if (e.key === "ArrowRight") moveLightbox(1);
+    else if (e.key === "ArrowLeft") moveLightbox(-1);
+  });
+
+  lbState.el = lb;
+  return lb;
+}
+
+export function openLightbox(slides, i) {
+  ensureLightbox();
+  lbState.slides = slides;
+  lbState.i = i;
+  paintLightbox();
+  lbState.el.classList.add("open");
+  lbState.release = trapFocus(lbState.el); // keep focus in the viewer; restore on close
+  requestAnimationFrame(() => lbState.el.querySelector(".lb-close")?.focus());
+}
+function closeLightbox() {
+  lbState.release?.();
+  lbState.release = null;
+  lbState.el?.classList.remove("open");
+}
+function moveLightbox(d) {
+  const n = lbState.slides.length;
+  if (!n) return;
+  lbState.i = (lbState.i + d + n) % n;
+  paintLightbox();
+}
+// Single-slide mode (an editor/calibration photo) hides the prev/next arrows.
+function paintLightbox() {
+  const s = lbState.slides[lbState.i];
+  if (!s) return;
+  const img = lbState.el.querySelector("#lbimg");
+  img.src = s.url;
+  img.alt = s.caption || "Product photo"; // describe the image for screen readers
+  const single = lbState.slides.length <= 1;
+  lbState.el.querySelectorAll(".lb-nav").forEach((b) => { b.hidden = single; });
+  lbState.el.querySelector("#lbcap").innerHTML = single
+    ? (s.caption || "")
+    : `${s.caption} <span style="color:var(--muted)">· ${lbState.i + 1}/${lbState.slides.length}</span>`;
 }
 
 // --- Confirm ------------------------------------------------------------------

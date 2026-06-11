@@ -1,6 +1,6 @@
 import { supabase } from "./db.js";
 import { refreshRefData } from "./data.js";
-import { toast, confirmSheet, trapFocus, isTopOverlay } from "./ui.js";
+import { toast, confirmSheet, trapFocus, isTopOverlay, ICON } from "./ui.js";
 
 // Category & field manager (for user-managers): create/edit/delete categories
 // and their children, and manage the fields each category defines. Writes to
@@ -29,9 +29,9 @@ export async function openCategoryManager(caps) {
   screen.setAttribute("aria-label", "Categories & fields");
   screen.innerHTML = `
     <div class="screen-head">
-      <button class="iconbtn" id="scBack" hidden>‹</button>
+      <button class="iconbtn" id="scBack" aria-label="Back" hidden>${ICON.back}</button>
       <span id="scTitle">Categories &amp; fields</span>
-      <button class="iconbtn" id="scClose" aria-label="Close">✕</button>
+      <button class="iconbtn" id="scClose" aria-label="Close">${ICON.x}</button>
     </div>
     <div class="screen-body" id="scBody"><div class="spinner"></div></div>`;
   document.body.appendChild(screen);

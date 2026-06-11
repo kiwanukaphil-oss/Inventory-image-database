@@ -6,7 +6,7 @@ import {
   vocabSuggestions,
   normalizeValue,
 } from "./data.js";
-import { toast, confirmSheet, openBottomSheet, trapFocus } from "./ui.js";
+import { toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
 
 // The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
 // the item's category. Universal columns (name/brand/price/stock) plus the
@@ -32,7 +32,13 @@ function esc(v) {
  * @param {string} role     admin | editor | viewer
  * @param {Function} onSaved called after a successful save (to refresh the grid)
  */
+// Re-entry guard: a fast double-tap fires two opens before the first sheet
+// reaches the DOM (the item fetch is async), which used to stack two editors.
+let _editorOpening = false;
+
 export async function openEditor(itemId, caps, onSaved) {
+  if (_editorOpening || document.querySelector(".sheet")) return;
+  _editorOpening = true;
   await loadRefData();
   caps = caps || {};
   const canEdit = !!caps.can_edit;
@@ -47,6 +53,7 @@ export async function openEditor(itemId, caps, onSaved) {
     .single();
   if (error || !item) {
     toast("Couldn't load item.");
+    _editorOpening = false;
     return;
   }
 
@@ -86,7 +93,7 @@ export async function openEditor(itemId, caps, onSaved) {
         <div class="ed-offline" id="edOffline" hidden>● Offline — your changes are kept; tap Save once you reconnect.</div>
         ${imgUrl ? `<div class="sheet-img"><img src="${imgUrl}" alt="${imgAlt}"></div>` : ""}
 
-        ${canEdit && imgUrl ? `<button class="ghost aibtn" id="aiBtn">✨ AI suggest fields from photo</button>` : ""}
+        ${canEdit && imgUrl ? `<button class="ghost aibtn" id="aiBtn">${ICON.sparkle} AI suggest fields from photo</button>` : ""}
 
         <div class="status-row" id="statusRow" role="group" aria-label="Status">
           ${["draft", "needs-review", "approved", "flag"]
@@ -104,18 +111,18 @@ export async function openEditor(itemId, caps, onSaved) {
           <label>Category</label>
           <div class="fctl"><span class="readonly-val">${esc(categoryPath(item.category_id))}</span></div>
         </div>
-        ${fieldRow({ key: "name", label: "Name", type: "text" }, item.name, conf, false)}
-        ${fieldRow({ key: "brand", label: "Brand", type: "text", vocab: "brand" }, item.brand, conf, canEdit)}
-        ${fields.map((f) => fieldRow(f, item.attributes?.[f.key], conf, canEdit)).join("")}
+        ${fieldRow({ key: "name", label: "Name", type: "text" }, item.name, conf, false, canEdit)}
+        ${fieldRow({ key: "brand", label: "Brand", type: "text", vocab: "brand" }, item.brand, conf, canEdit, canEdit)}
+        ${fields.map((f) => fieldRow(f, item.attributes?.[f.key], conf, canEdit, canEdit)).join("")}
 
         <div class="field-sec">Stock & pricing</div>
-        ${fieldRow({ key: "price", label: "Retail price", type: "number" }, item.price, conf, false)}
-        ${fieldRow({ key: "stock_quantity", label: "Stock qty", type: "number" }, item.stock_quantity, conf, false)}
-        ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false)}
+        ${fieldRow({ key: "price", label: "Retail price", type: "number" }, item.price, conf, false, canEdit)}
+        ${fieldRow({ key: "stock_quantity", label: "Stock qty", type: "number" }, item.stock_quantity, conf, false, canEdit)}
+        ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false, canEdit)}
         ${
           canViewCost
             ? `<div class="field-sec">Cost <span class="adminonly">restricted</span></div>
-               ${fieldRow({ key: "cost_price", label: "Cost price", type: "number" }, cost, conf, false)}`
+               ${fieldRow({ key: "cost_price", label: "Cost price", type: "number" }, cost, conf, false, canEdit)}`
             : ""
         }
 
@@ -139,11 +146,21 @@ export async function openEditor(itemId, caps, onSaved) {
   }
   sheet.appendChild(lists);
   document.body.appendChild(sheet);
+  _editorOpening = false; // sheet is in the DOM — the .sheet check guards from here
   requestAnimationFrame(() => sheet.classList.add("open"));
   const releaseFocus = trapFocus(sheet);
   // Focus the Cancel control first (not a text field) so opening the editor
   // doesn't pop the mobile keyboard before the user has looked at the photo.
   requestAnimationFrame(() => sheet.querySelector("#cancelBtn")?.focus());
+
+  // A SKU can already collide from an earlier save — surface that when the
+  // editor opens, not only after the next save (when the sheet is closing).
+  if (item.sku) countSkuDups(itemId, item.sku).then((d) => paintDupWarn(sheet, item.sku, d));
+
+  // Tap the photo to zoom — you're checking fields against it, same as the
+  // gallery thumbs (imgAlt is already escaped, as the lightbox caption expects).
+  const imgWrap = sheet.querySelector(".sheet-img");
+  if (imgWrap && imgUrl) imgWrap.onclick = () => openLightbox([{ url: imgUrl, caption: imgAlt }], 0);
 
   // ---- interactions ----
   let close = () => {
@@ -173,6 +190,10 @@ export async function openEditor(itemId, caps, onSaved) {
   };
   sheet.querySelector("#cancelBtn").onclick = requestClose;
   sheet.addEventListener("click", (e) => { if (e.target === sheet) requestClose(); });
+  // Esc = Cancel (safe — the dirty-guard above still runs), matching every other
+  // overlay. Ignored while a sheet/dialog/lightbox sits on top: that layer owns Esc.
+  const onEsc = (e) => { if (e.key === "Escape" && isTopOverlay(sheet)) requestClose(); };
+  document.addEventListener("keydown", onEsc);
 
   // Offline awareness: surface the state up front (banner + Save button) instead
   // of only failing on tap. Edits stay in the form; the user saves on reconnect.
@@ -195,6 +216,7 @@ export async function openEditor(itemId, caps, onSaved) {
   close = () => {
     window.removeEventListener("online", reflectOnline);
     window.removeEventListener("offline", reflectOnline);
+    document.removeEventListener("keydown", onEsc);
     baseClose();
   };
 
@@ -285,7 +307,7 @@ export async function openEditor(itemId, caps, onSaved) {
   if (aiBtn) {
     aiBtn.onclick = async () => {
       if (!navigator.onLine) { toast("You're offline — AI needs a connection."); return; }
-      const label = aiBtn.textContent;
+      const label = aiBtn.innerHTML; // innerHTML — the label carries the sparkle SVG
       aiBtn.disabled = true;
       aiBtn.textContent = "Reading photo…";
       try {
@@ -313,7 +335,7 @@ export async function openEditor(itemId, caps, onSaved) {
         toast("AI failed: " + (e?.message || e));
       } finally {
         aiBtn.disabled = false;
-        aiBtn.textContent = label;
+        aiBtn.innerHTML = label;
       }
     };
   }
@@ -332,8 +354,10 @@ export async function openEditor(itemId, caps, onSaved) {
     btn.textContent = "Saving…";
     try {
       await saveItem(sheet, item, fields, conf, status, canViewCost);
-      const newSku = await refreshSkuAndDupCheck(sheet, itemId);
-      toast(`Saved · SKU ${newSku}`);
+      const { sku: newSku, dups } = await refreshSkuAndDupCheck(sheet, itemId);
+      toast(dups
+        ? `Saved · SKU ${newSku} — ⚠ shared with ${dups} other item${dups === 1 ? "" : "s"}`
+        : `Saved · SKU ${newSku}`);
       navigator.vibrate?.([12, 40, 12]); // affirmative "done" buzz
       savedOk = true; // don't prompt "discard changes?" on the post-save close
       onSaved?.();
@@ -382,17 +406,20 @@ export async function openEditor(itemId, caps, onSaved) {
 }
 
 // Render one labelled field row with the right control + a confidence pill.
-function fieldRow(def, value, conf, showConf) {
+// `canEdit:false` renders the control disabled — read-only users used to get
+// editable-looking fields with a dead Save button, a confusing dead end.
+function fieldRow(def, value, conf, showConf, canEdit = true) {
   const id = `f-${def.key}`;
+  const dis = canEdit ? "" : " disabled";
   let control;
   const v = value ?? "";
   if (def.type === "boolean") {
     control = `<input type="checkbox" id="${id}" data-key="${def.key}" data-kind="boolean" ${
       v === true || v === "true" ? "checked" : ""
-    }>`;
+    }${dis}>`;
   } else if (def.type === "select" && Array.isArray(def.options) && def.options.length) {
     const opts = def.options.includes(v) || !v ? def.options : [v, ...def.options];
-    control = `<select id="${id}" data-key="${def.key}" data-kind="value">
+    control = `<select id="${id}" data-key="${def.key}" data-kind="value"${dis}>
       <option value=""></option>
       ${opts.map((o) => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}
     </select>`;
@@ -400,7 +427,7 @@ function fieldRow(def, value, conf, showConf) {
     const list = def.vocab ? ` list="dl-${def.vocab}"` : "";
     const type = def.type === "number" ? "number" : "text";
     control = `<input id="${id}" type="${type}"${list} data-key="${def.key}" data-kind="value"
-      data-vocab="${def.vocab || ""}" value="${esc(v)}">`;
+      data-vocab="${def.vocab || ""}" value="${esc(v)}"${dis}>`;
   }
 
   const confPill = showConf
@@ -479,24 +506,35 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost) {
   }
 }
 
-// Re-read the (trigger-derived) SKU and warn if it collides with another item.
+// How many OTHER items share this SKU (0 = unique). head:true → count only.
+async function countSkuDups(itemId, sku) {
+  if (!sku || sku === "—") return 0;
+  const { count } = await supabase
+    .from("items")
+    .select("id", { count: "exact", head: true })
+    .eq("sku", sku)
+    .neq("id", itemId);
+  return count || 0;
+}
+
+// Show (or hide) the in-sheet duplicate-SKU warning strip.
+function paintDupWarn(sheet, sku, dups) {
+  const warn = sheet.querySelector("#dupWarn");
+  if (!warn) return;
+  warn.style.display = dups ? "block" : "none";
+  if (dups) warn.textContent = `⚠ ${dups} other item${dups === 1 ? "" : "s"} share${dups === 1 ? "s" : ""} this SKU (${sku}).`;
+}
+
+// Re-read the (trigger-derived) SKU and report any collision with another item.
+// Returns { sku, dups } so the save toast can carry the warning — the sheet
+// closes right after saving, so the in-sheet strip alone would never be seen.
 async function refreshSkuAndDupCheck(sheet, itemId) {
   const { data } = await supabase.from("items").select("sku").eq("id", itemId).single();
   const sku = data?.sku || "—";
   sheet.querySelector("#skuVal").textContent = sku;
-  if (sku && sku !== "—") {
-    const { data: dups } = await supabase
-      .from("items")
-      .select("id")
-      .eq("sku", sku)
-      .neq("id", itemId);
-    const warn = sheet.querySelector("#dupWarn");
-    if (dups && dups.length) {
-      warn.style.display = "block";
-      warn.textContent = `⚠ ${dups.length} other item(s) share this SKU (${sku}).`;
-    }
-  }
-  return sku;
+  const dups = await countSkuDups(itemId, sku);
+  paintDupWarn(sheet, sku, dups);
+  return { sku, dups };
 }
 
 // Per-item change history from the audit log, shown in a bottom sheet.

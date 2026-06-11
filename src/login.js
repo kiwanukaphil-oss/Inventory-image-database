@@ -1,5 +1,9 @@
 import { signIn } from "./auth.js";
 
+// Eye / crossed-eye glyphs for the show-password toggle.
+const EYE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+const EYE_OFF = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.9A10.8 10.8 0 0 1 12 5.5c6.5 0 10 6.5 10 6.5a17.4 17.4 0 0 1-3.2 3.9M6.4 6.6A16.8 16.8 0 0 0 2 12s3.5 6.5 10 6.5a10.7 10.7 0 0 0 4.2-.85"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>`;
+
 /**
  * Render the login screen into the given mount element.
  * onSuccess is called after a successful sign-in so main.js can swap to the app.
@@ -13,7 +17,10 @@ export function renderLogin(mount, onSuccess) {
         <label for="email">Email</label>
         <input id="email" type="email" inputmode="email" autocomplete="username" required />
         <label for="password">Password</label>
-        <input id="password" type="password" autocomplete="current-password" required />
+        <div class="pwwrap">
+          <input id="password" type="password" autocomplete="current-password" required />
+          <button type="button" class="pwtoggle" id="pwToggle" aria-label="Show password" aria-pressed="false">${EYE}</button>
+        </div>
         <button class="primary" type="submit" id="submitBtn">Sign in</button>
         <div class="msg" id="msg"></div>
         <button type="button" class="linkbtn forgot" id="forgotBtn">Forgot password?</button>
@@ -32,6 +39,19 @@ export function renderLogin(mount, onSuccess) {
   // delivery) — reveal how to get an admin to reset the password instead.
   const forgotHelp = mount.querySelector("#forgotHelp");
   mount.querySelector("#forgotBtn").onclick = () => { forgotHelp.hidden = !forgotHelp.hidden; };
+
+  // Show/hide the password — phone keyboards make blind typing error-prone, and
+  // there's no self-service reset to fall back on.
+  const pw = mount.querySelector("#password");
+  const pwToggle = mount.querySelector("#pwToggle");
+  pwToggle.onclick = () => {
+    const show = pw.type === "password";
+    pw.type = show ? "text" : "password";
+    pwToggle.innerHTML = show ? EYE_OFF : EYE;
+    pwToggle.setAttribute("aria-label", show ? "Hide password" : "Show password");
+    pwToggle.setAttribute("aria-pressed", String(show));
+    pw.focus();
+  };
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();

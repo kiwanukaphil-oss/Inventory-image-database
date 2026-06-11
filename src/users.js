@@ -1,5 +1,5 @@
 import { supabase } from "./db.js";
-import { confirmSheet, trapFocus, isTopOverlay } from "./ui.js";
+import { toast, confirmSheet, trapFocus, isTopOverlay } from "./ui.js";
 
 // Users admin screen — for people with can_manage_users. Create login accounts,
 // set role/capabilities, and deactivate/reactivate accounts. Account create and
@@ -61,7 +61,6 @@ export async function openUsers(currentCaps) {
         <div class="muted" style="font-size:12px">Creates a login immediately; share the email + temporary password with them.</div>
       </div>
       <div id="usersBody"><div class="spinner"></div></div>
-      <div class="users-status" id="usersStatus" aria-live="polite"></div>
     </div>`;
   document.body.appendChild(modal);
   const releaseFocus = trapFocus(modal);
@@ -73,12 +72,9 @@ export async function openUsers(currentCaps) {
   requestAnimationFrame(() => modal.querySelector("#newEmail")?.focus());
 
   const body = modal.querySelector("#usersBody");
-  const statusEl = modal.querySelector("#usersStatus");
-  const notify = (msg) => {
-    statusEl.textContent = msg;
-    clearTimeout(notify._t);
-    notify._t = setTimeout(() => (statusEl.textContent = ""), 3000);
-  };
+  // Feedback goes through the app-wide toast (this screen used to have its own
+  // little status strip — the only surface that did).
+  const notify = toast;
 
   const selfId = currentCaps.id; // don't let the current admin lock themselves out
 

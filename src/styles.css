@@ -175,9 +175,13 @@ a { color:var(--accent); }
 
 /* ---------------- app shell ---------------- */
 .shell { display:flex; flex-direction:column; min-height:100dvh; }
+/* Top chrome: bar + offline banner stick as ONE unit. (They used to be two
+   independent sticky elements at top:0, so when scrolled while offline the
+   banner slid over the title and menu button.) */
+.topwrap { position:sticky; top:0; z-index:20; box-shadow:var(--shadow-bar); }
 .topbar {
-  position:sticky; top:0; z-index:20; background:var(--panel);
-  border-bottom:1px solid var(--line); box-shadow:var(--shadow-bar);
+  background:var(--panel);
+  border-bottom:1px solid var(--line);
   padding:calc(10px + var(--safe-top)) 14px 10px;
   display:flex; align-items:center; gap:10px;
 }
@@ -193,8 +197,8 @@ a { color:var(--accent); }
 
 .content { flex:1; padding:12px 12px calc(78px + var(--safe-bottom)); }
 
-/* Offline banner (thin bar under the top bar). */
-.offline-banner { position:sticky; top:0; z-index:21; text-align:center; font-size:12.5px;
+/* Offline banner (thin bar under the top bar, inside .topwrap). */
+.offline-banner { text-align:center; font-size:12.5px;
   padding:6px 10px; background:var(--notice-bg); color:var(--notice-txt); border-bottom:1px solid var(--notice-border); }
 /* Inline offline note inside the editor sheet. */
 .ed-offline { font-size:12.5px; padding:8px 10px; border-radius:8px;
@@ -258,6 +262,14 @@ a { color:var(--accent); }
 .legend-row { display:flex; align-items:center; gap:10px; padding:6px 0; font-size:13px; color:var(--muted); }
 .legend-row .stbadge, .legend-row .conf-pill { flex:0 0 auto; }
 
+/* Password field + the show/hide eye inside its right edge. */
+.pwwrap { position:relative; }
+.pwwrap input { padding-right:44px; }
+.pwtoggle { position:absolute; right:5px; top:50%; transform:translateY(-50%);
+  width:34px; height:34px; padding:0; display:flex; align-items:center; justify-content:center;
+  background:transparent; border:none; color:var(--muted); }
+.pwtoggle:active { transform:translateY(-50%); } /* keep centered (no press-shift) */
+
 .auth .forgot { display:block; margin-top:10px; padding:4px 0; font-size:13px; }
 .auth .forgot-help { margin-top:8px; font-size:12.5px; color:var(--muted); line-height:1.45;
   background:var(--control); border:1px solid var(--line); border-radius:8px; padding:10px; }
@@ -304,6 +316,8 @@ a { color:var(--accent); }
 .sk-line.w45 { width:45%; }
 .cap-note { color:var(--muted); }
 
+/* REMOVAL CANDIDATE: .selbar was the old floating selection bar, replaced by
+   the .actionbar that swaps in for the bottom nav — nothing renders it now. */
 .selbar {
   position:fixed; left:0; right:0; bottom:calc(60px + var(--safe-bottom)); z-index:28;
   display:flex; align-items:center; gap:6px; padding:8px 10px;
@@ -316,19 +330,18 @@ a { color:var(--accent); }
 .card .thumb.loaded img { opacity:1; }
 .card .body { padding:8px 10px; }
 
-/* ---------------- filter bar + cards ---------------- */
-/* Mobile-first: search on its own row, controls grouped below and wrapping. */
-.filterbar { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
+/* ---------------- search input ---------------- */
 .fb-search { width:100%; }
+/* REMOVAL CANDIDATE: the rest of the old pre-convergence .filterbar toolbar —
+   no element carries these classes since the Gallery/Find merge (only
+   .fb-search above survived). Note: its desktop @media rule that set
+   `.fb-search{flex:1 1 240px}` was deleted outright rather than flagged — it
+   still matched the live pricing filter input and, inside that column flex
+   container, flex-basis became HEIGHT (a ~240px-tall input on desktop). */
+.filterbar { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
 .fb-controls { display:flex; gap:8px; flex-wrap:wrap; }
 .fb-controls select { flex:1 1 130px; min-width:0; }
 .fb-controls button { flex:0 0 auto; }
-@media (min-width:700px) {
-  /* On wider screens keep it to a single tidy row. */
-  .filterbar { flex-direction:row; align-items:center; }
-  .fb-search { flex:1 1 240px; width:auto; }
-  .fb-controls { flex:0 0 auto; }
-}
 .filterbar .aifill { white-space:nowrap; border-color:var(--ai-border); color:var(--ai-txt); }
 .filterbar .aifill:hover { border-color:var(--accent); }
 
@@ -372,7 +385,6 @@ a { color:var(--accent); }
 .user-add-row select { flex:0 0 auto; }
 .user-caps { display:flex; flex-wrap:wrap; gap:10px; }
 .user-caps label { display:flex; align-items:center; gap:5px; font-size:13px; color:var(--muted); }
-.users-status { color:var(--ok-txt); font-size:13px; min-height:18px; margin-top:8px; text-align:right; }
 .count { color:var(--muted); font-size:12px; margin-bottom:8px; }
 .card { cursor:pointer;
   /* Stop the browser's long-press callout / text selection so our long-press
@@ -434,6 +446,8 @@ a { color:var(--accent); }
   border:1px solid var(--line); border-radius:10px; background:var(--control); color:var(--txt);
 }
 .iconbtn:active { transform:translateY(1px); }
+/* REMOVAL CANDIDATE: .fdot was the filter button's "active" dot, replaced by
+   the .fcount number badge — nothing renders it. */
 .fdot { position:absolute; top:6px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--accent); }
 .selcount { font-weight:650; }
 .linkbtn { background:none; border:none; color:var(--accent); font-weight:600; padding:8px 4px; }
@@ -452,7 +466,7 @@ a { color:var(--accent); }
   padding:10px 4px; font-size:12px; display:flex; flex-direction:column; align-items:center; gap:3px;
 }
 .ab-btn:disabled { color:var(--muted); opacity:.45; }
-.ab-ico { font-size:20px; line-height:1; }
+.ab-ico { display:flex; align-items:center; justify-content:center; height:22px; }
 /* Approve is the primary review action — tint it success-green so it reads as
    "good to go", distinct from the teal that marks selection state. */
 .ab-approve:not(:disabled) { color:var(--ok-txt); font-weight:650; }
@@ -476,8 +490,10 @@ a { color:var(--accent); }
   padding:14px; padding-bottom:calc(14px + var(--safe-bottom)); display:flex; flex-direction:column; gap:8px; }
 .msheet-body input, .msheet-body select { width:100%; }
 .be-note { font-size:12px; }
-.msheet-body .chips { display:flex; flex-wrap:wrap; gap:8px; }
 .sheet-sec { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
+/* REMOVAL CANDIDATE: leftovers of the old status-filter sheet (pre drill-down) —
+   .chips/.schip/.sheet-clear have no renderers since Step 4. */
+.msheet-body .chips { display:flex; flex-wrap:wrap; gap:8px; }
 .schip { font-size:13px; padding:8px 12px; border-radius:16px; border:1px solid var(--line); background:var(--control); color:var(--txt); }
 .schip.on { border-color:var(--accent); background:var(--accent-soft); color:var(--accent-soft-txt); }
 .sheet-clear { margin-top:14px; }
@@ -541,7 +557,7 @@ a { color:var(--accent); }
   color:var(--muted); text-align:center;
 }
 .pickbtn:hover { border-color:var(--accent); color:var(--txt); }
-.pickbtn .big { font-size:34px; line-height:1; }
+.pickbtn .big { display:flex; align-items:center; justify-content:center; height:34px; }
 .picked { color:var(--muted); font-size:13px; margin:10px 0; text-align:center; }
 .up-go { width:100%; margin-top:16px; padding:12px; }
 .up-hint { font-size:12px; text-align:center; margin-top:8px; }
@@ -573,7 +589,10 @@ a { color:var(--accent); }
 .hist-row:last-child { border-bottom:none; }
 .hist-when { font-size:12px; color:var(--muted); }
 
-/* ---------------- find / faceted finder ---------------- */
+/* ---------------- legacy Find-tab styles ----------------
+   REMOVAL CANDIDATE: the Find tab retired in the Gallery convergence (Step 4).
+   Only .facet-filter (filter-sheet facet search) and .chip/.chip.on
+   (categories admin buttons) are still rendered — keep those. */
 .find { display:flex; flex-direction:column; gap:8px; }
 .find-row { display:flex; gap:8px; align-items:center; }
 .find-row #groupBy { flex:1 1 auto; min-width:0; }
@@ -593,14 +612,15 @@ a { color:var(--accent); }
 .facet > summary::-webkit-details-marker { display:none; }
 .facet > summary::before { content:"▸"; color:var(--muted); transition:transform .15s; }
 .facet[open] > summary::before { transform:rotate(90deg); }
-.facet-filter { width:100%; margin:8px 0 2px; padding:7px 9px; font-size:13px; }
 .facet .chips { display:flex; flex-wrap:wrap; gap:6px; padding:8px 2px; max-height:240px; overflow-y:auto; }
+.find-results { margin-top:4px; }
+/* (end legacy Find block) — the rules below are still in use. */
+.facet-filter { width:100%; margin:8px 0 2px; padding:7px 9px; font-size:13px; }
 .chip { font-size:13px; padding:6px 10px; border-radius:16px; border:1px solid var(--line);
   background:var(--control); color:var(--txt); display:inline-flex; gap:6px; align-items:center; }
 .chip.on { border-color:var(--accent); background:var(--accent-soft); color:var(--accent-soft-txt); }
 .chip .chipn { color:var(--muted); font-size:11px; }
 .chip.on .chipn { color:var(--accent-soft-txt); }
-.find-results { margin-top:4px; }
 
 /* ---- Filters & sort drill-down sheet ---- */
 /* Head: back chevron + title + close. Title takes the middle. */
@@ -624,7 +644,9 @@ a { color:var(--accent); }
 .fs-check-box.on { background:var(--accent); border-color:var(--accent); }
 .fs-detail { display:flex; flex-direction:column; gap:8px; }
 .fs-detail .facet-filter { margin:0 0 4px; }
-.sv-row .sx { color:var(--muted); flex:0 0 auto; background:transparent; border:none; font-size:14px; }
+.sv-row .sx { color:var(--muted); flex:0 0 auto; background:transparent; border:none;
+  display:inline-flex; align-items:center; }
+.sv-row .sx svg { width:16px; height:16px; }
 /* Footer with Clear all + the live "Show N results" button. */
 .fs-foot { display:flex; gap:8px; flex:0 0 auto; padding:12px 14px calc(12px + var(--safe-bottom));
   border-top:1px solid var(--line); background:var(--bg); }
@@ -641,17 +663,10 @@ a { color:var(--accent); }
 .navbadge { position:absolute; top:4px; left:50%; margin-left:4px; min-width:16px; height:16px;
   padding:0 4px; border-radius:8px; background:var(--warn); color:var(--warn-ink); font-size:10px; font-weight:700;
   display:flex; align-items:center; justify-content:center; }
-/* Count badge on the Filters button (number of active filters). */
-.fcount { position:absolute; top:2px; right:2px; min-width:16px; height:16px; padding:0 4px;
-  border-radius:8px; background:var(--accent); color:#fff; font-size:10px; font-weight:600;
-  display:flex; align-items:center; justify-content:center; }
-/* Count badge on the Review bottom-nav tab. */
-.bottomnav button { position:relative; }
-.navbadge { position:absolute; top:4px; left:50%; margin-left:4px; min-width:16px; height:16px;
-  padding:0 4px; border-radius:8px; background:var(--warn); color:var(--warn-ink); font-size:10px; font-weight:700;
-  display:flex; align-items:center; justify-content:center; }
 
-/* ---------------- grouping view ---------------- */
+/* ---------------- grouping view ----------------
+   REMOVAL CANDIDATE: results-grouping was cut in the filter-sheet redesign
+   (Step 4); nothing renders .grp/.grouplbl any more. */
 .grouplbl { font-size:13px; color:var(--muted); align-self:center; }
 .grp { margin-bottom:8px; }
 .grp > summary {
@@ -688,10 +703,13 @@ a { color:var(--accent); }
 .sheet-title { flex:1; text-align:center; font-size:13px; color:var(--muted);
                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .sheet-body { padding:14px; overflow-y:auto; }
-.sheet-img { aspect-ratio:1/1; max-height:38dvh; display:flex; justify-content:center; margin-bottom:12px; }
+.sheet-img { aspect-ratio:1/1; max-height:38dvh; display:flex; justify-content:center; margin-bottom:12px; cursor:zoom-in; }
 .sheet-img img { max-width:100%; max-height:38dvh; object-fit:contain; border-radius:8px; }
 
-.aibtn { width:100%; margin-bottom:12px; border-color:var(--ai-border); color:var(--ai-txt); }
+.aibtn { width:100%; margin-bottom:12px; border-color:var(--ai-border); color:var(--ai-txt);
+  display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+/* sparkle icon inside the uploader's AI checkbox label */
+.up-ai .ai-ico { display:inline-flex; }
 .aibtn:hover { border-color:var(--accent); }
 .aibtn:disabled { opacity:.6; }
 .status-row { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
@@ -728,8 +746,10 @@ a { color:var(--accent); }
   font-size:13px; font-weight:650; padding:2px 4px; margin:-2px -2px -2px 0; cursor:pointer; flex:0 0 auto; }
 
 /* ---------------- lightbox ---------------- */
+/* z-index 85: above the full-screen tools (.calib/.screen at 70) and sheets (80)
+   so the editor/calibration photos can zoom; below the toast (90). */
 #lb {
-  position:fixed; inset:0; z-index:60; display:none;
+  position:fixed; inset:0; z-index:85; display:none;
   background:#000c; align-items:center; justify-content:center;
 }
 #lb.open { display:flex; }
@@ -741,15 +761,17 @@ a { color:var(--accent); }
 /* The lightbox is an immersive dark photo viewer in BOTH themes, so its controls
    must stay light-on-dark regardless of --txt (which goes dark in light mode and
    would otherwise hide these glyphs against the dark circles). */
-#lb .lb-close, #lb .lb-nav { color:#fff; border:1px solid rgba(255,255,255,.18); }
+#lb .lb-close, #lb .lb-nav { color:#fff; border:1px solid rgba(255,255,255,.18);
+  display:flex; align-items:center; justify-content:center; }
 #lb .lb-close {
   position:fixed; top:calc(10px + var(--safe-top)); right:12px;
-  width:40px; height:40px; border-radius:50%; background:#0009; font-size:18px;
+  width:40px; height:40px; border-radius:50%; background:#0009;
 }
 #lb .lb-nav {
   position:fixed; top:50%; transform:translateY(-50%);
-  width:44px; height:64px; background:#0007; font-size:30px; line-height:1;
+  width:44px; height:64px; background:#0007;
 }
+#lb .lb-nav svg { width:28px; height:28px; }
 #lb .lb-prev { left:6px; } #lb .lb-next { right:6px; }
 @media (min-width:700px) { #lb .lb-nav { width:56px; height:80px; } }
 
@@ -767,7 +789,7 @@ a { color:var(--accent); }
 .calib-prog > span { display:block; height:100%; background:var(--accent); transition:width .2s; }
 .calib-body { flex:1 1 auto; overflow-y:auto; padding:14px; }
 .calib-photo { display:flex; align-items:center; justify-content:center; background:var(--thumb-bg);
-  border-radius:12px; height:38dvh; overflow:hidden; }
+  border-radius:12px; height:38dvh; overflow:hidden; cursor:zoom-in; }
 .calib-photo img { max-width:100%; max-height:100%; object-fit:contain; }
 .calib-brand { font-weight:650; font-size:16px; margin:12px 2px 2px; }
 .calib-hint { font-size:12.5px; margin:2px 2px 12px; }
@@ -868,11 +890,6 @@ a { color:var(--accent); }
 .pg-collapse-chev { flex:0 0 auto; display:flex; color:var(--accent); transition:transform .2s; }
 .pg-collapse[aria-expanded="true"] .pg-collapse-chev { transform:rotate(180deg); }
 .pg-hint { font-size:12px; margin:8px 0 2px; }
-/* REMOVAL CANDIDATE: the always-visible "Set all" box was replaced by the
-   select-mode footer bar (.pg-selbar). These rules are no longer referenced. */
-.pg-setall { border:1px solid var(--accent); border-radius:10px; padding:8px 10px;
-  background:var(--accent-soft); display:flex; flex-direction:column; gap:6px; }
-.pg-setall-label { font-size:12px; font-weight:600; color:var(--accent-soft-txt); }
 /* price-change preview */
 .pv-count { font-size:18px; font-weight:700; margin-bottom:6px; }
 .pv-warn { background:var(--flag); color:var(--flag-txt); border:1px solid var(--flag-border);

@@ -9,7 +9,7 @@ import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
 import { openCategoryManager } from "./categories_admin.js";
-import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen } from "./ui.js";
+import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
 
@@ -67,8 +67,8 @@ function summarizeItemRich(it) {
 // tapping its photo opens the lightbox. Upload, grouping, and bulk ops land
 // in later phases.
 
-// `ico` is a key into the ICON set (resolved at render time, since ICON is
-// defined further down). Keeps one consistent line-icon vocabulary.
+// `ico` is a key into the shared ICON set (ui.js). Keeps one consistent
+// line-icon vocabulary.
 const NAV = [
   { id: "gallery", label: "Gallery", ico: "navGallery" },
   { id: "add", label: "Add", ico: "navAdd" },
@@ -97,13 +97,15 @@ export function renderApp(mount, profile, onSignOut) {
   const role = caps.role || "viewer";
   mount.innerHTML = `
     <div class="shell">
-      <header class="topbar">
-        <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
-        <span class="rolechip ${role}">${role}</span>
-        <span class="spacer"></span>
-        <button class="iconbtn" id="menuBtn" aria-label="Menu">${ICON.kebab}</button>
-      </header>
-      <div class="offline-banner" id="offlineBanner" hidden>● Offline — changes need a connection</div>
+      <div class="topwrap">
+        <header class="topbar">
+          <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
+          <span class="rolechip ${role}">${role}</span>
+          <span class="spacer"></span>
+          <button class="iconbtn" id="menuBtn" aria-label="Menu">${ICON.kebab}</button>
+        </header>
+        <div class="offline-banner" id="offlineBanner" hidden>● Offline — changes need a connection</div>
+      </div>
       <main class="content" id="view"></main>
       <button class="fab-top" id="fabTop" hidden aria-label="Back to top">${ICON.up}</button>
       <nav class="bottomnav" id="nav"></nav>
@@ -309,10 +311,6 @@ function dateCutoff(v) {
   return d;
 }
 
-// TODO(remove): no longer used since Status became a facet in the unified browse
-// surface (Step 4). Kept briefly in case a status quick-filter is wanted back.
-const STATUSES = ["all", "draft", "needs-review", "approved", "flag"];
-
 // Hard caps on how many rows each browse surface loads at once. Exposed so the
 // UI can warn when a result set is truncated rather than silently hiding items.
 const GALLERY_LIMIT = 1000;
@@ -376,26 +374,7 @@ function fadeInImages(container) {
   });
 }
 
-// Small inline icons for a cleaner, premium toolbar.
-const ICON = {
-  filter: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>`,
-  // Density toggle: `rows` shows the scan-list affordance, `grid` the card view.
-  rows: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h16"/></svg>`,
-  grid: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.4"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.4"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.4"/></svg>`,
-  check: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="M8 12.5l2.5 2.5L16 9"/></svg>`,
-  x: `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>`,
-  kebab: `<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>`,
-  up: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6 12l6-6 6 6"/></svg>`,
-  // ---- appearance picker glyphs ----
-  sun: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/></svg>`,
-  moon: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 7.2 7.2 0 1 0 20 14.5z"/></svg>`,
-  auto: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`,
-  // ---- bottom-nav glyphs (one consistent line-icon set, replacing emoji) ----
-  navGallery: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`,
-  navAdd: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
-  navReview: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V4"/><path d="M5 4h12l-2.5 4L17 12H5"/></svg>`,
-  navExport: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v11"/><path d="M8 10l4 4 4-4"/><path d="M5 20h14"/></svg>`,
-};
+// (ICON — the shared inline-SVG icon set — now lives in ui.js; imported above.)
 
 // A reusable bottom sheet (filters, status picker, more-actions menu).
 // (openBottomSheet now lives in ui.js — imported above.)
@@ -431,7 +410,11 @@ async function renderGallery(view, caps, opts = {}) {
   if (!data || data.length === 0) {
     view.innerHTML = `<div class="empty"><div class="big">📭</div>
       <div>${review ? "Nothing to review." : "No items yet."}</div>
-      <div style="color:var(--muted);font-size:13px">${review ? "New uploads needing attention will appear here." : "Run the seed importer or add photos."}</div></div>`;
+      <div style="color:var(--muted);font-size:13px">${review ? "New uploads needing attention will appear here." : "Add your first product photos to start the catalogue."}</div>
+      ${!review && caps.can_upload ? `<button class="primary" id="emptyAdd" style="margin-top:6px">Add photos</button>` : ""}</div>`;
+    // Route through the real nav button so the tab highlight + render stay in sync.
+    const ea = view.querySelector("#emptyAdd");
+    if (ea) ea.onclick = () => document.querySelector('.bottomnav button[data-view="add"]')?.click();
     return;
   }
 
@@ -505,11 +488,11 @@ async function renderGallery(view, caps, opts = {}) {
     </div>
     <div class="results" id="grid"></div>
     ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
-      <button class="ab-btn ab-approve" id="abApprove"><span class="ab-ico">✓</span>Approve</button>
-      <button class="ab-btn" id="abAi"><span class="ab-ico">✨</span>AI-fill</button>
-      <button class="ab-btn" id="abEdit"><span class="ab-ico">✎</span>Edit</button>
-      <button class="ab-btn" id="abMore"><span class="ab-ico">⋯</span>More</button>
-      <button class="ab-btn" id="abDone"><span class="ab-ico">✕</span>Done</button>
+      <button class="ab-btn ab-approve" id="abApprove"><span class="ab-ico">${ICON.tick}</span>Approve</button>
+      <button class="ab-btn" id="abAi"><span class="ab-ico">${ICON.sparkle}</span>AI-fill</button>
+      <button class="ab-btn" id="abEdit"><span class="ab-ico">${ICON.pencil}</span>Edit</button>
+      <button class="ab-btn" id="abMore"><span class="ab-ico">${ICON.more}</span>More</button>
+      <button class="ab-btn" id="abDone"><span class="ab-ico">${ICON.x}</span>Done</button>
     </div>` : ""}`;
 
   const grid = view.querySelector("#grid");
@@ -635,9 +618,6 @@ async function renderGallery(view, caps, opts = {}) {
     return r;
   }
 
-  // Status badge colour per workflow state.
-  const stClass2 = stClass; // (alias kept to minimise churn below)
-
   // One product card.
   function cardHtml(it, slides) {
     const url = signed[it.image_path];
@@ -656,7 +636,7 @@ async function renderGallery(view, caps, opts = {}) {
       <div class="body">
         <div class="cardtop">
           <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
-          <span class="stbadge ${stClass2[it.status] || ""}">${esc(it.status)}</span>
+          <span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span>
         </div>
         <div class="cbrand">${esc(brand)}</div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
@@ -690,7 +670,7 @@ async function renderGallery(view, caps, opts = {}) {
       <div class="row-main">
         <div class="row-top">
           <span class="row-brand">${esc(brand)}</span>
-          <span class="stbadge ${stClass2[it.status] || ""}">${esc(it.status)}</span>
+          <span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span>
         </div>
         <div class="row-sub">
           ${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}${variant ? `<span class="row-attr">${variant}</span>` : ""}
@@ -712,9 +692,15 @@ async function renderGallery(view, caps, opts = {}) {
     const capped = data.length >= GALLERY_LIMIT;
     const countNote = capped ? ` · <span class="cap-note">showing the first ${GALLERY_LIMIT.toLocaleString()} — refine to see all</span>` : "";
 
+    // On Review, "N of <whole catalogue>" read as if N were a fraction of the
+    // review queue — say what it is instead.
+    const countText = (n) => review
+      ? `${n} to review`
+      : `${n} of ${data.length} item${data.length === 1 ? "" : "s"}`;
+
     // Filters matched nothing → actionable empty state (not a blank grid).
     if (rows.length === 0) {
-      countEl.innerHTML = `0 of ${data.length} item${data.length === 1 ? "" : "s"}${countNote}`;
+      countEl.innerHTML = `${countText(0)}${countNote}`;
       grid.innerHTML = `<div class="empty"><div class="big">${review ? "✓" : "🔍"}</div>
         <div>${review ? "Nothing needs review right now." : "No items match your search or filters."}</div>
         ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
@@ -729,7 +715,7 @@ async function renderGallery(view, caps, opts = {}) {
     grid.innerHTML = density === "list"
       ? `<div class="scanlist">${rows.map((it) => rowHtml(it, slides)).join("")}</div>`
       : `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
-    countEl.innerHTML = `${rows.length} of ${data.length} item${data.length === 1 ? "" : "s"}${countNote}`;
+    countEl.innerHTML = `${countText(rows.length)}${countNote}`;
     grid._slides = slides;
     fadeInImages(grid);
   }
@@ -895,9 +881,9 @@ async function renderGallery(view, caps, opts = {}) {
     el.className = "msheet filter-sheet";
     el.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true" aria-label="Filters and sort">
         <div class="msheet-head">
-          <button class="iconbtn" id="fsBack" aria-label="Back" hidden>‹</button>
+          <button class="iconbtn" id="fsBack" aria-label="Back" hidden>${ICON.back}</button>
           <span id="fsTitle">Filters &amp; sort</span>
-          <button class="iconbtn" id="fsX" aria-label="Close">✕</button>
+          <button class="iconbtn" id="fsX" aria-label="Close">${ICON.x}</button>
         </div>
         <div class="msheet-body" id="fsBody"></div>
         <div class="fs-foot">
@@ -1015,7 +1001,7 @@ async function renderGallery(view, caps, opts = {}) {
       const list = savedViews.length
         ? savedViews.map((v) => `<div class="fs-opt sv-row" data-apply="${v.id}">
             <span class="fs-opt-label">${esc(v.name)}</span>
-            <button class="sx" data-del="${v.id}" aria-label="Delete view">✕</button></div>`).join("")
+            <button class="sx" data-del="${v.id}" aria-label="Delete view">${ICON.x}</button></div>`).join("")
         : `<div class="muted" style="padding:14px">No saved views yet.</div>`;
       bodyEl.innerHTML = `<div class="fs-detail">
         <div class="fs-list">${list}</div>
@@ -1088,10 +1074,13 @@ async function renderGallery(view, caps, opts = {}) {
       }
     });
 
-    // price + facet-search inputs (delegated)
+    // price + facet-search inputs (delegated). The price fields live-apply, but
+    // debounced — typing "1500" shouldn't redraw the grid four times.
+    let priceTimer;
+    const applyDebounced = () => { clearTimeout(priceTimer); priceTimer = setTimeout(apply, 200); };
     bodyEl.addEventListener("input", (e) => {
-      if (e.target.id === "fsMin") { priceMin = e.target.value.trim(); apply(); }
-      else if (e.target.id === "fsMax") { priceMax = e.target.value.trim(); apply(); }
+      if (e.target.id === "fsMin") { priceMin = e.target.value.trim(); applyDebounced(); }
+      else if (e.target.id === "fsMax") { priceMax = e.target.value.trim(); applyDebounced(); }
       else if (e.target.classList.contains("facet-filter") && curFacet) {
         facetFilter[curFacet.key] = e.target.value.trim().toLowerCase();
         renderFacet();
@@ -1104,7 +1093,13 @@ async function renderGallery(view, caps, opts = {}) {
   }
 
   // ---- wiring: top bar ----
-  qEl.addEventListener("input", () => { q = qEl.value.trim().toLowerCase(); draw(); });
+  // Debounced: draw() rebuilds the whole grid (up to 1000 cards), so doing it on
+  // every keystroke janks on mobile. 150ms is below the threshold anyone notices.
+  let qTimer;
+  qEl.addEventListener("input", () => {
+    clearTimeout(qTimer);
+    qTimer = setTimeout(() => { q = qEl.value.trim().toLowerCase(); draw(); }, 150);
+  });
   view.querySelector("#filterBtn").onclick = openFilters;
   const selectBtn = view.querySelector("#selectBtn");
   if (selectBtn) selectBtn.onclick = enterSelection;
@@ -1232,7 +1227,13 @@ async function renderGallery(view, caps, opts = {}) {
     const priced = ids.filter((id) => byId[id]?.price != null);
     const skipped = ids.length - priced.length;
     if (!priced.length) {
-      toast(`Can't approve — ${skipped} item${skipped === 1 ? "" : "s"} have no price.`);
+      // Don't just name the problem — offer the cure: the pricing tool accepts
+      // exactly this selection.
+      const blocked = [...selected];
+      toast(`Can't approve — ${skipped} item${skipped === 1 ? "" : "s"} have no price.`, {
+        label: "Set prices",
+        onClick: () => { exitSelection(); openPricing(caps, refresh, { itemIds: blocked }); },
+      });
       return;
     }
     const prior = priced.map((id) => ({ id, status: byId[id]?.status }));
@@ -1246,8 +1247,12 @@ async function renderGallery(view, caps, opts = {}) {
     toast(msg, {
       label: "Undo",
       onClick: async () => {
-        for (const p of prior) {
-          if (p.status) await supabase.from("items").update({ status: p.status }).eq("id", p.id);
+        // One write per distinct prior status (not per item) — undoing a big
+        // batch used to fire a request per item, painfully slow on shop Wi-Fi.
+        const byStatus = {};
+        for (const p of prior) if (p.status) (byStatus[p.status] ||= []).push(p.id);
+        for (const [st, sids] of Object.entries(byStatus)) {
+          await supabase.from("items").update({ status: st }).in("id", sids);
         }
         toast("Approval undone");
         refresh();
@@ -1331,76 +1336,5 @@ function renderComingSoon(view, id) {
     <div>${esc(id)} is coming soon.</div></div>`;
 }
 
-// ---------------------------------------------------------------------------
-// Lightbox — a single reusable overlay with keyboard + swipe navigation.
-// ---------------------------------------------------------------------------
-let lbState = { slides: [], i: 0, el: null };
-
-function ensureLightbox() {
-  if (lbState.el) return lbState.el;
-  const lb = document.createElement("div");
-  lb.id = "lb";
-  lb.setAttribute("role", "dialog");
-  lb.setAttribute("aria-modal", "true");
-  lb.setAttribute("aria-label", "Image viewer");
-  lb.innerHTML = `
-    <button class="lb-close" aria-label="Close">✕</button>
-    <button class="lb-nav lb-prev" aria-label="Previous">‹</button>
-    <img id="lbimg" alt="">
-    <button class="lb-nav lb-next" aria-label="Next">›</button>
-    <div class="lb-cap" id="lbcap"></div>`;
-  document.body.appendChild(lb);
-
-  lb.querySelector(".lb-close").onclick = closeLightbox;
-  lb.querySelector(".lb-prev").onclick = () => moveLightbox(-1);
-  lb.querySelector(".lb-next").onclick = () => moveLightbox(1);
-  lb.addEventListener("click", (e) => { if (e.target === lb) closeLightbox(); });
-
-  // Touch swipe (mobile) — horizontal drag to move between images.
-  let startX = 0;
-  lb.addEventListener("touchstart", (e) => { startX = e.touches[0].clientX; }, { passive: true });
-  lb.addEventListener("touchend", (e) => {
-    const dx = e.changedTouches[0].clientX - startX;
-    if (Math.abs(dx) > 50) moveLightbox(dx < 0 ? 1 : -1);
-  });
-
-  document.addEventListener("keydown", (e) => {
-    if (!lb.classList.contains("open")) return;
-    if (e.key === "Escape") closeLightbox();
-    else if (e.key === "ArrowRight") moveLightbox(1);
-    else if (e.key === "ArrowLeft") moveLightbox(-1);
-  });
-
-  lbState.el = lb;
-  return lb;
-}
-
-function openLightbox(slides, i) {
-  ensureLightbox();
-  lbState.slides = slides;
-  lbState.i = i;
-  paintLightbox();
-  lbState.el.classList.add("open");
-  lbState.release = trapFocus(lbState.el); // keep focus in the viewer; restore on close
-  requestAnimationFrame(() => lbState.el.querySelector(".lb-close")?.focus());
-}
-function closeLightbox() {
-  lbState.release?.();
-  lbState.release = null;
-  lbState.el?.classList.remove("open");
-}
-function moveLightbox(d) {
-  const n = lbState.slides.length;
-  if (!n) return;
-  lbState.i = (lbState.i + d + n) % n;
-  paintLightbox();
-}
-function paintLightbox() {
-  const s = lbState.slides[lbState.i];
-  if (!s) return;
-  const img = lbState.el.querySelector("#lbimg");
-  img.src = s.url;
-  img.alt = s.caption || "Product photo"; // describe the image for screen readers
-  lbState.el.querySelector("#lbcap").innerHTML =
-    `${s.caption} <span style="color:var(--muted)">· ${lbState.i + 1}/${lbState.slides.length}</span>`;
-}
+// (The lightbox now lives in ui.js — imported above — so the editor and
+// calibration photos can open the same viewer.)
