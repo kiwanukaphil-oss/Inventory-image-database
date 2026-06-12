@@ -1,5 +1,5 @@
 import { supabase } from "./db.js";
-import { loadRefData, categoryPath, fieldLabel, getSetting } from "./data.js";
+import { loadRefData, categoryPath, fieldLabel, resolveFields, getSetting } from "./data.js";
 import { toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
 import { openPricing } from "./pricing.js";
 
@@ -196,9 +196,7 @@ export async function openGuidedPricing(caps, onClose) {
   function stepBase() {
     const already = pile.filter((it) => it.price != null).length;
     return `${pileStrip()}
-      <div class="pgd-lead">Set the group's standard price. It's not a minimum —
-        it's what an item pays <b>unless an exception</b> (added next) says
-        otherwise, and exceptions can be higher or lower.</div>
+      <div class="pgd-lead">Everyone pays this — unless an exception says otherwise.</div>
       <div class="pg-input pgd-baseinput">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
         <input id="pgdBase" type="number" inputmode="decimal" placeholder="Standard price — or leave empty" value="${esc(basePrice)}">
@@ -341,16 +339,32 @@ export async function openGuidedPricing(caps, onClose) {
   // Offers only differentiators that actually VARY within the pile, with a
   // values checklist or an above/below band for numeric attributes.
   function openExceptionSheet() {
+    // Label a key through the PILE's own categories' field definitions — the
+    // same key (e.g. "size") carries different labels per category ("Size" on
+    // shirts, "Belt size" on belts), and a global lookup once dressed shirts
+    // in the belt label.
+    const pileCats = [...new Set(pile.map((it) => it.category_id).filter(Boolean))];
+    const labelFor = (key) => {
+      for (const catId of pileCats) {
+        const f = resolveFields(catId).find((x) => x.key === key);
+        if (f?.label) return f.label;
+      }
+      return fieldLabel(key);
+    };
+    // Internal bookkeeping keys that nobody prices by: the style code is the
+    // grouping fingerprint for the POS push, not a merchandise difference.
+    const NEVER_EXCEPT = new Set(["style"]);
     // brand + every attribute key with ≥2 distinct values in the pile.
     const diffs = [];
     const brandVals = [...new Set(pile.map((it) => (it.brand || "").trim()).filter(Boolean))].sort();
     if (brandVals.length >= 2) diffs.push({ key: "brand", label: "Brand", values: brandVals, numeric: false });
     const attrKeys = [...new Set(pile.flatMap((it) => Object.keys(it.attributes || {})))].sort();
     for (const k of attrKeys) {
+      if (NEVER_EXCEPT.has(k)) continue;
       const vals = [...new Set(pile.map((it) => it.attributes?.[k]).filter((v) => v != null && String(v).trim() !== "").map((v) => String(v).trim()))]
         .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
       if (vals.length < 2) continue;
-      diffs.push({ key: k, label: fieldLabel(k), values: vals, numeric: pile.some((it) => isNumericish(it.attributes?.[k])) });
+      diffs.push({ key: k, label: labelFor(k), values: vals, numeric: pile.some((it) => isNumericish(it.attributes?.[k])) });
     }
     if (!diffs.length) { toast("These items don't differ by anything to except on."); return; }
 
