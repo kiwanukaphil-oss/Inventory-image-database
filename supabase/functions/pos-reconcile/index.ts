@@ -58,25 +58,27 @@ async function posLogin(baseUrl: string) {
   return body.token;
 }
 
-/** All purchase movements (paged) → per-variant { total, byReference } maps. */
-async function fetchPurchaseLedger(baseUrl: string, token: string) {
+/** One movement type's ledger (paged) → per-variant totals + per-reference map. */
+async function fetchLedger(baseUrl: string, token: string, movementType: string) {
   const PAGE = 500;
   const MAX_PAGES = 400;
-  const byVariant = new Map(); // variant_id -> { total, refs: Map(reference_id -> qty) }
+  // variant_id -> { total, negative, refs: Map(reference_id -> qty) }
+  const byVariant = new Map();
   let offset = 0, scanned = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
     const res = await fetch(
-      `${baseUrl}/inventory/movements?movement_type=purchase&limit=${PAGE}&offset=${offset}`,
+      `${baseUrl}/inventory/movements?movement_type=${movementType}&limit=${PAGE}&offset=${offset}`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`movements read failed (${res.status})`);
     const rows = body.data || [];
     for (const m of rows) {
-      const slot = byVariant.get(m.variant_id) || { total: 0, refs: new Map() };
-      const qty = Math.abs(Number(m.quantity_change) || 0);
-      slot.total += qty;
-      if (m.reference_id) slot.refs.set(m.reference_id, (slot.refs.get(m.reference_id) || 0) + qty);
+      const slot = byVariant.get(m.variant_id) || { total: 0, negative: 0, refs: new Map() };
+      const change = Number(m.quantity_change) || 0;
+      slot.total += Math.abs(change);
+      if (change < 0) slot.negative += -change;
+      if (m.reference_id) slot.refs.set(m.reference_id, (slot.refs.get(m.reference_id) || 0) + Math.abs(change));
       byVariant.set(m.variant_id, slot);
     }
     scanned += rows.length;
@@ -126,13 +128,14 @@ Deno.serve(async (req) => {
     if (!POS_BASE_URL) throw new Error("POS_BASE_URL secret is not set");
     const token = await posLogin(POS_BASE_URL);
 
-    const [{ data: synced, error: sErr }, { data: mirrorRows, error: mErr }, ledger] = await Promise.all([
+    const [{ data: synced, error: sErr }, { data: mirrorRows, error: mErr }, ledger, adjustments] = await Promise.all([
       db.from("items")
         .select("id, sku, stock_quantity, pos_variant_id")
         .eq("pos_sync_status", "synced")
         .not("pos_variant_id", "is", null),
       db.from("pos_stock_mirror").select("pos_variant_id, pos_sku, stock_quantity, is_active"),
-      fetchPurchaseLedger(POS_BASE_URL, token),
+      fetchLedger(POS_BASE_URL, token, "purchase"),
+      fetchLedger(POS_BASE_URL, token, "adjustment"),
     ]);
     if (sErr) throw new Error(`items read failed: ${sErr.message}`);
     if (mErr) throw new Error(`mirror read failed: ${mErr.message}`);
@@ -165,8 +168,17 @@ Deno.serve(async (req) => {
         add("missing-receipt", exp.sku,
           `catalog expects ${exp.units} unit(s) received, POS ledger has ${receivedFromCatalog} from catalog receipts`);
       } else if (receivedFromCatalog > exp.units) {
-        add("double-receipt", exp.sku,
-          `POS ledger holds ${receivedFromCatalog} catalog-receipt unit(s) but the catalog only accounts for ${exp.units}`);
+        // Receipts are append-only history: a known over-receipt is corrected
+        // by booking a NEGATIVE adjustment, never by rewriting the receipt
+        // (the 2026-06-12 duplicate-SKU correction did exactly this). So an
+        // over-receipt only counts as drift when no downward adjustment of at
+        // least the excess exists on the variant — i.e. nobody has corrected it.
+        const excess = receivedFromCatalog - exp.units;
+        const correctedDown = adjustments.byVariant.get(variantId)?.negative || 0;
+        if (correctedDown < excess) {
+          add("double-receipt", exp.sku,
+            `POS ledger holds ${receivedFromCatalog} catalog-receipt unit(s) but the catalog accounts for ${exp.units}, and only ${correctedDown} were adjusted away`);
+        }
       }
       // 3: oversell visibility.
       if (mir.stock_quantity < 0) {
