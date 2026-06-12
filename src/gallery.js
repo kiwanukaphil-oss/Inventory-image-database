@@ -358,8 +358,8 @@ const SORTS = [
 // `density` is the card-grid vs scan-list view mode. Review defaults to the
 // dense list (built for skimming many uploads at once); Gallery to the grid.
 const browseState = {
-  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", datePreset: "all", active: {}, density: "list" },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", datePreset: "all", active: {}, density: "list" },
+  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list" },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list" },
 };
 
 // AI_BLIND_FIELDS (fit, …) is imported from data.js — fields the AI can never
@@ -537,6 +537,7 @@ async function renderGallery(view, caps, opts = {}) {
   let density = state.density === "list" ? "list" : "grid";
   let sortBy = state.sortBy;
   let priceMin = state.priceMin, priceMax = state.priceMax, datePreset = state.datePreset;
+  let noPrice = !!state.noPrice; // "only items without a price" — the pricing to-do filter
   const active = {}; // facetKey -> Set(values); AND across keys, OR within a key
   for (const k in (state.active || {})) if (facetByKey[k]) active[k] = new Set(state.active[k]);
   const facetFilter = {}; // facetKey -> typed text to narrow that facet's value list
@@ -579,7 +580,7 @@ async function renderGallery(view, caps, opts = {}) {
   // Persist the current view state for this surface (so tab switches keep place).
   const saveState = () => {
     state.q = q; state.needsReview = needsReview; state.sortBy = sortBy;
-    state.priceMin = priceMin; state.priceMax = priceMax;
+    state.priceMin = priceMin; state.priceMax = priceMax; state.noPrice = noPrice;
     state.datePreset = datePreset; state.density = density;
     state.active = {};
     for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
@@ -654,6 +655,7 @@ async function renderGallery(view, caps, opts = {}) {
   function matches(it, excludeKey) {
     if (!textMatch(it)) return false;
     if (needsReview && !needsReviewItem(it)) return false;
+    if (noPrice && it.price != null) return false;
     if (priceMin !== "" && (it.price == null || it.price < Number(priceMin))) return false;
     if (priceMax !== "" && (it.price == null || it.price > Number(priceMax))) return false;
     const cutoff = dateCutoff(datePreset);
@@ -714,7 +716,7 @@ async function renderGallery(view, caps, opts = {}) {
         <div class="cbrand">${esc(brand)}</div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
         <div class="cmeta">
-          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : "<span></span>"}
+          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">No price</span>`}
           ${posChipHtml(it)}
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
@@ -750,7 +752,7 @@ async function renderGallery(view, caps, opts = {}) {
           ${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}${variant ? `<span class="row-attr">${variant}</span>` : ""}
         </div>
         <div class="row-meta">
-          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : "<span></span>"}
+          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">No price</span>`}
           ${posChipHtml(it)}
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
@@ -762,6 +764,16 @@ async function renderGallery(view, caps, opts = {}) {
     const rows = applySort(data.filter((it) => matches(it, null)));
     filtered = rows;          // expose current filtered+sorted set for bulk actions
     saveState();
+
+    // Pricing is the gate to approval, so the count line doubles as its
+    // doorway: a tap on "N without a price" applies the no-price filter, and
+    // once you're looking at the unpriced, "Set prices" is right there.
+    const unpricedShown = rows.filter((it) => it.price == null).length;
+    const priceCta = noPrice
+      ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Set prices ›</button>` : "")
+      : unpricedShown
+        ? ` · <button class="count-cta" data-cta="noprice">${unpricedShown} without a price</button>`
+        : "";
 
     // Note when the load hit the row cap so a truncated set never looks complete.
     const capped = data.length >= GALLERY_LIMIT;
@@ -790,7 +802,7 @@ async function renderGallery(view, caps, opts = {}) {
     grid.innerHTML = density === "list"
       ? `<div class="scanlist">${rows.map((it) => rowHtml(it, slides)).join("")}</div>`
       : `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
-    countEl.innerHTML = `${countText(rows.length)}${countNote}${freshnessNote()}`;
+    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${freshnessNote()}`;
     grid._slides = slides;
     fadeInImages(grid);
   }
@@ -894,6 +906,7 @@ async function renderGallery(view, caps, opts = {}) {
     let n = 0;
     for (const k in active) if (active[k]?.size) n += active[k].size;
     if (priceMin || priceMax) n++;
+    if (noPrice) n++;
     if (datePreset !== "all") n++;
     if (needsReview && !review) n++;
     return n;
@@ -903,7 +916,7 @@ async function renderGallery(view, caps, opts = {}) {
     q = ""; if (qEl) qEl.value = "";
     for (const k in active) delete active[k];
     for (const k in facetFilter) delete facetFilter[k];
-    priceMin = ""; priceMax = ""; datePreset = "all";
+    priceMin = ""; priceMax = ""; noPrice = false; datePreset = "all";
     if (!review) needsReview = false;
     draw(); pills();
   }
@@ -915,17 +928,28 @@ async function renderGallery(view, caps, opts = {}) {
     for (const k in active) for (const v of active[k]) {
       out.push(`<button class="apill" data-facet="${esc(k)}" data-val="${esc(v)}">${esc(facetByKey[k]?.label || k)}: ${esc(v)} ✕</button>`);
     }
+    if (noPrice) out.push(`<button class="apill" data-clear="noprice">No price yet ✕</button>`);
     if (priceMin || priceMax) out.push(`<button class="apill" data-clear="price">Price: ${esc(priceMin || "0")}–${esc(priceMax || "∞")} ✕</button>`);
     if (datePreset !== "all") out.push(`<button class="apill" data-clear="dt">${esc(DATE_FILTERS.find((d) => d.v === datePreset)?.label || datePreset)} ✕</button>`);
     pillsEl.innerHTML = out.join("");
     const badge = view.querySelector("#fcount");
     if (badge) { const n = filterCount(); badge.textContent = n; badge.hidden = !n; }
   }
+  // Count-line shortcuts (countEl is created fresh each renderGallery, so one
+  // listener per render — no accumulation).
+  countEl.addEventListener("click", (e) => {
+    const cta = e.target.closest("[data-cta]");
+    if (!cta) return;
+    if (cta.dataset.cta === "noprice") { noPrice = true; priceMin = ""; priceMax = ""; draw(); pills(); }
+    else if (cta.dataset.cta === "setprices") openGuidedPricing(caps, refresh);
+  });
+
   pillsEl.addEventListener("click", (e) => {
     const b = e.target.closest("[data-clear], [data-facet]");
     if (!b) return;
     if (b.dataset.facet) active[b.dataset.facet]?.delete(b.dataset.val);
     else if (b.dataset.clear === "price") { priceMin = ""; priceMax = ""; }
+    else if (b.dataset.clear === "noprice") noPrice = false;
     else if (b.dataset.clear === "dt") datePreset = "all";
     else if (b.dataset.clear === "sort") sortBy = "new";
     draw(); pills();
@@ -939,8 +963,9 @@ async function renderGallery(view, caps, opts = {}) {
     const matchCount = () => data.filter((it) => matches(it, null)).length;
     const PRIMARY = ["shop", "category", "brand"]; // shown directly; the rest go under "More"
     const moreFacets = facets.filter((f) => !PRIMARY.includes(f.key));
-    const priceLabel = () => (priceMin || priceMax)
-      ? `${fmtPrice(priceMin || 0)}–${priceMax ? fmtPrice(priceMax) : "∞"}` : "Any";
+    const priceLabel = () => noPrice ? "No price yet"
+      : (priceMin || priceMax)
+        ? `${fmtPrice(priceMin || 0)}–${priceMax ? fmtPrice(priceMax) : "∞"}` : "Any";
     const dateLabel = () => DATE_FILTERS.find((d) => d.v === datePreset)?.label || "Any date";
     const facetSummary = (f) => {
       const sel = active[f.key];
@@ -1023,15 +1048,19 @@ async function renderGallery(view, caps, opts = {}) {
     }
 
     // ---- PRICE detail ----
+    // "No price yet" is the pricing to-do filter (pricing gates approval, so
+    // finding the unpriced is a first-class job). It's mutually exclusive with
+    // a range — a range can only match priced items — so the inputs disable.
     function showPrice() {
       titleEl.textContent = "Price";
       bodyEl.innerHTML = `<div class="fs-detail">
+        <div class="fs-list" style="margin-bottom:10px">${optRow("data-noprice", "Only items without a price", noPrice)}</div>
         <label class="cm-label" for="fsMin">Minimum price</label>
-        <input id="fsMin" class="rng" type="number" inputmode="numeric" placeholder="No minimum" value="${esc(priceMin)}">
+        <input id="fsMin" class="rng" type="number" inputmode="numeric" placeholder="No minimum" value="${esc(priceMin)}"${noPrice ? " disabled" : ""}>
         <label class="cm-label" for="fsMax">Maximum price</label>
-        <input id="fsMax" class="rng" type="number" inputmode="numeric" placeholder="No maximum" value="${esc(priceMax)}">
+        <input id="fsMax" class="rng" type="number" inputmode="numeric" placeholder="No maximum" value="${esc(priceMax)}"${noPrice ? " disabled" : ""}>
       </div>`;
-      requestAnimationFrame(() => bodyEl.querySelector("#fsMin")?.focus());
+      if (!noPrice) requestAnimationFrame(() => bodyEl.querySelector("#fsMin")?.focus());
     }
 
     // ---- ADDED (date) detail (single choice) ----
@@ -1102,6 +1131,13 @@ async function renderGallery(view, caps, opts = {}) {
       }
       const sort = e.target.closest("[data-sort]");
       if (sort) { sortBy = sort.dataset.sort; apply(); showMaster(); return; }
+      const np = e.target.closest("[data-noprice]");
+      if (np) {
+        noPrice = !noPrice;
+        if (noPrice) { priceMin = ""; priceMax = ""; } // a range can't match unpriced items
+        apply(); showPrice();
+        return;
+      }
       const dt = e.target.closest("[data-dt]");
       if (dt) { datePreset = dt.dataset.dt; apply(); showMaster(); return; }
       const chip = e.target.closest("[data-facet][data-val]");
@@ -1141,7 +1177,7 @@ async function renderGallery(view, caps, opts = {}) {
         for (const k in (p.active || {})) if (facetByKey[k]) active[k] = new Set(p.active[k]);
         q = p.q || ""; if (qEl) qEl.value = q;
         sortBy = p.sortBy && SORTS.some((s) => s.v === p.sortBy) ? p.sortBy : "new";
-        priceMin = p.priceMin || ""; priceMax = p.priceMax || ""; datePreset = p.datePreset || "all";
+        priceMin = p.priceMin || ""; priceMax = p.priceMax || ""; noPrice = !!p.noPrice; datePreset = p.datePreset || "all";
         apply(); showMaster(); toast(`Applied “${v.name}”`);
         return;
       }
@@ -1150,7 +1186,7 @@ async function renderGallery(view, caps, opts = {}) {
         if (!name) return;
         const serial = {};
         for (const k in active) if (active[k]?.size) serial[k] = [...active[k]];
-        const payload = { active: serial, q, sortBy, priceMin, priceMax, datePreset };
+        const payload = { active: serial, q, sortBy, priceMin, priceMax, noPrice, datePreset };
         const { data: created, error } = await supabase.from("saved_views").insert({ name, payload }).select("id, name, payload").single();
         if (error) { toast("Couldn't save view: " + error.message); return; }
         savedViews.push(created); showSaved(); toast("View saved");
