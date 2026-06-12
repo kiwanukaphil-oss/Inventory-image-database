@@ -35,10 +35,16 @@ export async function openGuidedPricing(caps, onClose) {
 
   const { data: rows, error } = await supabase
     .from("items")
-    .select("id, brand, attributes, category_id, price, image_path")
+    .select("id, brand, attributes, category_id, price, image_path, pos_sync_status")
     .limit(5000);
   if (error) { toast("Couldn't load items: " + error.message); return; }
-  const items = rows || [];
+  // Once an item is in the POS, the POS owns its price (catalog price changes
+  // deliberately do NOT propagate) — so this surface only offers items whose
+  // price will actually take effect: never pushed, or errored (the price goes
+  // with the retry push). Synced/in-flight items are repriced in the POS.
+  const allItems = rows || [];
+  const priceable = (it) => !it.pos_sync_status || it.pos_sync_status === "error";
+  const items = allItems.filter(priceable);
 
   const cur = getSetting("currency", "");
   const fmt = (n) => (cur ? `${cur} ` : "") + Number(n).toLocaleString();
@@ -57,6 +63,9 @@ export async function openGuidedPricing(caps, onClose) {
     return chain;
   };
   const itemsUnder = (nodeId) => items.filter((it) => it.category_id && chainOf(it.category_id).has(nodeId));
+  // How many items under a node are already in the POS (price owned there).
+  const inShopUnder = (nodeId) =>
+    allItems.filter((it) => !priceable(it) && it.category_id && chainOf(it.category_id).has(nodeId)).length;
   const childrenOf = (nodeId) =>
     ref.categories.filter((c) => (c.parent_id || null) === nodeId).sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
 
@@ -66,7 +75,9 @@ export async function openGuidedPricing(caps, onClose) {
   let pickedId = null;   // the chosen category node
   let pile = [];         // items in the chosen node
   let basePrice = "";    // "" = leave non-matching items unchanged
-  let keepPriced = false; // true = never overwrite an existing price
+  // Overwriting an existing price is the destructive case, so protection is ON
+  // by default — untick it deliberately to reprice.
+  let keepPriced = true;
   const exceptions = []; // { key, label, mode:'values'|'band', values?, dir?, threshold?, price }
 
   // Signed thumbnails for everything, one batch up front — the tree rows, the
@@ -174,19 +185,23 @@ export async function openGuidedPricing(caps, onClose) {
 
   function pileStrip() {
     const withImg = pile.filter((it) => it.image_path && signed[it.image_path]).slice(0, 14);
+    const inShop = inShopUnder(pickedId);
     return `<div class="pgd-pile">
       <div class="pgd-pilehead">${pile.length} item${pile.length === 1 ? "" : "s"} · ${esc(categoryPath(pickedId))}</div>
       <div class="pgd-strip">${withImg.map((it) => `<span class="pgd-stripthumb">${thumbOf(it)}</span>`).join("")}</div>
+      ${inShop ? `<div class="pgd-hint muted">${inShop} more ${inShop === 1 ? "is" : "are"} already in the shop and not shown — once pushed, prices change in the POS, not here.</div>` : ""}
     </div>`;
   }
 
   function stepBase() {
     const already = pile.filter((it) => it.price != null).length;
     return `${pileStrip()}
-      <div class="pgd-lead">What does everyone in this group pay?</div>
+      <div class="pgd-lead">Set the group's standard price. It's not a minimum —
+        it's what an item pays <b>unless an exception</b> (added next) says
+        otherwise, and exceptions can be higher or lower.</div>
       <div class="pg-input pgd-baseinput">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-        <input id="pgdBase" type="number" inputmode="decimal" placeholder="Base price — or leave empty" value="${esc(basePrice)}">
+        <input id="pgdBase" type="number" inputmode="decimal" placeholder="Standard price — or leave empty" value="${esc(basePrice)}">
       </div>
       <div class="pgd-hint muted">Leave it empty to only price the exceptions you add next
         (everything else stays as it is).</div>
