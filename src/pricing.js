@@ -813,8 +813,26 @@ export async function openPricing(caps, onClose, opts = {}) {
             `<button class="fs-opt${sel.has(v) ? " on" : ""}" data-val="${esc(v)}"><span class="fs-check-box${sel.has(v) ? " on" : ""}">${sel.has(v) ? "✓" : ""}</span><span class="fs-opt-label">${esc(v)}</span><span class="fs-opt-n">${counts[v]}</span></button>`).join("")}</div>
           <button class="primary up-go" data-apply>Add scope</button>`;
         sh.body.querySelector("[data-back]").onclick = showFacets;
-        sh.body.querySelectorAll("[data-mode]").forEach((b) => { b.onclick = () => { mode = b.dataset.mode; draw(); }; });
-        sh.body.querySelectorAll("[data-val]").forEach((b) => { b.onclick = () => { const v = b.dataset.val; sel.has(v) ? sel.delete(v) : sel.add(v); draw(); }; });
+        // Mode/value taps update the DOM in place rather than calling draw():
+        // a redraw replaces .pg-vallist (the scrolling element), which resets
+        // its scroll to the top on every tap.
+        sh.body.querySelectorAll("[data-mode]").forEach((b) => {
+          b.onclick = () => {
+            mode = b.dataset.mode;
+            sh.body.querySelectorAll("[data-mode]").forEach((m) => m.classList.toggle("on", m.dataset.mode === mode));
+          };
+        });
+        sh.body.querySelectorAll("[data-val]").forEach((b) => {
+          b.onclick = () => {
+            const v = b.dataset.val;
+            sel.has(v) ? sel.delete(v) : sel.add(v);
+            const on = sel.has(v);
+            b.classList.toggle("on", on);
+            const box = b.querySelector(".fs-check-box");
+            box.classList.toggle("on", on);
+            box.textContent = on ? "✓" : "";
+          };
+        });
         sh.body.querySelector("[data-apply]").onclick = () => {
           if (!sel.size) { toast("Pick at least one value."); return; }
           scope.push({ key, mode, values: new Set(sel) });
