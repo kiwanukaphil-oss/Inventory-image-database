@@ -105,8 +105,17 @@ export async function renderShop(view, caps, onChanged) {
       .sort((a, b) => new Date(a.rep?.pos_synced_at || 0) - new Date(b.rep?.pos_synced_at || 0));
 
     const title = (v) => v.rep ? (v.rep.brand || v.rep.name || v.m.brand_name || "—") : (v.m.product_name || "—");
+    // Caption = the SKU's components in human form (category · colour · size),
+    // NOT the SKU itself — that's a machine identifier (all-caps, repeats the
+    // category, truncates the price off the line). Brand is omitted: it's the
+    // row title directly above. The raw SKU stays one tap away in the editor.
     const subLine = (v) => {
-      const bits = [v.rep?.categories?.name, v.m.pos_sku];
+      const attrs = v.rep?.attributes || {};
+      const size = ["size", "size_eu", "waist"].map((k) => attrs[k]).find(Boolean)
+        || (attrs.volume_ml ? `${attrs.volume_ml} ml` : null);
+      const bits = v.rep
+        ? [v.rep.categories?.name, attrs.color, size]
+        : [v.m.pos_sku]; // no catalog twin — the SKU is all we know
       const price = fmtPrice(v.m.price);
       if (price) bits.push(price);
       return bits.filter(Boolean).join(" · ");
