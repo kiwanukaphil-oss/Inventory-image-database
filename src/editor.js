@@ -152,7 +152,13 @@ export async function openEditor(itemId, caps, onSaved) {
         <div class="field-sec">Stock & pricing</div>
         ${shopLineHtml()}
         ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
-        ${fieldRow({ key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Initial stock (live stock lives in the POS)" : "Stock qty", type: "number" }, item.stock_quantity, conf, false, canEdit)}
+        ${fieldRow(
+          { key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Units received (live stock lives in the POS)" : "Units in this batch (1 photo = 1 unit)", type: "number" },
+          item.stock_quantity, conf, false,
+          // Frozen once pushed: the receipt is booked, the POS ledger owns
+          // stock from here. Restocking = photograph the new units.
+          canEdit && item.pos_sync_status !== "synced"
+        )}
         ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false, canEdit)}
         ${
           canViewCost
@@ -383,6 +389,18 @@ export async function openEditor(itemId, caps, onSaved) {
     if (status === "approved" && (!priceEl || priceEl.value.trim() === "")) {
       toast("Set a price before approving this item.");
       return;
+    }
+    // One photo = one unit: a quantity above 1 is almost certainly a mistake
+    // under this shop's workflow (each identical unit gets its own photo as
+    // evidence), so make the person saying otherwise mean it.
+    const qtyEl = sheet.querySelector('[data-key="stock_quantity"]');
+    if (qtyEl && !qtyEl.disabled && Number(qtyEl.value) > 1) {
+      const sure = await confirmSheet({
+        title: "More than 1 unit on one photo?",
+        message: "This shop counts one unit per photo — identical items each get their own photo. Only keep a higher number if this single photo really stands for several units.",
+        confirmText: "Keep " + qtyEl.value.trim(),
+      });
+      if (!sure) return;
     }
     const btn = sheet.querySelector("#saveBtn");
     btn.disabled = true;

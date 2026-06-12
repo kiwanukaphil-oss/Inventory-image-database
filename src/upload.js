@@ -329,6 +329,9 @@ export async function renderUpload(view, caps, onDone) {
       id, category_id: common.categoryId, brand: common.brand,
       attributes: common.attributes, status: common.status,
       image_path: path, original_filename: entry.file.name,
+      // One photo = one unit (workflow rule): every physical unit gets its own
+      // photo as evidence, so the receipt quantity is always 1 — never a total.
+      stock_quantity: 1,
     });
     if (ins.error) throw ins.error;
     // Opt-in: read the photo and fill any still-empty fields. Soft-fails — the
