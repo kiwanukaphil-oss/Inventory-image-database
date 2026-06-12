@@ -358,7 +358,7 @@ const SORTS = [
 // `density` is the card-grid vs scan-list view mode. Review defaults to the
 // dense list (built for skimming many uploads at once); Gallery to the grid.
 const browseState = {
-  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list" },
+  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid" },
   review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list", seg: "work" },
 };
 
