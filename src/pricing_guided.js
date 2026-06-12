@@ -369,10 +369,14 @@ export async function openGuidedPricing(caps, onClose) {
     if (!diffs.length) { toast("These items don't differ by anything to except on."); return; }
 
     const sh = openBottomSheet("Except…", "");
+    // Uniform two-line rows: the dimension on top, a single ellipsized line of
+    // sample values below — every row the same shape regardless of content.
     const showDiffs = () => {
       sh.body.innerHTML = `<div class="cm-label">What makes these different?</div>` +
-        diffs.map((d) => `<button class="menu-item" data-diff="${esc(d.key)}">${esc(d.label)}
-          <span class="menu-val">${esc(d.values.slice(0, 3).join(", "))}${d.values.length > 3 ? ` +${d.values.length - 3}` : ""}</span></button>`).join("");
+        diffs.map((d) => `<button class="pgd-diffrow" data-diff="${esc(d.key)}">
+          <span class="pgd-diffname">${esc(d.label)}<span class="pgd-diffn">${d.values.length}</span></span>
+          <span class="pgd-diffvals">${esc(d.values.slice(0, 6).join(" · "))}${d.values.length > 6 ? " …" : ""}</span>
+        </button>`).join("");
       sh.body.querySelectorAll("[data-diff]").forEach((b) => {
         b.onclick = () => showPicker(diffs.find((d) => d.key === b.dataset.diff));
       });
@@ -381,7 +385,7 @@ export async function openGuidedPricing(caps, onClose) {
     const showPicker = (d) => {
       let mode = "values";       // numeric attrs can switch to "band"
       const sel = new Set();
-      let dir = "le", threshold = "", price = "";
+      let dir = "le", threshold = "", price = "", valQ = "";
       const counts = {};
       for (const it of pile) {
         const v = d.key === "brand" ? (it.brand || "").trim() : String(it.attributes?.[d.key] ?? "").trim();
@@ -395,6 +399,14 @@ export async function openGuidedPricing(caps, onClose) {
           return Number.isFinite(v) && (dir === "le" ? v <= T : v > T);
         }).length;
       };
+      // The checklist rows for the current search text. Selected values always
+      // show (even when the search would hide them) so a choice never vanishes.
+      const valListHtml = () => d.values
+        .filter((v) => !valQ || v.toLowerCase().includes(valQ) || sel.has(v))
+        .map((v) => `<button class="fs-opt${sel.has(v) ? " on" : ""}" data-val="${esc(v)}">
+            <span class="fs-check-box${sel.has(v) ? " on" : ""}">${sel.has(v) ? "✓" : ""}</span>
+            <span class="fs-opt-label">${esc(v)}</span><span class="fs-opt-n">${counts[v] || 0}</span></button>`)
+        .join("") || `<div class="muted" style="padding:12px">No matches.</div>`;
       const draw = () => {
         const bandN = bandCount();
         sh.body.innerHTML = `
@@ -404,10 +416,9 @@ export async function openGuidedPricing(caps, onClose) {
             <button class="pg-modebtn${mode === "values" ? " on" : ""}" data-m="values">Specific ${esc(d.label.toLowerCase())}s</button>
             <button class="pg-modebtn${mode === "band" ? " on" : ""}" data-m="band">Above / below</button>
           </div>` : ""}
-          ${mode === "values" ? `<div class="pg-vallist">${d.values.map((v) =>
-            `<button class="fs-opt${sel.has(v) ? " on" : ""}" data-val="${esc(v)}">
-              <span class="fs-check-box${sel.has(v) ? " on" : ""}">${sel.has(v) ? "✓" : ""}</span>
-              <span class="fs-opt-label">${esc(v)}</span><span class="fs-opt-n">${counts[v] || 0}</span></button>`).join("")}</div>`
+          ${mode === "values" ? `
+            ${d.values.length > 8 ? `<input class="facet-filter" id="pgdValQ" type="search" placeholder="Search ${esc(d.label.toLowerCase())}…" value="${esc(valQ)}">` : ""}
+            <div class="pg-vallist" id="pgdValList">${valListHtml()}</div>`
           : `<div class="pgd-bandrow">
               <div class="pg-modeseg">
                 <button class="pg-modebtn${dir === "le" ? " on" : ""}" data-dir="le">Up to</button>
@@ -438,15 +449,23 @@ export async function openGuidedPricing(caps, onClose) {
           if (n) n.textContent = bn == null ? "Enter a number." : `${bn} item${bn === 1 ? "" : "s"} match.`;
         });
         sh.body.querySelector("#pgdExPrice").addEventListener("input", (e) => { price = e.target.value.trim(); });
-        sh.body.querySelectorAll("[data-val]").forEach((b) => {
-          b.onclick = () => {
-            const v = b.dataset.val;
-            sel.has(v) ? sel.delete(v) : sel.add(v);
-            const on = sel.has(v);
-            b.classList.toggle("on", on);
-            const box = b.querySelector(".fs-check-box");
-            box.classList.toggle("on", on); box.textContent = on ? "✓" : "";
-          };
+        // Search filters the list in place (the input lives OUTSIDE the list,
+        // so it keeps focus and the sheet's scroll position survives typing).
+        sh.body.querySelector("#pgdValQ")?.addEventListener("input", (e) => {
+          valQ = e.target.value.trim().toLowerCase();
+          const list = sh.body.querySelector("#pgdValList");
+          if (list) list.innerHTML = valListHtml();
+        });
+        // Delegated toggle, so filtered re-renders of the list need no rebinding.
+        sh.body.querySelector("#pgdValList")?.addEventListener("click", (e) => {
+          const b = e.target.closest("[data-val]");
+          if (!b) return;
+          const v = b.dataset.val;
+          sel.has(v) ? sel.delete(v) : sel.add(v);
+          const on = sel.has(v);
+          b.classList.toggle("on", on);
+          const box = b.querySelector(".fs-check-box");
+          box.classList.toggle("on", on); box.textContent = on ? "✓" : "";
         });
         sh.body.querySelector("[data-add]").onclick = () => {
           if (!Number.isFinite(Number(price)) || price === "" || Number(price) < 0) { toast("Enter the exception's price."); return; }
