@@ -173,8 +173,15 @@ button.ghost:hover { border-color:var(--accent); }
 button.danger { border-color:var(--danger); color:var(--flag-txt); }
 a { color:var(--accent); }
 
-/* ---------------- app shell ---------------- */
-.shell { display:flex; flex-direction:column; min-height:100dvh; }
+/* ---------------- app shell ----------------
+   App-shell scroll architecture: the DOCUMENT never scrolls — only .content
+   does, between a static top bar and a static bottom nav. This is what keeps
+   mobile browsing calm: the browser's URL bar only collapses on document
+   scroll, so with none, the bottom nav never jumps in/out of the viewport,
+   and overlay scrolling can't chain into a page moving underneath. */
+html, body { height:100%; }
+body { overflow:hidden; overscroll-behavior:none; }
+.shell { display:flex; flex-direction:column; height:100dvh; }
 /* Top chrome: bar + offline banner stick as ONE unit. (They used to be two
    independent sticky elements at top:0, so when scrolled while offline the
    banner slid over the title and menu button.) */
@@ -195,7 +202,12 @@ a { color:var(--accent); }
 .rolechip.editor { color:var(--accent-soft-txt); border-color:var(--editor-chip-border); }
 .rolechip.viewer { color:var(--muted); }
 
-.content { flex:1; padding:12px 12px calc(78px + var(--safe-bottom)); }
+/* THE app scroller. min-height:0 lets it shrink inside the flex column;
+   overscroll containment stops edge-bounce from chaining anywhere. The large
+   bottom padding is scroll headroom for the floating FAB and the selection
+   action bar (both viewport-fixed overlays). */
+.content { flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain; padding:12px 12px calc(78px + var(--safe-bottom)); }
 
 /* Offline banner (thin bar under the top bar, inside .topwrap). */
 .offline-banner { text-align:center; font-size:12.5px;
@@ -214,9 +226,10 @@ a { color:var(--accent); }
 }
 .fab-top:active { transform:translateY(1px); }
 
-/* Bottom navigation — primary mobile navigation. */
+/* Bottom navigation — primary mobile navigation. A static flex child of the
+   shell (NOT position:fixed): with the document never scrolling, static is
+   what makes it physically incapable of moving. */
 .bottomnav {
-  position:fixed; left:0; right:0; bottom:0; z-index:30;
   background:var(--panel); border-top:1px solid var(--line);
   box-shadow:var(--shadow-nav);
   display:flex; padding-bottom:var(--safe-bottom);
@@ -242,7 +255,10 @@ a { color:var(--accent); }
 @keyframes spin { to { transform:rotate(360deg); } }
 
 /* ---------------- auth screen ---------------- */
-.auth { min-height:100dvh; display:flex; align-items:center; justify-content:center; padding:24px; }
+/* The login screen lives outside .shell, so under the body scroll-lock it
+   needs to be its own scroller (small phones + open keyboard overflow it). */
+.auth { height:100dvh; overflow-y:auto; overscroll-behavior:contain;
+  display:flex; align-items:center; justify-content:center; padding:24px; }
 .auth .card {
   width:100%; max-width:360px; background:var(--panel);
   border:1px solid var(--line); border-radius:14px; padding:22px;
@@ -501,6 +517,12 @@ a { color:var(--accent); }
 .sync-val.warn { color:var(--warn); font-weight:600; }
 .sync-val.muted { color:var(--muted); }
 .sync-problem { padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; line-height:1.35; }
+
+/* Every overlay's internal scroller contains its own overscroll — reaching the
+   end of a sheet/screen list must never start scrolling whatever is beneath
+   (that scroll-chaining was the "another page moves under the sheet" jank). */
+.sheet-body, .msheet-body, .screen-body, .calib-body, #usersBody,
+.bulkai-log, .pg-vallist, .facet .chips { overscroll-behavior:contain; }
 
 /* ---------------- premium gallery toolbar ---------------- */
 .galtop { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }

@@ -129,7 +129,7 @@ export function renderApp(mount, profile, onSignOut) {
   const refreshCurrent = () => setView(currentViewId);
   function setView(id) {
     currentViewId = id;
-    window.scrollTo(0, 0);
+    view.scrollTo(0, 0); // .content is the app's only scroller (app-shell layout)
     nav.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === id)
     );
@@ -249,7 +249,7 @@ export function renderApp(mount, profile, onSignOut) {
     const btn = e.target.closest("button[data-view]");
     if (!btn) return;
     // Tapping the already-active tab scrolls back to top (mobile convention).
-    if (btn.dataset.view === currentViewId) window.scrollTo({ top: 0, behavior: "smooth" });
+    if (btn.dataset.view === currentViewId) view.scrollTo({ top: 0, behavior: "smooth" });
     else setView(btn.dataset.view);
   });
 
@@ -260,11 +260,12 @@ export function renderApp(mount, profile, onSignOut) {
   window.addEventListener("offline", setOnline);
   setOnline();
 
-  // Back-to-top: appears once you've scrolled down a bit.
+  // Back-to-top: appears once you've scrolled down a bit. Watches the content
+  // scroller (the document never scrolls in the app-shell layout).
   const fab = mount.querySelector("#fabTop");
-  const onScroll = () => { fab.hidden = window.scrollY < 500; };
-  window.addEventListener("scroll", onScroll, { passive: true });
-  fab.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+  const onScroll = () => { fab.hidden = view.scrollTop < 500; };
+  view.addEventListener("scroll", onScroll, { passive: true });
+  fab.onclick = () => view.scrollTo({ top: 0, behavior: "smooth" });
   onScroll();
 
   setView("gallery");
@@ -582,8 +583,8 @@ async function renderGallery(view, caps, opts = {}) {
 
   // Re-render after an edit/bulk action without losing the user's scroll place.
   const refresh = () => {
-    const y = window.scrollY;
-    return renderGallery(view, caps, opts).then(() => window.scrollTo(0, y));
+    const y = view.scrollTop;
+    return renderGallery(view, caps, opts).then(() => view.scrollTo(0, y));
   };
 
   // ---- selection mode (phone-gallery style multi-select) ----
@@ -1104,7 +1105,15 @@ async function renderGallery(view, caps, opts = {}) {
         const k = chip.dataset.facet, v = chip.dataset.val;
         (active[k] = active[k] || new Set()).has(v) ? active[k].delete(v) : active[k].add(v);
         if (!active[k].size) delete active[k];
-        apply(); renderFacet(); // counts shift, so re-render this list
+        // Update the tapped row in place — this list's counts ignore the
+        // facet's own selection (excludeKey), so nothing else changes, and a
+        // full renderFacet() would reset the list's scroll position.
+        const on = !!active[k]?.has(v);
+        chip.classList.toggle("on", on);
+        const box = chip.querySelector(".fs-check-box");
+        box.classList.toggle("on", on);
+        box.textContent = on ? "✓" : "";
+        apply();
         return;
       }
       const del = e.target.closest("[data-del]");
