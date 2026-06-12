@@ -359,7 +359,7 @@ const SORTS = [
 // dense list (built for skimming many uploads at once); Gallery to the grid.
 const browseState = {
   gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list" },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list" },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list", seg: "work" },
 };
 
 // AI_BLIND_FIELDS (fit, …) is imported from data.js — fields the AI can never
@@ -376,6 +376,13 @@ const needsReviewItem = (it) =>
   it.status === "flag" ||
   it.status === "needs-review" ||
   (it.status === "draft" && hasLowConf(it));
+// "Ready to approve": everything necessary is present — priced, no genuine AI
+// doubt, not flagged — so a human glance is all that stands before approval.
+// Clean priced drafts qualify too: complete is complete, whichever status the
+// upload happened to choose. Partitions the Review tab with needsReviewItem.
+const readyItem = (it) =>
+  (it.status === "needs-review" || it.status === "draft") &&
+  it.price != null && !hasLowConf(it);
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 
 // Fade each thumbnail in over its shimmer once the image has loaded, so the
@@ -424,8 +431,9 @@ async function renderGallery(view, caps, opts = {}) {
     return;
   }
 
-  // Keep the Review tab's badge in sync on every load (any surface refreshes it).
-  setReviewBadge((data || []).filter(needsReviewItem).length);
+  // Keep the Review tab's badge in sync on every load (any surface refreshes
+  // it). Both segments count — ready-to-approve items await action too.
+  setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it)).length);
 
   if (!data || data.length === 0) {
     view.innerHTML = `<div class="empty"><div class="big">📭</div>
@@ -534,6 +542,7 @@ async function renderGallery(view, caps, opts = {}) {
   // ---- view state (restored from the session, per surface) ----
   let q = state.q;
   let needsReview = review ? true : state.needsReview; // Review tab forces it on
+  let seg = review ? (state.seg === "ready" ? "ready" : "work") : null; // Review tab segment
   let density = state.density === "list" ? "list" : "grid";
   let sortBy = state.sortBy;
   let priceMin = state.priceMin, priceMax = state.priceMax, datePreset = state.datePreset;
@@ -557,6 +566,10 @@ async function renderGallery(view, caps, opts = {}) {
         <span class="spacer"></span>
         <button class="linkbtn" id="selAll">Select all</button>
       </div>
+      ${review ? `<div class="seg-row" id="segRow">
+        <button class="seg${seg === "work" ? " on" : ""}" data-seg="work">Needs work<span class="seg-n" id="segWorkN"></span></button>
+        <button class="seg${seg === "ready" ? " on" : ""}" data-seg="ready">Ready to approve<span class="seg-n" id="segReadyN"></span></button>
+      </div>` : ""}
       <div class="active-pills" id="pills"></div>
       <div class="count" id="count"></div>
     </div>
@@ -582,6 +595,7 @@ async function renderGallery(view, caps, opts = {}) {
     state.q = q; state.needsReview = needsReview; state.sortBy = sortBy;
     state.priceMin = priceMin; state.priceMax = priceMax; state.noPrice = noPrice;
     state.datePreset = datePreset; state.density = density;
+    if (review) state.seg = seg;
     state.active = {};
     for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
   };
@@ -615,6 +629,7 @@ async function renderGallery(view, caps, opts = {}) {
     hdrSelect.hidden = false;
     pillsEl.hidden = true;
     countEl.hidden = true;
+    const sr = view.querySelector("#segRow"); if (sr) sr.hidden = true;
     if (actionbar) actionbar.hidden = false;
     if (appNav) appNav.style.display = "none"; // one bottom bar at a time
     updateSelBar();
@@ -628,6 +643,7 @@ async function renderGallery(view, caps, opts = {}) {
     hdrNormal.hidden = false;
     pillsEl.hidden = false;
     countEl.hidden = false;
+    const sr = view.querySelector("#segRow"); if (sr) sr.hidden = false;
     if (actionbar) actionbar.hidden = true;
     if (appNav) appNav.style.display = "";
   }
@@ -654,7 +670,11 @@ async function renderGallery(view, caps, opts = {}) {
   // ignore its own selection (standard faceted counting).
   function matches(it, excludeKey) {
     if (!textMatch(it)) return false;
-    if (needsReview && !needsReviewItem(it)) return false;
+    if (review) {
+      // The review queue partitions: Ready (complete — glance & approve) vs
+      // Needs work (everything else in triage). No overlap, no gaps.
+      if (seg === "ready" ? !readyItem(it) : !(needsReviewItem(it) && !readyItem(it))) return false;
+    } else if (needsReview && !needsReviewItem(it)) return false;
     if (noPrice && it.price != null) return false;
     if (priceMin !== "" && (it.price == null || it.price < Number(priceMin))) return false;
     if (priceMax !== "" && (it.price == null || it.price > Number(priceMax))) return false;
@@ -774,6 +794,16 @@ async function renderGallery(view, caps, opts = {}) {
       : unpricedShown
         ? ` · <button class="count-cta" data-cta="noprice">${unpricedShown} without a price</button>`
         : "";
+    // Ready segment: the whole point is glance → approve, so the action sits
+    // right on the count line (same immediate-with-Undo semantics as bulk).
+    const approveCta = review && seg === "ready" && canEdit && rows.length
+      ? ` · <button class="count-cta" data-cta="approveall">Approve all ${rows.length} ›</button>` : "";
+    // Keep the segment counts live (they partition `data`, not the filtered rows).
+    if (review) {
+      const wn = view.querySelector("#segWorkN"), rn = view.querySelector("#segReadyN");
+      if (wn) wn.textContent = data.filter((it) => needsReviewItem(it) && !readyItem(it)).length;
+      if (rn) rn.textContent = data.filter(readyItem).length;
+    }
 
     // Note when the load hit the row cap so a truncated set never looks complete.
     const capped = data.length >= GALLERY_LIMIT;
@@ -782,14 +812,18 @@ async function renderGallery(view, caps, opts = {}) {
     // On Review, "N of <whole catalogue>" read as if N were a fraction of the
     // review queue — say what it is instead.
     const countText = (n) => review
-      ? `${n} to review`
+      ? (seg === "ready" ? `${n} ready to approve` : `${n} need${n === 1 ? "s" : ""} work`)
       : `${n} of ${data.length} item${data.length === 1 ? "" : "s"}`;
 
     // Filters matched nothing → actionable empty state (not a blank grid).
     if (rows.length === 0) {
       countEl.innerHTML = `${countText(0)}${countNote}${freshnessNote()}`;
       grid.innerHTML = `<div class="empty"><div class="big">${review ? "✓" : "🔍"}</div>
-        <div>${review ? "Nothing needs review right now." : "No items match your search or filters."}</div>
+        <div>${review
+          ? (seg === "ready"
+            ? "Nothing is ready to approve yet — items land here once they're priced and the AI has no doubts."
+            : "Nothing needs work right now.")
+          : "No items match your search or filters."}</div>
         ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
       grid._slides = [];
       const cf = grid.querySelector("#clearFiltersBtn");
@@ -802,7 +836,7 @@ async function renderGallery(view, caps, opts = {}) {
     grid.innerHTML = density === "list"
       ? `<div class="scanlist">${rows.map((it) => rowHtml(it, slides)).join("")}</div>`
       : `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
-    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${freshnessNote()}`;
+    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${approveCta}${freshnessNote()}`;
     grid._slides = slides;
     fadeInImages(grid);
   }
@@ -942,6 +976,17 @@ async function renderGallery(view, caps, opts = {}) {
     if (!cta) return;
     if (cta.dataset.cta === "noprice") { noPrice = true; priceMin = ""; priceMax = ""; draw(); pills(); }
     else if (cta.dataset.cta === "setprices") openGuidedPricing(caps, refresh);
+    else if (cta.dataset.cta === "approveall") approveItems(filtered.map((it) => it.id));
+  });
+
+  // Review-tab segment switch (Needs work ⇄ Ready to approve).
+  const segRow = view.querySelector("#segRow");
+  if (segRow) segRow.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-seg]");
+    if (!btn || btn.dataset.seg === seg) return;
+    seg = btn.dataset.seg;
+    segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.seg === seg));
+    draw();
   });
 
   pillsEl.addEventListener("click", (e) => {
@@ -1340,7 +1385,12 @@ async function renderGallery(view, caps, opts = {}) {
   // have been needs-review, draft, or flag, so we snapshot per item).
   async function approveSelected() {
     if (!selected.size) return;
-    const ids = [...selected];
+    await approveItems([...selected]);
+  }
+  // The shared approve core — used by the selection bar AND the Ready
+  // segment's "Approve all" (identical guard/Undo semantics either way).
+  async function approveItems(ids) {
+    if (!ids.length) return;
     // No price ⇒ not sellable ⇒ can't be approved. Approve the priced ones and
     // report how many were skipped, rather than blocking the whole batch.
     const priced = ids.filter((id) => byId[id]?.price != null);
@@ -1348,10 +1398,9 @@ async function renderGallery(view, caps, opts = {}) {
     if (!priced.length) {
       // Don't just name the problem — offer the cure: the pricing tool accepts
       // exactly this selection.
-      const blocked = [...selected];
       toast(`Can't approve — ${skipped} item${skipped === 1 ? "" : "s"} have no price.`, {
         label: "Set prices",
-        onClick: () => { exitSelection(); openPricing(caps, refresh, { itemIds: blocked }); },
+        onClick: () => { if (selectionMode) exitSelection(); openPricing(caps, refresh, { itemIds: ids }); },
       });
       return;
     }
@@ -1359,7 +1408,7 @@ async function renderGallery(view, caps, opts = {}) {
     const { error } = await supabase.from("items").update({ status: "approved" }).in("id", priced);
     if (error) { toast("Approve failed: " + error.message); return; }
     navigator.vibrate?.([12, 40, 12]);
-    exitSelection();
+    if (selectionMode) exitSelection();
     const msg = skipped
       ? `Approved ${priced.length} · ${skipped} skipped (no price)`
       : `Approved ${priced.length} item${priced.length === 1 ? "" : "s"}`;
