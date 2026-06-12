@@ -40,6 +40,30 @@ export function getSetting(key, def = "") {
   return cache?.settings?.[key] || def;
 }
 
+/**
+ * The POS live-stock mirror (read-only; written by the pos-mirror edge
+ * function) plus the most recent mirror run for the freshness line. Items join
+ * to it via items.pos_variant_id — several duplicate-SKU items share one
+ * variant, so stock is per-variant by design. Returns empty structures when
+ * migration 0018 isn't applied yet, so every caller degrades gracefully.
+ */
+export async function loadPosMirror() {
+  const [mirror, run] = await Promise.all([
+    supabase
+      .from("pos_stock_mirror")
+      .select("pos_variant_id, pos_sku, stock_quantity, reorder_level, units_sold, units_returned, price, is_active, mirrored_at"),
+    supabase
+      .from("pos_sync_runs")
+      .select("finished_at, ok, error")
+      .eq("kind", "mirror")
+      .order("started_at", { ascending: false })
+      .limit(1),
+  ]);
+  const byVariant = new Map();
+  for (const r of mirror.data || []) byVariant.set(r.pos_variant_id, r);
+  return { byVariant, lastMirror: (run.data || [])[0] || null };
+}
+
 export function refreshRefData() {
   cache = null;
 }

@@ -2,7 +2,7 @@ import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
-import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, vocabSuggestions, AI_BLIND_FIELDS } from "./data.js";
+import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, vocabSuggestions, AI_BLIND_FIELDS, loadPosMirror } from "./data.js";
 import { openCalibration } from "./calibration.js";
 import { openPricing } from "./pricing.js";
 import { openBulkAi } from "./bulkai.js";
@@ -391,11 +391,16 @@ async function renderGallery(view, caps, opts = {}) {
   if (appNav) appNav.style.display = ""; // restore if a prior selection hid it
   view.innerHTML = skeletonGrid();
   await loadRefData(); // category tree + field definitions drive the card summary
-  const { data, error } = await supabase
-    .from("items")
-    .select("id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, categories(name)")
-    .order("created_at", { ascending: false })
-    .limit(GALLERY_LIMIT);
+  // Items + the POS stock mirror load together; the mirror is what turns the
+  // shop chips from "Queued" into live "· N left" counts.
+  const [{ data, error }, posMirror] = await Promise.all([
+    supabase
+      .from("items")
+      .select("id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_dirty, categories(name)")
+      .order("created_at", { ascending: false })
+      .limit(GALLERY_LIMIT),
+    loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
+  ]);
 
   if (error) {
     view.innerHTML = `<div class="empty"><div class="big">⚠️</div>
@@ -432,11 +437,63 @@ async function renderGallery(view, caps, opts = {}) {
   const { data: svData } = await supabase.from("saved_views").select("id, name, payload").order("created_at");
   let savedViews = svData || [];
 
+  // ---- POS shop state (chips + the "Shop" facet) ----
+  // One mutually-exclusive state per item, derived from the sync link columns
+  // plus the live mirror. Used verbatim as the facet value, so chip and filter
+  // can never disagree.
+  const mirrorOf = (it) => (it.pos_variant_id ? posMirror.byVariant.get(it.pos_variant_id) : undefined);
+  function shopState(it) {
+    const s = it.pos_sync_status;
+    if (s === "synced") {
+      if (it.pos_dirty) return "Update pending";
+      const m = mirrorOf(it);
+      if (m && m.is_active === false) return "Retired";
+      if (m && m.stock_quantity <= 0) return "Sold out";
+      if (m && m.reorder_level != null && m.stock_quantity <= m.reorder_level) return "Low stock";
+      return "In shop";
+    }
+    if (s === "error") return "Sync error";
+    if (s === "awaiting_approval" || s === "pending") return "Sending";
+    if (it.status === "approved") return "Queued";
+    return "Not pushed";
+  }
+  // The small ambient chip on every card. Short on the card, full story in the
+  // title (long-press / hover). Items the integration hasn't touched get none.
+  function posChipHtml(it) {
+    const st = shopState(it);
+    if (st === "Not pushed") return "";
+    const m = mirrorOf(it);
+    const left = m ? `${m.stock_quantity} left` : "";
+    const C = {
+      "In shop":        ["ps-in",     m ? `● ${left}` : "● In shop", m ? `In the shop — ${left}` : "In the shop (live count arrives with the next sync)"],
+      "Low stock":      ["ps-low",    `● ${left}`,       `Running low — ${left} (reorder at ${m?.reorder_level})`],
+      "Sold out":       ["ps-out",    "Sold out",        "In the shop but sold out"],
+      "Retired":        ["ps-ret",    "Retired",         "No longer sold in the shop"],
+      "Queued":         ["ps-queued", "◌ Queued",        "Approved — goes to the shop on the next sync"],
+      "Sending":        ["ps-queued", "… Sending",       "Waiting for the POS to accept this item"],
+      "Sync error":     ["ps-err",    "⚠ Error",         `Couldn't reach the shop: ${it.pos_sync_error || "unknown error"}`],
+      "Update pending": ["ps-dirty",  "✎ Edited",        "Edited since it went to the shop — the update hasn't reached the POS yet"],
+    }[st];
+    return `<span class="poschip ${C[0]}" title="${esc(C[2])}">${esc(C[1])}</span>`;
+  }
+  // The freshness line: when the mirror last spoke to the POS. Stale or failing
+  // data is SHOWN as such — never silently presented as live.
+  function freshnessNote() {
+    const lr = posMirror.lastMirror;
+    if (!lr?.finished_at) return "";
+    const t = new Date(lr.finished_at);
+    const hhmm = t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    if (lr.ok === false) return ` · <span class="freshness stale" title="${esc(lr.error || "")}">⚠ shop sync failing (last try ${hhmm})</span>`;
+    const stale = (Date.now() - t.getTime()) / 60000 > 30;
+    return ` · <span class="freshness${stale ? " stale" : ""}">shop data ${stale ? "may be stale — " : ""}as of ${hhmm}</span>`;
+  }
+
   // ---- faceting engine (ported from the old Find tab) ----
   // The value of a given facet key for an item.
   const valueOf = (it, key) => {
     if (key === "brand") return it.brand || "";
     if (key === "status") return it.status || "";
+    if (key === "shop") return shopState(it);
     if (key === "top") return (categoryPath(it.category_id) || "").split(" › ")[0] || "";
     if (key === "category") return (categoryPath(it.category_id) || "").split(" › ").pop() || "";
     const v = it.attributes?.[key];
@@ -451,6 +508,7 @@ async function renderGallery(view, caps, opts = {}) {
     { key: "category", label: "Category" },
     { key: "brand", label: "Brand" },
     { key: "status", label: "Status" },
+    { key: "shop", label: "Shop" },
     ...attrKeys.map((k) => ({ key: k, label: fieldLabel(k) })),
   ]) {
     const values = [...new Set(data.map((it) => valueOf(it, f.key)).filter(Boolean))].sort(facetCmp);
@@ -642,6 +700,7 @@ async function renderGallery(view, caps, opts = {}) {
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
         <div class="cmeta">
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : "<span></span>"}
+          ${posChipHtml(it)}
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
       </div>
@@ -677,6 +736,7 @@ async function renderGallery(view, caps, opts = {}) {
         </div>
         <div class="row-meta">
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : "<span></span>"}
+          ${posChipHtml(it)}
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
       </div>
@@ -700,7 +760,7 @@ async function renderGallery(view, caps, opts = {}) {
 
     // Filters matched nothing → actionable empty state (not a blank grid).
     if (rows.length === 0) {
-      countEl.innerHTML = `${countText(0)}${countNote}`;
+      countEl.innerHTML = `${countText(0)}${countNote}${freshnessNote()}`;
       grid.innerHTML = `<div class="empty"><div class="big">${review ? "✓" : "🔍"}</div>
         <div>${review ? "Nothing needs review right now." : "No items match your search or filters."}</div>
         ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
@@ -715,7 +775,7 @@ async function renderGallery(view, caps, opts = {}) {
     grid.innerHTML = density === "list"
       ? `<div class="scanlist">${rows.map((it) => rowHtml(it, slides)).join("")}</div>`
       : `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
-    countEl.innerHTML = `${countText(rows.length)}${countNote}`;
+    countEl.innerHTML = `${countText(rows.length)}${countNote}${freshnessNote()}`;
     grid._slides = slides;
     fadeInImages(grid);
   }
@@ -862,7 +922,7 @@ async function renderGallery(view, caps, opts = {}) {
   // the grid behind it; the footer shows the live result count.
   function openFilters() {
     const matchCount = () => data.filter((it) => matches(it, null)).length;
-    const PRIMARY = ["category", "brand"]; // shown directly; the rest go under "More"
+    const PRIMARY = ["shop", "category", "brand"]; // shown directly; the rest go under "More"
     const moreFacets = facets.filter((f) => !PRIMARY.includes(f.key));
     const priceLabel = () => (priceMin || priceMax)
       ? `${fmtPrice(priceMin || 0)}–${priceMax ? fmtPrice(priceMax) : "∞"}` : "Any";

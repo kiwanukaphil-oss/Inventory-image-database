@@ -67,6 +67,40 @@ export async function openEditor(itemId, caps, onSaved) {
     cost = data?.cost_price ?? null;
   }
 
+  // Live shop numbers for this item's POS variant (read-only mirror — the POS
+  // owns stock/sold/price after push). Null when not pushed or not mirrored yet.
+  let shopMirror = null;
+  if (item.pos_variant_id) {
+    const { data } = await supabase
+      .from("pos_stock_mirror")
+      .select("stock_quantity, units_sold, units_returned, is_active, mirrored_at")
+      .eq("pos_variant_id", item.pos_variant_id)
+      .maybeSingle();
+    shopMirror = data || null;
+  }
+
+  // One plain-language line about this item's life in the shop. Wording is for
+  // floor staff, not engineers; the gallery chips use the same states.
+  function shopLineHtml() {
+    const s = item.pos_sync_status;
+    const dirtyNote = item.pos_dirty
+      ? ` · <span class="warn">✎ recent edits haven't reached the shop yet</span>` : "";
+    if (s === "synced") {
+      if (!shopMirror) return `<div class="shop-line">● In the shop — live count arrives with the next sync${dirtyNote}</div>`;
+      if (shopMirror.is_active === false) return `<div class="shop-line">Retired — no longer sold in the shop${dirtyNote}</div>`;
+      const sold = (shopMirror.units_sold || 0) - (shopMirror.units_returned || 0);
+      const asOf = shopMirror.mirrored_at
+        ? ` (as of ${new Date(shopMirror.mirrored_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })})` : "";
+      const left = shopMirror.stock_quantity <= 0
+        ? `<span class="warn">sold out</span>` : `${shopMirror.stock_quantity} left`;
+      return `<div class="shop-line">● In the shop · ${left} · ${sold} sold${esc(asOf)}${dirtyNote}</div>`;
+    }
+    if (s === "error") return `<div class="shop-line"><span class="warn">⚠ Couldn't send to the shop</span> — ${esc(item.pos_sync_error || "unknown error")}. It will be retried automatically.</div>`;
+    if (s === "awaiting_approval" || s === "pending") return `<div class="shop-line">… Sending to the shop</div>`;
+    if (item.status === "approved") return `<div class="shop-line">◌ Approved — goes to the shop on the next sync</div>`;
+    return "";
+  }
+
   const [{ data: signed }] = await Promise.all([
     item.image_path
       ? supabase.storage.from("product-images").createSignedUrl(item.image_path, 3600)
@@ -116,8 +150,9 @@ export async function openEditor(itemId, caps, onSaved) {
         ${fields.map((f) => fieldRow(f, item.attributes?.[f.key], conf, canEdit, canEdit)).join("")}
 
         <div class="field-sec">Stock & pricing</div>
-        ${fieldRow({ key: "price", label: "Retail price", type: "number" }, item.price, conf, false, canEdit)}
-        ${fieldRow({ key: "stock_quantity", label: "Stock qty", type: "number" }, item.stock_quantity, conf, false, canEdit)}
+        ${shopLineHtml()}
+        ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
+        ${fieldRow({ key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Initial stock (live stock lives in the POS)" : "Stock qty", type: "number" }, item.stock_quantity, conf, false, canEdit)}
         ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false, canEdit)}
         ${
           canViewCost

@@ -397,6 +397,19 @@ a { color:var(--accent); }
 .stbadge.st-flag { color:var(--flag-txt); border-color:var(--flag-border); }
 .stbadge.st-review { color:var(--review-txt); border-color:var(--review-border); }
 .stbadge.st-draft { color:var(--muted); }
+/* POS shop chip — the ambient "is it in the shop / how many left?" state on
+   every card. One chip, one state; long-press/hover title tells the full story. */
+.poschip { font-size:11px; white-space:nowrap; color:var(--muted); }
+.poschip.ps-in { color:var(--ok-txt); }
+.poschip.ps-low { color:var(--warn); font-weight:600; }
+.poschip.ps-out { color:var(--flag-txt); font-weight:600; }
+.poschip.ps-ret { color:var(--muted); text-decoration:line-through; }
+.poschip.ps-err { color:var(--flag-txt); }
+.poschip.ps-dirty { color:var(--review-txt); }
+/* Freshness of the mirrored shop data, appended to the result-count line.
+   Stale/failing is shown in amber — stale data must never look live. */
+.freshness { white-space:nowrap; }
+.freshness.stale { color:var(--warn); }
 .card .cbrand { font-weight:600; line-height:1.25; }
 .card .cattr { font-size:13px; color:var(--txt); }
 .card .cstyle { font-size:12px; color:var(--muted); }
@@ -434,6 +447,9 @@ a { color:var(--accent); }
 
 .readonly-val { color:var(--txt); font-size:14px; }
 .added-line { margin-top:6px; font-size:12px; color:var(--muted); }
+/* Editor's plain-language "life in the shop" line (read-only POS mirror). */
+.shop-line { margin:2px 0 8px; font-size:13px; color:var(--ok-txt); }
+.shop-line .warn { color:var(--warn); font-weight:600; }
 
 /* ---------------- premium gallery toolbar ---------------- */
 .galtop { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }

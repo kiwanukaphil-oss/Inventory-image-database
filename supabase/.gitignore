@@ -1,0 +1,8 @@
+# Supabase CLI scratch — never commit
+.branches
+.temp
+
+# Local env / secrets
+.env
+.env.local
+.env.*.local
