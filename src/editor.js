@@ -431,9 +431,15 @@ export async function openEditor(itemId, caps, onSaved) {
   if (deleteBtn) {
     deleteBtn.onclick = async () => {
       if (!navigator.onLine) { toast("You're offline — reconnect to delete."); return; }
+      // Deletion rule for pushed items: the POS product is NEVER deleted from
+      // here — it may carry sales history. Deleting only removes the catalog
+      // photo/record (one unit of evidence) and drops this card's link.
+      const inShop = !!item.pos_product_id;
       const ok = await confirmSheet({
-        title: "Delete item?",
-        message: "This item and its photo will be permanently deleted. This cannot be undone.",
+        title: inShop ? "Delete item that's in the shop?" : "Delete item?",
+        message: inShop
+          ? "This photo and catalog record will be permanently deleted, but the product STAYS in the POS (it may have sales history) — its stock there is not changed. If a unit physically left, adjust stock in the POS too."
+          : "This item and its photo will be permanently deleted. This cannot be undone.",
         confirmText: "Delete",
         danger: true,
       });

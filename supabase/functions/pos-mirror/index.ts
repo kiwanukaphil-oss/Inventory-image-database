@@ -74,20 +74,22 @@ async function posGet(baseUrl: string, token: string, path: string) {
 /**
  * Sum a movement type's quantity_change per variant by paging the full POS
  * ledger. A full scan every run is deliberate at this scale (self-healing, no
- * cursor state to corrupt); the Phase 3 delta endpoint replaces it when the
- * ledger grows.
+ * cursor state to corrupt); a delta endpoint replaces it when the ledger grows.
+ * `since` (ISO) narrows the scan via the endpoint's date_from filter — used for
+ * the today / trailing-7-day windows the Shop tab reports on.
  */
-async function sumMovements(baseUrl: string, token: string, movementType: string) {
+async function sumMovements(baseUrl: string, token: string, movementType: string, since?: string) {
   const PAGE = 500;
   const MAX_PAGES = 400; // hard stop ≈ 200k movements, far beyond current scale
   const totals = new Map(); // variant_id -> summed |quantity_change|
   let offset = 0;
   let scanned = 0;
+  const dateArg = since ? `&date_from=${encodeURIComponent(since)}` : "";
   for (let page = 0; page < MAX_PAGES; page++) {
     const body = await posGet(
       baseUrl,
       token,
-      `/inventory/movements?movement_type=${movementType}&limit=${PAGE}&offset=${offset}`
+      `/inventory/movements?movement_type=${movementType}&limit=${PAGE}&offset=${offset}${dateArg}`
     );
     const rows = body.data || [];
     for (const m of rows) {
@@ -100,6 +102,15 @@ async function sumMovements(baseUrl: string, token: string, movementType: string
     if (rows.length < PAGE || offset >= total) break;
   }
   return { totals, scanned };
+}
+
+// Midnight today in the shop's timezone. Kampala is fixed UTC+3 (no DST), so a
+// constant offset is exact; override via SHOP_UTC_OFFSET if the shop ever moves.
+function shopMidnightIso() {
+  const offset = Deno.env.get("SHOP_UTC_OFFSET") || "+03:00";
+  const tz = Deno.env.get("SHOP_TZ") || "Africa/Kampala";
+  const ymd = new Date().toLocaleDateString("en-CA", { timeZone: tz }); // YYYY-MM-DD
+  return new Date(`${ymd}T00:00:00${offset}`).toISOString();
 }
 
 Deno.serve(async (req) => {
@@ -149,9 +160,15 @@ Deno.serve(async (req) => {
     const variantsBody = await posGet(POS_BASE_URL, token, "/products/variants");
     const variants = variantsBody.data || [];
 
-    // 2. Lifetime sold/returned per variant from the movements ledger.
-    const sales = await sumMovements(POS_BASE_URL, token, "sale");
-    const returns = await sumMovements(POS_BASE_URL, token, "return");
+    // 2. Sold/returned per variant from the movements ledger: lifetime, plus
+    //    the today / trailing-7-day windows the Shop tab reports on.
+    const since7d = new Date(Date.now() - 7 * 86400_000).toISOString();
+    const [sales, returns, salesToday, sales7d] = [
+      await sumMovements(POS_BASE_URL, token, "sale"),
+      await sumMovements(POS_BASE_URL, token, "return"),
+      await sumMovements(POS_BASE_URL, token, "sale", shopMidnightIso()),
+      await sumMovements(POS_BASE_URL, token, "sale", since7d),
+    ];
 
     // 3. Upsert the mirror.
     const nowIso = new Date().toISOString();
@@ -165,6 +182,8 @@ Deno.serve(async (req) => {
       reorder_level: v.reorder_level ?? null,
       units_sold: sales.totals.get(v.id) || 0,
       units_returned: returns.totals.get(v.id) || 0,
+      units_sold_today: salesToday.totals.get(v.id) || 0,
+      units_sold_7d: sales7d.totals.get(v.id) || 0,
       is_active: v.is_active !== false,
       mirrored_at: nowIso,
     }));

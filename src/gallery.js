@@ -8,6 +8,8 @@ import { openPricing } from "./pricing.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
+import { renderShop } from "./shop.js";
+import { openSyncCenter } from "./synccenter.js";
 import { openCategoryManager } from "./categories_admin.js";
 import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
@@ -69,11 +71,13 @@ function summarizeItemRich(it) {
 
 // `ico` is a key into the shared ICON set (ui.js). Keeps one consistent
 // line-icon vocabulary.
+// Export moved into the ⋮ menu (admin-ish, rarely daily) to make room for
+// Shop — the floor-facing reports surface (Phase 3 of the POS integration).
 const NAV = [
   { id: "gallery", label: "Gallery", ico: "navGallery" },
   { id: "add", label: "Add", ico: "navAdd" },
   { id: "review", label: "Review", ico: "navReview", badge: true },
-  { id: "export", label: "Export", ico: "navExport" },
+  { id: "shop", label: "Shop", ico: "navShop" },
 ];
 
 // Update the Review tab's count badge (needs-review + low-confidence items).
@@ -122,6 +126,7 @@ export function renderApp(mount, profile, onSignOut) {
   ).join("");
 
   let currentViewId = "gallery";
+  const refreshCurrent = () => setView(currentViewId);
   function setView(id) {
     currentViewId = id;
     window.scrollTo(0, 0);
@@ -135,7 +140,8 @@ export function renderApp(mount, profile, onSignOut) {
         nav.querySelector('button[data-view="add"]').classList.remove("active");
         renderGallery(view, caps);
       });
-    else if (id === "export") renderExport(view, caps);
+    else if (id === "export") renderExport(view, caps); // routed from the ⋮ menu
+    else if (id === "shop") renderShop(view, caps, refreshCurrent);
     else if (id === "review") renderReview(view, caps);
     else renderComingSoon(view, id);
   }
@@ -165,6 +171,7 @@ export function renderApp(mount, profile, onSignOut) {
     const admin = caps.can_manage_users
       ? `<button class="menu-item" data-m="users">Users & permissions</button>
          <button class="menu-item" data-m="cats">Categories & fields</button>
+         <button class="menu-item" data-m="sync">Shop sync</button>
          <button class="menu-item" data-m="settings">Settings</button>`
       : "";
     const install = installAvailable() ? `<button class="menu-item" data-m="install">Install app</button>` : "";
@@ -177,6 +184,7 @@ export function renderApp(mount, profile, onSignOut) {
        ${admin}
        ${pricing}
        ${calib}
+       <button class="menu-item" data-m="export">Export CSV</button>
        <button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
        ${install}
        <button class="menu-item danger" data-m="signout">Sign out</button>`);
@@ -188,6 +196,8 @@ export function renderApp(mount, profile, onSignOut) {
       sh.close();
       if (b.dataset.m === "users") openUsers(caps);
       else if (b.dataset.m === "cats") openCategoryManager(caps);
+      else if (b.dataset.m === "sync") openSyncCenter(caps, refreshCurrent);
+      else if (b.dataset.m === "export") setView("export");
       else if (b.dataset.m === "settings") openSettings();
       else if (b.dataset.m === "pricing") openPricing(caps, () => setView(currentViewId));
       else if (b.dataset.m === "calib") openCalibration(caps, () => setView(currentViewId));
@@ -1355,9 +1365,14 @@ async function renderGallery(view, caps, opts = {}) {
         if (e.target.closest("[data-clearsel]")) { sh.close(); clearSel(); return; }
         if (e.target.closest("[data-del]")) {
           const ids = [...selected];
+          // Deletion rule: pushed items' POS products are never deleted from
+          // here (sales history) — only the catalog records/photos go.
+          const inShop = ids.filter((id) => byId[id]?.pos_sync_status === "synced").length;
           const ok = await confirmSheet({
             title: `Delete ${ids.length} item${ids.length === 1 ? "" : "s"}?`,
-            message: "The selected items and their photos will be permanently deleted. This cannot be undone.",
+            message: inShop
+              ? `The selected items and their photos will be permanently deleted. ${inShop} of them ${inShop === 1 ? "is" : "are"} in the shop — the POS products and their stock are NOT touched; adjust stock in the POS if units physically left.`
+              : "The selected items and their photos will be permanently deleted. This cannot be undone.",
             confirmText: "Delete",
             danger: true,
           });

@@ -49,9 +49,11 @@ export function getSetting(key, def = "") {
  */
 export async function loadPosMirror() {
   const [mirror, run] = await Promise.all([
+    // select(*) so the call survives column additions that the deployed app
+    // predates (e.g. the 0019 window columns) — callers default missing keys.
     supabase
       .from("pos_stock_mirror")
-      .select("pos_variant_id, pos_sku, stock_quantity, reorder_level, units_sold, units_returned, price, is_active, mirrored_at"),
+      .select("*"),
     supabase
       .from("pos_sync_runs")
       .select("finished_at, ok, error")

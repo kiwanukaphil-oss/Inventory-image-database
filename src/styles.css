@@ -451,6 +451,40 @@ a { color:var(--accent); }
 .shop-line { margin:2px 0 8px; font-size:13px; color:var(--ok-txt); }
 .shop-line .warn { color:var(--warn); font-weight:600; }
 
+/* ---------------- Shop tab (floor reports over the POS mirror) ---------------- */
+.shop-wrap { display:flex; flex-direction:column; gap:10px; padding-bottom:8px; }
+.shop-asof { font-size:12px; color:var(--muted); }
+.shop-asof.stale { color:var(--warn); }
+.shop-card { border:1px solid var(--line); border-radius:12px; padding:10px 12px; background:var(--card, transparent); }
+.shop-head { display:flex; justify-content:space-between; align-items:baseline; font-weight:650; }
+.shop-count { color:var(--muted); font-weight:400; font-size:12px; }
+.shop-subhead { font-size:12px; color:var(--muted); margin:2px 0 6px; }
+.shop-bignums { display:flex; gap:8px; margin-top:8px; }
+.shop-bignum { flex:1; text-align:center; padding:8px 4px; border:1px solid var(--line); border-radius:10px; }
+.shop-bignum .n { font-size:24px; font-weight:700; line-height:1.1; }
+.shop-bignum .l { font-size:11px; color:var(--muted); }
+.shop-row { display:flex; align-items:center; gap:10px; padding:7px 0; border-top:1px solid var(--line); cursor:pointer; }
+.shop-row.norep { cursor:default; }
+.shop-card .shop-row:first-of-type { border-top:none; }
+.shop-thumb { width:42px; height:42px; border-radius:8px; overflow:hidden; flex:0 0 auto;
+  display:flex; align-items:center; justify-content:center; border:1px solid var(--line); }
+.shop-thumb img { width:100%; height:100%; object-fit:cover; }
+.shop-main { flex:1; min-width:0; }
+.shop-name { font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.shop-sub { font-size:11.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.shop-metric { font-size:13px; color:var(--txt); white-space:nowrap; }
+.shop-metric b { font-size:15px; }
+.shop-empty { padding:10px 0 4px; color:var(--muted); font-size:13px; }
+.shop-pipeline { display:flex; flex-direction:column; gap:4px; margin-top:6px; font-size:13px; }
+.shop-pipeline .warn { color:var(--warn); }
+
+/* ---------------- Sync Center (⋮ → Shop sync) ---------------- */
+.sync-row { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--line); font-size:14px; }
+.sync-val { color:var(--ok-txt); font-size:13px; }
+.sync-val.warn { color:var(--warn); font-weight:600; }
+.sync-val.muted { color:var(--muted); }
+.sync-problem { padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; line-height:1.35; }
+
 /* ---------------- premium gallery toolbar ---------------- */
 .galtop { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
 .ghdr { display:flex; align-items:center; gap:8px; }
