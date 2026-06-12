@@ -5,6 +5,7 @@ import { renderUpload } from "./upload.js";
 import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, vocabSuggestions, AI_BLIND_FIELDS, loadPosMirror } from "./data.js";
 import { openCalibration } from "./calibration.js";
 import { openPricing } from "./pricing.js";
+import { openGuidedPricing } from "./pricing_guided.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -199,7 +200,10 @@ export function renderApp(mount, profile, onSignOut) {
       else if (b.dataset.m === "sync") openSyncCenter(caps, refreshCurrent);
       else if (b.dataset.m === "export") setView("export");
       else if (b.dataset.m === "settings") openSettings();
-      else if (b.dataset.m === "pricing") openPricing(caps, () => setView(currentViewId));
+      // Menu entry opens the guided sentence-builder (the accessible default);
+      // its Advanced door reaches the pivot tool. A gallery SELECTION still
+      // opens the pivot directly — those items are already hand-picked.
+      else if (b.dataset.m === "pricing") openGuidedPricing(caps, () => setView(currentViewId));
       else if (b.dataset.m === "calib") openCalibration(caps, () => setView(currentViewId));
       else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
     });

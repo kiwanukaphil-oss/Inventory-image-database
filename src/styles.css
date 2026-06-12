@@ -524,6 +524,61 @@ body { overflow:hidden; overscroll-behavior:none; }
 .sheet-body, .msheet-body, .screen-body, .calib-body, #usersBody,
 .bulkai-log, .pg-vallist, .facet .chips { overscroll-behavior:contain; }
 
+/* ---------------- guided pricing (the sentence-builder) ---------------- */
+.pgd-lead { font-size:14.5px; line-height:1.45; margin-bottom:12px; }
+.pgd-crumb { font-size:12px; color:var(--muted); margin:4px 0 8px; }
+.pgd-noderow { display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  padding:9px 10px; margin-bottom:8px; border:1px solid var(--line); border-radius:12px;
+  background:var(--control); color:var(--txt); }
+.pgd-noderow.pgd-all { border-color:var(--accent); color:var(--accent); font-weight:600; }
+.pgd-nodethumb { width:38px; height:38px; border-radius:8px; overflow:hidden; flex:0 0 auto;
+  background:var(--thumb-bg); display:flex; align-items:center; justify-content:center; }
+.pgd-nodethumb img { width:100%; height:100%; object-fit:cover; }
+.pgd-nodename { flex:1; min-width:0; font-size:14.5px; font-weight:550;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pgd-nodecount { color:var(--muted); font-size:12.5px; }
+.pgd-chev { color:var(--muted); font-size:18px; }
+.pgd-pile { margin-bottom:12px; }
+.pgd-pilehead { font-size:12.5px; color:var(--muted); margin-bottom:6px; }
+.pgd-strip { display:flex; gap:6px; overflow-x:auto; padding-bottom:4px; }
+.pgd-stripthumb { width:46px; height:46px; border-radius:8px; overflow:hidden; flex:0 0 auto;
+  border:1px solid var(--line); display:flex; align-items:center; justify-content:center; }
+.pgd-stripthumb img { width:100%; height:100%; object-fit:cover; }
+.pgd-baseinput input { font-size:18px; }
+.pgd-hint { font-size:12.5px; margin-top:8px; line-height:1.4; }
+.pgd-keep { margin-top:12px; }
+.pgd-sentence { padding:7px 14px; font-size:12.5px; color:var(--accent-soft-txt);
+  border-bottom:1px solid var(--line); background:var(--panel);
+  white-space:nowrap; overflow-x:auto; }
+.pgd-exrow { display:flex; align-items:center; gap:8px; padding:9px 10px; margin-bottom:8px;
+  border:1px solid var(--line); border-radius:12px; }
+.pgd-extext { flex:1; min-width:0; font-size:14px; }
+.pgd-excount { display:block; font-size:11.5px; color:var(--muted); margin-top:2px; }
+.pgd-exbtns { display:flex; gap:4px; }
+.pgd-exmove, .pgd-exdel { border:1px solid var(--line); background:var(--control); color:var(--txt);
+  border-radius:8px; width:30px; height:30px; padding:0; }
+.pgd-exdel { color:var(--flag-txt); }
+.pgd-addex { width:100%; margin-top:4px; }
+.pgd-bandrow { display:flex; align-items:center; gap:10px; margin:10px 0 4px; }
+.pgd-bandrow .pg-thresh { width:90px; }
+.pgd-bucket { margin-bottom:14px; }
+.pgd-buckethead { display:flex; justify-content:space-between; align-items:baseline;
+  font-size:14px; margin-bottom:6px; }
+.pgd-buckethead span { color:var(--muted); font-size:12px; }
+.pgd-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(86px, 1fr)); gap:8px; }
+.pgd-cell { position:relative; border-radius:10px; overflow:hidden; border:1px solid var(--line);
+  aspect-ratio:3/4; background:var(--thumb-bg); }
+.pgd-cellimg, .pgd-cellimg img { width:100%; height:100%; object-fit:cover; }
+.pgd-tag { position:absolute; left:0; right:0; bottom:0; padding:3px 6px;
+  background:color-mix(in srgb, var(--panel) 82%, transparent);
+  backdrop-filter:blur(3px); font-size:11px; font-weight:700; text-align:center; }
+.pgd-was { position:absolute; top:4px; right:4px; padding:1px 5px; border-radius:8px;
+  background:var(--scrim); color:#fff; font-size:9.5px; text-decoration:line-through; }
+.pgd-foot { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.pgd-dots { display:flex; gap:5px; }
+.pgd-dot { width:6px; height:6px; border-radius:50%; background:var(--line); }
+.pgd-dot.on { background:var(--accent); }
+
 /* ---------------- premium gallery toolbar ---------------- */
 .galtop { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
 .ghdr { display:flex; align-items:center; gap:8px; }
