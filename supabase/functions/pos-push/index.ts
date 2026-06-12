@@ -435,7 +435,10 @@ Deno.serve(async (req) => {
 
         // Receipt — idempotent by reference_id (Phase 4): if this item's
         // receipt already landed in a previous half-failed run, don't re-book.
-        const qty = item.stock_quantity ?? 0;
+        // One photo = one unit: a BLANK quantity means 1 (legacy rows predate
+        // the upload default; blank once meant "no receipt" and items landed
+        // in the POS with 0 stock). An explicit 0 still means catalog-only.
+        const qty = item.stock_quantity ?? 1;
         let pendingApproval = false;
         if (qty > 0 && posVariantId) {
           if (await pos.hasMovementWithReference(posVariantId, item.id)) {

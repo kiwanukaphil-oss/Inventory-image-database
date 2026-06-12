@@ -540,7 +540,10 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost) {
     name: sheet.querySelector('[data-key="name"]').value.trim() || null,
     brand,
     price: num("price"),
-    stock_quantity: num("stock_quantity"),
+    // One photo = one unit: a blanked field means the default (1), never
+    // "unknown" — blank rows once pushed with no stock receipt at all.
+    // "No stock on purpose" is an explicit 0.
+    stock_quantity: num("stock_quantity") ?? 1,
     reorder_level: num("reorder_level"),
     status,
     attributes,
