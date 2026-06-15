@@ -1166,10 +1166,37 @@ async function renderGallery(view, caps, opts = {}) {
           : `<span class="fs-check-box${on ? " on" : ""}">${on ? "✓" : ""}</span><span class="fs-opt-label">${esc(label)}</span><span class="fs-opt-n">${n}</span>`
       }</button>`;
 
+    const smartViews = [
+      { id: "today", label: "Uploaded today" },
+      { id: "ai", label: ISSUE_META.ai.label },
+      { id: "price", label: ISSUE_META.price.label },
+      { id: "doubt", label: ISSUE_META.doubt.label },
+      { id: "sync", label: ISSUE_META.sync.label },
+      { id: "ready", label: ISSUE_META.ready.label },
+    ];
+
+    function resetSmartBase() {
+      q = ""; if (qEl) qEl.value = "";
+      for (const k in active) delete active[k];
+      priceMin = ""; priceMax = ""; noPrice = false; datePreset = "all"; itemIds = new Set();
+      if (!review) needsReview = false;
+    }
+
+    function applySmartView(id) {
+      resetSmartBase();
+      if (review && REVIEW_QUEUE.includes(id)) { issue = id; seg = id === "ready" ? "ready" : "work"; }
+      else if (id === "today") datePreset = "today";
+      else if (id === "price") noPrice = true;
+      else if (!review && ISSUE_META[id]) active.issue = new Set([ISSUE_META[id].label]);
+      apply(); showMaster();
+    }
+
     // ---- MASTER list ----
     function showMaster() {
       currentBack = null; backBtn.hidden = true; titleEl.textContent = "Filters & sort";
-      let html = `<div class="fs-list">${rowLink("sort", "Sort", SORTS.find((s) => s.v === sortBy)?.label || "Newest")}</div>`;
+      let html = `<div class="sheet-sec">Smart views</div><div class="fs-list">${smartViews.map((v) =>
+        `<button class="fs-opt" data-smart="${esc(v.id)}"><span class="fs-opt-label">${esc(v.label)}</span></button>`).join("")}</div>`;
+      html += `<div class="fs-list">${rowLink("sort", "Sort", SORTS.find((s) => s.v === sortBy)?.label || "Newest")}</div>`;
       html += `<div class="fs-list">`;
       for (const k of PRIMARY) if (facetByKey[k]) html += rowLink("facet:" + k, facetByKey[k].label, facetSummary(facetByKey[k]));
       html += rowLink("price", "Price", priceLabel());
@@ -1257,6 +1284,8 @@ async function renderGallery(view, caps, opts = {}) {
     // ---- one delegated click handler for the whole sheet body ----
     bodyEl.addEventListener("click", async (e) => {
       const nav = e.target.closest("[data-go]");
+      const smart = e.target.closest("[data-smart]");
+      if (smart) { applySmartView(smart.dataset.smart); return; }
       if (nav) {
         const id = nav.dataset.go;
         if (id === "sort") go(showSort, showMaster);
