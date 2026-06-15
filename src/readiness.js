@@ -1,4 +1,5 @@
 import { AI_BLIND_FIELDS, resolveFields } from "./data.js";
+import { jobErrorHelp } from "./joblog.js";
 
 export const STATUS_LABELS = {
   draft: "New",
@@ -101,7 +102,7 @@ export function getItemReadiness(it, { forApproval = false } = {}) {
 
   if (it.latest_ai_job?.status === "failed") {
     const detail = it.latest_ai_job.error_category
-      ? `${it.latest_ai_job.error_category}: ${it.latest_ai_job.error_message || "Retry AI fill."}`
+      ? `${it.latest_ai_job.error_category}. ${jobErrorHelp(it.latest_ai_job.error_category)}`
       : (it.latest_ai_job.error_message || "AI fill failed. Retry when ready.");
     blockers.push(makeIssue("ai", ISSUE_META.ai.label, detail));
   }

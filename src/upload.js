@@ -9,6 +9,7 @@ import { toast, trapFocus, ICON } from "./ui.js";
 // in parallel with a progress bar, Stop, and retry of any failures.
 
 const CONCURRENCY = 5; // parallel uploads
+const UPLOAD_DEFAULTS_KEY = "kline.upload.defaults.v2";
 
 // crypto.randomUUID() only exists in secure contexts (HTTPS/localhost), so it's
 // missing when testing on a phone over the plain-http LAN URL. Fall back to a
@@ -28,6 +29,27 @@ function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
+}
+
+function loadUploadDefaults() {
+  try { return JSON.parse(localStorage.getItem(UPLOAD_DEFAULTS_KEY) || "null") || {}; }
+  catch { return {}; }
+}
+
+function saveUploadDefaults(common) {
+  try {
+    localStorage.setItem(UPLOAD_DEFAULTS_KEY, JSON.stringify({
+      categoryId: common.categoryId,
+      status: common.status,
+      brand: common.brand || "",
+      attributes: common.attributes || {},
+      ai: !!common.ai,
+    }));
+  } catch {}
+}
+
+function clearUploadDefaults() {
+  try { localStorage.removeItem(UPLOAD_DEFAULTS_KEY); } catch {}
 }
 
 // Run the vision extractor on a freshly-uploaded item and fill any fields that
@@ -93,6 +115,8 @@ export async function renderUpload(view, caps, onDone) {
   const canEdit = !!caps.can_edit; // AI extraction requires editor/admin
   const cache = await loadRefData();
   const leaves = leafCategories(cache);
+  let uploadDefaults = loadUploadDefaults();
+  if (!leaves.some((l) => l.id === uploadDefaults.categoryId)) uploadDefaults = {};
   const entries = []; // { key, file, url }
   const seen = new Set(); // dedupe key set
   let stopFlag = false;
@@ -125,7 +149,7 @@ export async function renderUpload(view, caps, onDone) {
             <label for="catSel">Category</label>
             <div class="fctl">
               <select id="catSel"><option value="">Choose…</option>
-                ${leaves.map((l) => `<option value="${l.id}">${esc(l.path)}</option>`).join("")}
+                ${leaves.map((l) => `<option value="${l.id}"${uploadDefaults.categoryId === l.id ? " selected" : ""}>${esc(l.path)}</option>`).join("")}
               </select>
             </div>
           </div>
@@ -133,10 +157,14 @@ export async function renderUpload(view, caps, onDone) {
           <div class="frow">
             <label for="statusSel">Status</label>
             <div class="fctl">
-              <select id="statusSel"><option value="draft" selected>draft</option><option value="needs-review">needs-review</option></select>
+              <select id="statusSel"><option value="draft"${uploadDefaults.status !== "needs-review" ? " selected" : ""}>draft</option><option value="needs-review"${uploadDefaults.status === "needs-review" ? " selected" : ""}>needs-review</option></select>
             </div>
           </div>
-          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost)</span></label>` : ""}
+          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"${uploadDefaults.ai ? " checked" : ""}> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost)</span></label>` : ""}
+          <div class="up-defaults" id="upDefaults" ${uploadDefaults.categoryId ? "" : "hidden"}>
+            <span>Using last batch defaults.</span>
+            <button type="button" class="linkbtn" id="clearDefaults">Clear</button>
+          </div>
           <button class="primary up-go" id="uploadBtn" disabled>Upload</button>
           <div class="up-hint muted" id="upHint"></div>
         </div>
@@ -170,6 +198,13 @@ export async function renderUpload(view, caps, onDone) {
   const catSel = $("#catSel");
   const commonFields = $("#commonFields");
   const uploadBtn = $("#uploadBtn");
+  const defaultsEl = $("#upDefaults");
+  $("#clearDefaults")?.addEventListener("click", () => {
+    clearUploadDefaults();
+    uploadDefaults = {};
+    if (defaultsEl) defaultsEl.hidden = true;
+    toast("Upload defaults cleared");
+  });
 
   function setMode(m) {
     pickRow.hidden = m !== "compose";
@@ -296,6 +331,21 @@ export async function renderUpload(view, caps, onDone) {
       }).join("");
     refreshEnabled();
   });
+  function applyUploadDefaultsToFields() {
+    if (!uploadDefaults.categoryId || catSel.value !== uploadDefaults.categoryId) return;
+    const fieldByKey = (key) => [...commonFields.querySelectorAll("[data-ck]")]
+      .find((el) => el.dataset.ck === key);
+    const brandEl = fieldByKey("brand");
+    if (brandEl && uploadDefaults.brand) brandEl.value = uploadDefaults.brand;
+    for (const [key, value] of Object.entries(uploadDefaults.attributes || {})) {
+      const el = fieldByKey(key);
+      if (el && value !== null && value !== undefined) el.value = value;
+    }
+  }
+  if (uploadDefaults.categoryId) {
+    catSel.dispatchEvent(new Event("change"));
+    applyUploadDefaultsToFields();
+  }
 
   function refreshEnabled() {
     uploadBtn.disabled = !(entries.length && catSel.value);
@@ -367,6 +417,9 @@ export async function renderUpload(view, caps, onDone) {
     const common = gatherCommon();
     if (!common) { toast("Choose a category first."); return; }
     if (!navigator.onLine) { toast("You're offline — connect to upload. The batch is kept; tap Upload again when you're back online."); return; }
+    saveUploadDefaults(common);
+    uploadDefaults = loadUploadDefaults();
+    if (defaultsEl) defaultsEl.hidden = false;
     stopFlag = false;
     stopBtn.disabled = false;
     stopBtn.textContent = "Stop";
@@ -461,7 +514,7 @@ export async function renderUpload(view, caps, onDone) {
         entries.forEach((e) => URL.revokeObjectURL(e.url));
         onDone?.({
           view: b.dataset.d === "batch" || b.dataset.d === "ai" ? "review" : "gallery",
-          itemIds: uploadedIds,
+          itemIds: b.dataset.d === "ai" ? aiFailedIds : uploadedIds,
           issue: b.dataset.d === "ai" ? "ai" : undefined,
         });
       }

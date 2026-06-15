@@ -27,6 +27,7 @@ import { renderShop } from "./shop.js";
 import { openSyncCenter } from "./synccenter.js";
 import { openCategoryManager } from "./categories_admin.js";
 import { loadLatestFailedJobs } from "./joblog.js";
+import { openConsistencyAudit } from "./consistency.js";
 import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
@@ -143,6 +144,14 @@ export function renderApp(mount, profile, onSignOut) {
 
   let currentViewId = "gallery";
   const refreshCurrent = () => setView(currentViewId);
+  function openReviewQueue(issueKey = "work", ids = []) {
+    const next = REVIEW_QUEUE.includes(issueKey) ? issueKey : "work";
+    browseState.review.itemIds = Array.isArray(ids) ? ids : [];
+    browseState.review.issue = next;
+    browseState.review.seg = next === "ready" ? "ready" : "work";
+    setView("review");
+  }
+
   function setView(id) {
     currentViewId = id;
     view.scrollTo(0, 0); // .content is the app's only scroller (app-shell layout)
@@ -153,10 +162,7 @@ export function renderApp(mount, profile, onSignOut) {
     else if (id === "add")
       renderUpload(view, caps, (result = {}) => {
         if (result.view === "review" && result.itemIds?.length) {
-          browseState.review.itemIds = result.itemIds;
-          browseState.review.issue = REVIEW_QUEUE.includes(result.issue) ? result.issue : "work";
-          browseState.review.seg = browseState.review.issue === "ready" ? "ready" : "work";
-          setView("review");
+          openReviewQueue(result.issue, result.itemIds);
         } else {
           browseState.gallery.itemIds = [];
           setView("gallery");
@@ -188,21 +194,62 @@ export function renderApp(mount, profile, onSignOut) {
     };
   }
 
+  function openQuickActions() {
+    const actions = [
+      { id: "add", label: "Add photos", sub: "Capture or upload a new batch", icon: ICON.navAdd, show: !!caps.can_upload },
+      { id: "review-work", label: "Review needs work", sub: "Open all blocked items", icon: ICON.navReview, show: true },
+      { id: "review-ai", label: "Needs AI", sub: "Find photos that need AI fill or retry", icon: ICON.sparkle, show: true },
+      { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
+      { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
+      { id: "pricing", label: "Set prices", sub: "Open guided pricing", icon: ICON.pencil, show: !!caps.can_edit },
+      { id: "audit", label: "AI consistency audit", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
+      { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
+      { id: "shop", label: "Shop dashboard", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
+      { id: "export", label: "Export CSV", sub: "Download catalog data", icon: ICON.navExport, show: true },
+    ].filter((a) => a.show);
+    const sh = openBottomSheet("Quick actions", `
+      <div class="cmd-list">
+        ${actions.map((a) => `<button class="menu-item cmd-row" data-cmd="${esc(a.id)}">
+          <span class="cmd-ico">${a.icon || ""}</span>
+          <span class="cmd-copy"><b>${esc(a.label)}</b><span>${esc(a.sub)}</span></span>
+        </button>`).join("")}
+      </div>
+      <div class="menu-sub">Tip: Ctrl or Cmd K opens this sheet.</div>`);
+    sh.body.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-cmd]");
+      if (!b) return;
+      sh.close();
+      const cmd = b.dataset.cmd;
+      if (cmd === "add") setView("add");
+      else if (cmd === "review-work") openReviewQueue("work");
+      else if (cmd === "review-ai") openReviewQueue("ai");
+      else if (cmd === "review-price") openReviewQueue("price");
+      else if (cmd === "review-ready") openReviewQueue("ready");
+      else if (cmd === "pricing") openGuidedPricing(caps, refreshCurrent);
+      else if (cmd === "audit") openConsistencyAudit(caps, openReviewQueue);
+      else if (cmd === "sync") openSyncCenter(caps, refreshCurrent);
+      else if (cmd === "shop") setView("shop");
+      else if (cmd === "export") setView("export");
+    });
+  }
+
   // Account / admin menu (⋮) — keeps the top bar clean; Sign out lives at the bottom.
   mount.querySelector("#menuBtn").onclick = () => {
     const install = installAvailable() ? `<button class="menu-item" data-m="install">Install app</button>` : "";
     // Calibration is a reviewer task (validates AI confidence), so it's offered
     // to anyone who can edit, not just user-managers.
+    const quick = `<button class="menu-item" data-m="quick">Quick actions</button>`;
     const calib = caps.can_edit ? `<button class="menu-item" data-m="calib">Calibration check</button>` : "";
     const pricing = caps.can_edit ? `<button class="menu-item" data-m="pricing">Set prices</button>` : "";
-    const workTools = [pricing, calib, `<button class="menu-item" data-m="export">Export CSV</button>`].filter(Boolean).join("");
+    const audit = caps.can_edit ? `<button class="menu-item" data-m="audit">AI consistency audit</button>` : "";
+    const workTools = [quick, pricing, calib, audit, `<button class="menu-item" data-m="export">Export CSV</button>`].filter(Boolean).join("");
     const shopTools = caps.can_manage_users ? `<button class="menu-item" data-m="sync">Shop sync</button>` : "";
     const adminTools = caps.can_manage_users
       ? `<button class="menu-item" data-m="users">Users & permissions</button>
-         <button class="menu-item" data-m="cats">Categories & fields</button>
-         <button class="menu-item" data-m="settings">Catalog settings</button>`
+         <button class="menu-item" data-m="cats">Categories & fields</button>`
       : "";
-    const appTools = `<button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>${install}`;
+    const currency = caps.can_manage_users ? `<button class="menu-item" data-m="settings">Currency</button>` : "";
+    const appTools = `${currency}<button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>${install}`;
     const sh = openBottomSheet(caps.email || "Account",
       `<div class="menu-sub">Signed in as ${esc(role)}</div>
        ${workTools ? `<div class="sheet-sec">Work tools</div>${workTools}` : ""}
@@ -217,7 +264,8 @@ export function renderApp(mount, profile, onSignOut) {
       if (b.dataset.m === "install") { sh.close(); installApp(); return; }
       if (b.dataset.m === "theme") { sh.close(); openAppearance(); return; }
       sh.close();
-      if (b.dataset.m === "users") openUsers(caps);
+      if (b.dataset.m === "quick") openQuickActions();
+      else if (b.dataset.m === "users") openUsers(caps);
       else if (b.dataset.m === "cats") openCategoryManager(caps);
       else if (b.dataset.m === "sync") openSyncCenter(caps, refreshCurrent);
       else if (b.dataset.m === "export") setView("export");
@@ -227,6 +275,7 @@ export function renderApp(mount, profile, onSignOut) {
       // opens the pivot directly — those items are already hand-picked.
       else if (b.dataset.m === "pricing") openGuidedPricing(caps, () => setView(currentViewId));
       else if (b.dataset.m === "calib") openCalibration(caps, () => setView(currentViewId));
+      else if (b.dataset.m === "audit") openConsistencyAudit(caps, openReviewQueue);
       else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
     });
   };
@@ -278,6 +327,15 @@ export function renderApp(mount, profile, onSignOut) {
     if (btn.dataset.view === currentViewId) view.scrollTo({ top: 0, behavior: "smooth" });
     else setView(btn.dataset.view);
   });
+
+  if (_appCmdKey) document.removeEventListener("keydown", _appCmdKey);
+  _appCmdKey = (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || String(e.key || "").toLowerCase() !== "k") return;
+    if (anyOverlayOpen()) return;
+    e.preventDefault();
+    openQuickActions();
+  };
+  document.addEventListener("keydown", _appCmdKey);
 
   // Offline banner — toggled by the browser's connectivity events.
   const banner = mount.querySelector("#offlineBanner");
@@ -394,6 +452,7 @@ function issueBadgesHtml(it, { compact = false } = {}) {
   return `<span class="issue-pill ${meta.cls}" title="${esc(title)}">${esc(label)}</span>`;
 }
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
+let _appCmdKey = null; // current Ctrl/Cmd+K handler for the signed-in shell
 
 // Fade each thumbnail in over its shimmer once the image has loaded, so the
 // grid layout never jumps as photos arrive.
@@ -1094,14 +1153,46 @@ async function renderGallery(view, caps, opts = {}) {
 
   // Review-tab segment switch (Needs work ⇄ Ready to approve).
   const segRow = view.querySelector("#segRow");
+  function setReviewIssue(next, announce = false) {
+    if (!REVIEW_QUEUE.includes(next) || next === issue) return;
+    issue = next;
+    seg = issue === "ready" ? "ready" : "work";
+    if (segRow) {
+      segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.issue === issue));
+    }
+    draw();
+    if (announce) {
+      toast(ISSUE_META[issue]?.label || "Review queue");
+      navigator.vibrate?.(8);
+    }
+  }
   if (segRow) segRow.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-issue]");
     if (!btn || btn.dataset.issue === issue) return;
-    issue = btn.dataset.issue;
-    seg = issue === "ready" ? "ready" : "work";
-    segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.issue === issue));
-    draw();
+    setReviewIssue(btn.dataset.issue);
   });
+  function bindReviewSwipe(el) {
+    if (!review || !el) return;
+    let start = null;
+    el.addEventListener("pointerdown", (e) => {
+      if (selectionMode || e.pointerType === "mouse") return;
+      if (e.target.closest("button, a, input, select, textarea")) return;
+      start = { x: e.clientX, y: e.clientY };
+    }, { passive: true });
+    el.addEventListener("pointerup", (e) => {
+      if (!start || selectionMode) { start = null; return; }
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      start = null;
+      if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.45) return;
+      const i = REVIEW_QUEUE.indexOf(issue);
+      const next = REVIEW_QUEUE[Math.max(0, Math.min(REVIEW_QUEUE.length - 1, i + (dx < 0 ? 1 : -1)))];
+      setReviewIssue(next, true);
+    }, { passive: true });
+    el.addEventListener("pointercancel", () => { start = null; }, { passive: true });
+  }
+  bindReviewSwipe(reviewInbox);
+  bindReviewSwipe(countEl);
 
   pillsEl.addEventListener("click", (e) => {
     const b = e.target.closest("[data-clear], [data-facet]");

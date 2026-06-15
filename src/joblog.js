@@ -9,11 +9,37 @@ function messageOf(err) {
 export function classifyJobError(err) {
   const msg = messageOf(err);
   const low = msg.toLowerCase();
+  const isShop = low.includes("shop") || low.includes("pos") || low.includes("variant") || low.includes("product");
+  if ((low.includes("not found") || low.includes("missing")) &&
+      (low.includes("image") || low.includes("photo") || low.includes("storage") || low.includes("object"))) return "Missing image";
+  if (low.includes("rate limit") || low.includes("rate-limit") || low.includes("too many") || low.includes("429") || low.includes("quota")) return "Rate limited";
+  if (low.includes("timeout") || low.includes("timed out") || low.includes("aborted")) return "Timeout";
   if (low.includes("overload") || low.includes("busy") || low.includes("529")) return "AI service busy";
-  if (low.includes("network") || low.includes("fetch") || low.includes("offline")) return "Network";
-  if (low.includes("permission") || low.includes("jwt") || low.includes("unauthorized")) return "Permission";
-  if (low.includes("image") || low.includes("photo") || low.includes("vision")) return "Photo unreadable";
-  return "Unknown";
+  if (low.includes("network") || low.includes("fetch") || low.includes("offline") || low.includes("connection")) return "Network offline";
+  if (low.includes("permission") || low.includes("jwt") || low.includes("unauthorized") || low.includes("forbidden") || low.includes("rls")) return "Permission denied";
+  if (isShop && (low.includes("reject") || low.includes("invalid") || low.includes("validation") || low.includes("422"))) return "Shop rejected item";
+  if (isShop && (low.includes("service") || low.includes("503") || low.includes("502") || low.includes("500"))) return "Shop service unavailable";
+  if (low.includes("edge function") || low.includes("non-2xx") || low.includes("503") || low.includes("502") || low.includes("500")) return "Service unavailable";
+  if (low.includes("image") || low.includes("photo") || low.includes("vision") || low.includes("read") || low.includes("parse")) return "AI could not read photo";
+  return "Unknown technical error";
+}
+
+const ERROR_HELP = {
+  "AI service busy": "Retry shortly; the AI provider is overloaded.",
+  "AI could not read photo": "Retake or crop the photo, then retry AI fill.",
+  "Missing image": "The item photo is missing. Re-upload the photo before retrying.",
+  "Network offline": "Reconnect and retry the job.",
+  "Permission denied": "Use an editor or admin account, or check permissions.",
+  "Rate limited": "Wait a short while, then retry fewer items.",
+  "Timeout": "Retry the job; if it repeats, use a smaller batch.",
+  "Service unavailable": "Retry later; the server or edge function did not complete.",
+  "Shop rejected item": "Fix the item details, price, SKU, or stock, then retry shop sync.",
+  "Shop service unavailable": "Retry when the POS service is reachable.",
+  "Unknown technical error": "Retry once; if it repeats, inspect the technical detail.",
+};
+
+export function jobErrorHelp(category) {
+  return ERROR_HELP[category] || ERROR_HELP["Unknown technical error"];
 }
 
 export async function recordItemJobFailure(itemId, jobType, err, attemptCount = 1) {

@@ -707,6 +707,27 @@ body { overflow:hidden; overscroll-behavior:none; }
 /* Right-aligned current-value hint on a settings-style menu row (e.g. Appearance → "System"). */
 .menu-item:has(.menu-val) { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .menu-val { color:var(--muted); font-size:13px; }
+.cmd-list { display:flex; flex-direction:column; gap:8px; }
+.cmd-row { display:flex; align-items:center; gap:11px; }
+.cmd-ico { flex:0 0 auto; display:inline-flex; color:var(--muted); }
+.cmd-copy { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.cmd-copy b { font-size:14px; line-height:1.2; }
+.cmd-copy span { color:var(--muted); font-size:12px; line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+.audit-summary { display:flex; flex-direction:column; gap:8px; }
+.audit-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:10px;
+  padding:10px 12px; border:1px solid var(--line); border-radius:8px; background:var(--control); }
+.audit-row div { min-width:0; }
+.audit-row b { display:block; font-size:13px; line-height:1.2; }
+.audit-row span { display:block; color:var(--muted); font-size:12px; line-height:1.3; margin-top:2px; }
+.audit-row strong { font-size:20px; line-height:1; }
+.audit-open { min-height:32px; padding:0 10px; }
+.audit-detail { padding:9px 0; border-bottom:1px solid var(--line); }
+.audit-detail:last-of-type { border-bottom:none; }
+.audit-detail b { display:block; font-size:13px; line-height:1.25; }
+.audit-detail span { display:block; color:var(--muted); font-size:12px; margin-top:2px; line-height:1.35; }
+.audit-clean { padding:12px; border:1px solid var(--ok-border); border-radius:8px; color:var(--ok-txt);
+  background:var(--control); font-size:13px; }
 
 /* Appearance picker rows: icon · name/description · check. The active row gets
    an accent tint + outline so the current choice reads at a glance. */
@@ -764,6 +785,10 @@ body { overflow:hidden; overscroll-behavior:none; }
 .picked { color:var(--muted); font-size:13px; margin:10px 0; text-align:center; }
 .up-go { width:100%; margin-top:16px; padding:12px; }
 .up-hint { font-size:12px; text-align:center; margin-top:8px; }
+.up-defaults { display:flex; align-items:center; justify-content:space-between; gap:8px;
+  margin-top:8px; padding:8px 10px; border:1px solid var(--line); border-radius:8px;
+  color:var(--muted); font-size:12px; background:var(--control); }
+.up-defaults[hidden] { display:none; }
 .progress { text-align:center; color:var(--muted); font-size:13px; margin-top:12px; min-height:18px; }
 
 /* upload preview grid + progress */
