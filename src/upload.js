@@ -155,8 +155,9 @@ export async function renderUpload(view, caps, onDone) {
           <input id="libInput" type="file" accept="image/*" multiple hidden>
           <span class="big">${ICON.image}</span><span>Choose photos</span>
         </label>
-        <button type="button" class="pickbtn" id="webcamBtn">
-          <span class="big">${ICON.webcam}</span><span>Webcam</span>
+        <button type="button" class="pickbtn pickbtn-hero" id="webcamBtn">
+          <span class="big">${ICON.camera}</span><span>Burst capture</span>
+          <span class="pickbtn-sub">snap each unit, hands-free</span>
         </button>
       </div>
 
@@ -287,49 +288,105 @@ export async function renderUpload(view, caps, onDone) {
   camInput.addEventListener("change", () => { addFiles([...camInput.files]); camInput.value = ""; });
   libInput.addEventListener("change", () => { addFiles([...libInput.files]); libInput.value = ""; });
 
-  // Webcam capture (mainly for desktop; needs HTTPS/localhost). Snap multiple
-  // frames, each added to the batch; the stream stops on close.
-  view.querySelector("#webcamBtn").onclick = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) { toast("Camera not available in this browser/context."); return; }
+  // Burst capture: a full-screen, stay-open camera built for the core workflow
+  // (one photo = one unit, many per session). Tap the big shutter to snap each
+  // unit — the camera stays live, each frame drops into the same batch, and a
+  // filmstrip + count give feedback. Needs a secure context (HTTPS/localhost);
+  // on the plain-http LAN URL it falls back to a toast (use "Take photo").
+  view.querySelector("#webcamBtn").onclick = () => openBurstCapture();
+
+  async function openBurstCapture() {
+    if (!navigator.mediaDevices?.getUserMedia) { toast("Camera not available here — use “Take photo”."); return; }
     let stream;
-    try { stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }); }
-    catch (e) { toast("Couldn't access the camera: " + (e?.message || e)); return; }
+    try {
+      // Prefer the rear camera at a high resolution; compressImage downscales later.
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      });
+    } catch (e) { toast("Couldn't access the camera: " + (e?.message || e)); return; }
+
     const ov = document.createElement("div");
-    ov.className = "webcam";
+    ov.className = "burst";
     ov.setAttribute("role", "dialog");
     ov.setAttribute("aria-modal", "true");
-    ov.setAttribute("aria-label", "Webcam capture");
-    ov.innerHTML = `<div class="webcam-inner">
-        <video id="wcVid" autoplay playsinline></video>
-        <div class="webcam-bar">
-          <button class="ghost" id="wcClose">Close</button>
-          <span id="wcCount" class="muted" aria-live="polite"></span>
-          <button class="primary" id="wcSnap">Capture</button>
+    ov.setAttribute("aria-label", "Burst capture");
+    ov.tabIndex = -1;
+    ov.innerHTML = `
+      <video id="bcVid" autoplay playsinline muted></video>
+      <div class="burst-flash" id="bcFlash"></div>
+      <div class="burst-top">
+        <button class="burst-x" id="bcClose" aria-label="Close camera">${ICON.x}</button>
+        <span class="burst-count" id="bcCount" aria-live="polite">0 captured</span>
+      </div>
+      <div class="burst-bottom">
+        <div class="burst-strip" id="bcStrip"></div>
+        <div class="burst-controls">
+          <button class="burst-undo" id="bcUndo" disabled>Undo</button>
+          <button class="burst-shutter" id="bcShutter" aria-label="Capture photo"></button>
+          <button class="burst-done primary" id="bcDone">Done</button>
         </div>
       </div>`;
     document.body.appendChild(ov);
     const releaseFocus = trapFocus(ov);
-    const vid = ov.querySelector("#wcVid");
+    const vid = ov.querySelector("#bcVid");
     vid.srcObject = stream;
-    let snapped = 0;
-    const close = () => { releaseFocus(); stream.getTracks().forEach((t) => t.stop()); ov.remove(); };
-    ov.querySelector("#wcClose").onclick = close;
-    // Esc closes the webcam overlay.
-    ov.tabIndex = -1;
-    ov.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
-    requestAnimationFrame(() => ov.querySelector("#wcSnap")?.focus());
-    ov.querySelector("#wcSnap").onclick = () => {
+
+    const snappedKeys = []; // keys of frames added this session, for Undo-last
+    const countEl = ov.querySelector("#bcCount");
+    const stripEl = ov.querySelector("#bcStrip");
+    const undoBtn = ov.querySelector("#bcUndo");
+    const flashEl = ov.querySelector("#bcFlash");
+
+    // Reflect this session's captures: count, Undo state, and a filmstrip of the
+    // most recent thumbnails (newest first, capped so the strip stays light).
+    function paintBurst() {
+      const n = snappedKeys.length;
+      countEl.textContent = `${n} captured`;
+      undoBtn.disabled = n === 0;
+      const recent = snappedKeys.slice(-6).reverse()
+        .map((k) => entries.find((e) => e.key === k)).filter(Boolean);
+      stripEl.innerHTML = recent.map((e) => `<img src="${e.url}" alt="">`).join("");
+    }
+
+    const snap = () => {
+      if (!vid.videoWidth) return; // stream not ready yet
       const c = document.createElement("canvas");
       c.width = vid.videoWidth; c.height = vid.videoHeight;
       c.getContext("2d").drawImage(vid, 0, 0);
       c.toBlob((blob) => {
         if (!blob) return;
-        addFiles([new File([blob], `webcam-${snapped}-${blob.size}.jpg`, { type: "image/jpeg" })]);
-        snapped++;
-        ov.querySelector("#wcCount").textContent = `${snapped} captured`;
+        const file = new File([blob], `capture-${snappedKeys.length}-${blob.size}.jpg`, { type: "image/jpeg" });
+        addFiles([file]);
+        snappedKeys.push(keyOf(file));
+        paintBurst();
+        navigator.vibrate?.(15);
+        flashEl.classList.remove("on"); void flashEl.offsetWidth; flashEl.classList.add("on");
       }, "image/jpeg", 0.92);
     };
-  };
+    const undoLast = () => {
+      const k = snappedKeys.pop();
+      if (k) removeFile(k);
+      paintBurst();
+    };
+    const close = () => {
+      releaseFocus();
+      stream.getTracks().forEach((t) => t.stop());
+      ov.remove();
+      // Land the user on the batch form they just filled (category etc.).
+      if (snappedKeys.length) catSel?.focus();
+    };
+
+    ov.querySelector("#bcShutter").onclick = snap;
+    ov.querySelector("#bcUndo").onclick = undoLast;
+    ov.querySelector("#bcClose").onclick = close;
+    ov.querySelector("#bcDone").onclick = close;
+    ov.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") close();
+      // Space/Enter as a hardware-shutter style trigger for keyboards.
+      else if ((e.key === " " || e.key === "Enter") && e.target === ov) { e.preventDefault(); snap(); }
+    });
+    requestAnimationFrame(() => ov.querySelector("#bcShutter")?.focus());
+  }
 
   // When a category is chosen, render its (optional) common fields + brand.
   catSel.addEventListener("change", () => {
