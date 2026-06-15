@@ -6,6 +6,7 @@ import {
   vocabSuggestions,
   normalizeValue,
   normalizeAttributeValue,
+  AI_BLIND_FIELDS,
 } from "./data.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
@@ -27,6 +28,52 @@ function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
+}
+
+function hasValue(v) {
+  return v !== null && v !== undefined && v !== "";
+}
+
+function fieldNameForKey(key, fields) {
+  if (key === "brand") return "Brand";
+  if (key === "name") return "Name";
+  if (key === "price") return "Retail price";
+  if (key === "stock_quantity") return "Units";
+  if (key === "reorder_level") return "Reorder level";
+  return fields.find((f) => f.key === key)?.label || key;
+}
+
+function buildEditorFixPlan(item, fields, conf) {
+  const keys = new Set();
+  const labels = [];
+  const add = (key, label) => {
+    if (key) keys.add(key);
+    if (label && !labels.includes(label)) labels.push(label);
+  };
+
+  if (item.price == null) add("price", "Retail price");
+  if (!hasValue(item.brand) && !hasValue(item.name)) {
+    keys.add("brand");
+    keys.add("name");
+    add(null, "Brand or name");
+  }
+
+  const attrs = item.attributes || {};
+  const required = fields.filter((f) => f.required);
+  for (const f of required) {
+    if (!hasValue(attrs[f.key])) add(f.key, f.label || f.key);
+  }
+  if (!required.length && !Object.keys(attrs).some((k) => hasValue(attrs[k]))) {
+    for (const f of fields.slice(0, 4)) add(f.key, f.label || f.key);
+  }
+
+  for (const [key, level] of Object.entries(conf || {})) {
+    if ((level === "Low" || level === "Medium") && !AI_BLIND_FIELDS.has(key)) {
+      add(key, `${fieldNameForKey(key, fields)} (${level})`);
+    }
+  }
+
+  return { keys, labels };
 }
 
 /**
@@ -115,6 +162,8 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
   const fields = resolveFields(item.category_id);
   const conf = { ...(item.confidence || {}) }; // working copy of per-field confidence
+  const readiness = getItemReadiness(item);
+  const fixPlan = buildEditorFixPlan(item, fields, conf);
 
   // ---- build the sheet ----
   const sheet = document.createElement("div");
@@ -136,7 +185,8 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
         ${canEdit && imgUrl ? `<button class="ghost aibtn" id="aiBtn">${ICON.sparkle} AI suggest fields from photo</button>` : ""}
 
-        ${readinessPanelHtml(getItemReadiness(item))}
+        ${readinessPanelHtml(readiness)}
+        ${fixModeHtml(fixPlan)}
 
         <div class="status-row" id="statusRow" role="group" aria-label="Status">
           ${STATUS_OPTIONS
@@ -154,7 +204,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
         <div id="dupWarn" class="dup-warn" style="display:none"></div>
 
-        <div class="frow">
+        <div class="frow" data-field-row="category">
           <label>Category</label>
           <div class="fctl"><span class="readonly-val">${esc(categoryPath(item.category_id))}</span></div>
         </div>
@@ -217,7 +267,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   // Focus the Cancel control first (not a text field) so opening the editor
   // doesn't pop the mobile keyboard before the user has looked at the photo.
   requestAnimationFrame(() => sheet.querySelector("#cancelBtn")?.focus());
-  requestAnimationFrame(() => focusEditorIssue(sheet, opts.focusIssue || getItemReadiness(item).issue));
+  if (opts.focusIssue) requestAnimationFrame(() => focusEditorIssue(sheet, opts.focusIssue));
 
   // A SKU can already collide from an earlier save — surface that when the
   // editor opens, not only after the next save (when the sheet is closing).
@@ -286,6 +336,31 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   window.addEventListener("online", reflectOnline);
   window.addEventListener("offline", reflectOnline);
   reflectOnline();
+
+  const fixModeBtn = sheet.querySelector("#fixModeBtn");
+  let fixModeOn = !!fixModeBtn && ["missing", "doubt", "price"].includes(opts.focusIssue);
+  const applyFixMode = () => {
+    if (!fixModeBtn) return;
+    sheet.classList.toggle("fix-mode", fixModeOn);
+    fixModeBtn.setAttribute("aria-pressed", fixModeOn);
+    fixModeBtn.textContent = fixModeOn
+      ? "Show all fields"
+      : `Show only ${fixPlan.keys.size} field${fixPlan.keys.size === 1 ? "" : "s"} to fix`;
+    sheet.querySelectorAll("[data-field-row]").forEach((row) => {
+      const target = fixPlan.keys.has(row.dataset.fieldRow);
+      row.classList.toggle("fix-target", target);
+      row.classList.toggle("fix-hide", fixModeOn && !target);
+    });
+    sheet.querySelectorAll("[data-ed-section]").forEach((section) => {
+      const hasTarget = [...section.querySelectorAll("[data-field-row]")]
+        .some((row) => fixPlan.keys.has(row.dataset.fieldRow));
+      section.classList.toggle("fix-section-hide", fixModeOn && section.dataset.edSection !== "verify" && !hasTarget);
+    });
+  };
+  if (fixModeBtn) {
+    fixModeBtn.onclick = () => { fixModeOn = !fixModeOn; applyFixMode(); };
+    applyFixMode();
+  }
   // Tear the listeners down when the sheet closes (wrap the base close once).
   const baseClose = close;
   close = () => {
@@ -547,6 +622,18 @@ function readinessPanelHtml(readiness) {
   </div>`;
 }
 
+function fixModeHtml(plan) {
+  if (!plan?.keys?.size) return "";
+  const labels = (plan.labels || []).slice(0, 4).join(", ");
+  const extra = plan.labels.length > 4 ? `, plus ${plan.labels.length - 4} more` : "";
+  return `<div class="fixmode-strip">
+    <button class="ghost fixmode-btn" id="fixModeBtn" type="button" aria-pressed="false">
+      Show only ${plan.keys.size} field${plan.keys.size === 1 ? "" : "s"} to fix
+    </button>
+    ${labels ? `<div class="fixmode-note">Focus: ${esc(labels + extra)}</div>` : ""}
+  </div>`;
+}
+
 function sectionForIssue(issue) {
   if (issue === "price" || issue === "sync") return "selling";
   if (issue === "missing") return "details";
@@ -593,7 +680,7 @@ function fieldRow(def, value, conf, showConf, canEdit = true) {
          aria-label="Confidence: ${conf[def.key] || "not set"}" title="Confidence (tap to cycle)">${conf[def.key] ? conf[def.key][0] : "·"}</button>`
     : "";
 
-  return `<div class="frow">
+  return `<div class="frow" data-field-row="${esc(def.key)}">
     <label for="${id}">${esc(def.label)}</label>
     <div class="fctl">${control}${confPill}</div>
   </div>`;

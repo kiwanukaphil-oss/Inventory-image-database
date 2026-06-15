@@ -909,8 +909,13 @@ body { overflow:hidden; overscroll-behavior:none; }
 .ed-section { padding:0 0 14px; margin:0 0 14px; border-bottom:1px solid var(--line); }
 .ed-section:last-child { margin-bottom:0; border-bottom:none; }
 .ed-section.is-focus { box-shadow:inset 3px 0 0 var(--accent); padding-left:10px; transition:box-shadow .2s; }
+.ed-section.fix-section-hide { display:none; }
 .ed-section-title { margin:0 0 10px; font-size:12px; color:var(--muted);
   text-transform:uppercase; letter-spacing:.04em; }
+.fixmode-strip { display:flex; flex-direction:column; gap:5px; margin:0 0 10px; }
+.fixmode-btn { width:100%; border-color:var(--accent); color:var(--accent-soft-txt); }
+.fixmode-btn[aria-pressed="true"] { background:var(--accent-soft); }
+.fixmode-note { font-size:12px; color:var(--muted); line-height:1.35; }
 .admin-note { margin:-2px 0 10px 104px; color:var(--muted); font-size:12px; }
 .sheet-foot {
   display:flex; gap:8px; padding:10px 14px calc(10px + var(--safe-bottom));
@@ -943,6 +948,10 @@ body { overflow:hidden; overscroll-behavior:none; }
 .fctl { display:flex; gap:6px; align-items:center; }
 .fctl input:not([type=checkbox]), .fctl select { flex:1; width:100%; }
 .fctl input.changed, .fctl select.changed { background:var(--edit); border-color:var(--edit-border); }
+.frow.fix-hide { display:none; }
+.frow.fix-target { border-left:3px solid var(--accent); padding-left:7px;
+  background:color-mix(in srgb, var(--accent-soft) 38%, transparent); border-radius:8px; }
+.frow.fix-target label { color:var(--accent-soft-txt); font-weight:650; }
 .field-sec { margin:16px 0 8px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
 .adminonly { color:var(--review-txt); text-transform:none; letter-spacing:0; }
 
