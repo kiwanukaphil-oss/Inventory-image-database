@@ -182,7 +182,7 @@ export async function renderUpload(view, caps, onDone) {
               <select id="statusSel"><option value="draft"${uploadDefaults.status !== "needs-review" ? " selected" : ""}>draft</option><option value="needs-review"${uploadDefaults.status === "needs-review" ? " selected" : ""}>needs-review</option></select>
             </div>
           </div>
-          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"${uploadDefaults.ai ? " checked" : ""}> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost)</span></label>` : ""}
+          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"${uploadDefaults.ai ? " checked" : ""}> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost; AI-filled items go to Review)</span></label>` : ""}
           <div class="up-defaults" id="upDefaults" ${uploadDefaults.categoryId ? "" : "hidden"}>
             <span>Using last batch defaults.</span>
             <button type="button" class="linkbtn" id="clearDefaults">Clear</button>
