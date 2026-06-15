@@ -125,6 +125,9 @@ export function renderApp(mount, profile, onSignOut) {
           <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
           <span class="rolechip ${role}">${role}</span>
           <span class="spacer"></span>
+          <button class="iconbtn" id="cmdBtn" aria-label="Quick actions">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
+          </button>
           <button class="iconbtn" id="menuBtn" aria-label="Menu">${ICON.kebab}</button>
         </header>
         <div class="offline-banner" id="offlineBanner" hidden>● Offline — changes need a connection</div>
@@ -176,11 +179,10 @@ export function renderApp(mount, profile, onSignOut) {
     else renderComingSoon(view, id);
   }
 
-  // Shop-wide settings (currency for now), gated to user-managers.
-  function openSettings() {
+  // Currency editor (the one shop-wide setting), opened from Settings → General.
+  function openCurrencyEditor() {
     const cur = getSetting("currency", "");
-    const sh = openBottomSheet("Settings", `
-      <div class="sheet-sec">Currency</div>
+    const sh = openBottomSheet("Currency", `
       <div class="cm-label">Prefix shown before prices (e.g. UGX, $, KSh)</div>
       <input id="setCurrency" value="${esc(cur)}" placeholder="e.g. UGX">
       <button class="primary up-go" id="setSave">Save</button>`);
@@ -194,6 +196,46 @@ export function renderApp(mount, profile, onSignOut) {
       await loadRefData();
       setView(currentViewId); // re-render so prices show the new prefix
     };
+  }
+
+  // Settings — the single home for configuration, data tools, and admin, grouped
+  // and gated by capability. Replaces the old ~12-item account grab-bag; day-to-
+  // day actions live in Quick actions (the command palette) instead.
+  function openSettings() {
+    const install = installAvailable() ? `<button class="menu-item" data-s="install">Install app</button>` : "";
+    const currencyRow = caps.can_manage_users
+      ? `<button class="menu-item" data-s="currency">Currency<span class="menu-val">${esc(getSetting("currency", "") || "not set")}</span></button>`
+      : "";
+    const dataTools = [
+      `<button class="menu-item" data-s="export">Export CSV</button>`,
+      caps.can_edit ? `<button class="menu-item" data-s="calib">Calibration check</button>` : "",
+      caps.can_edit ? `<button class="menu-item" data-s="audit">AI consistency audit</button>` : "",
+    ].filter(Boolean).join("");
+    const adminTools = caps.can_manage_users
+      ? `<button class="menu-item" data-s="users">Users & permissions</button>
+         <button class="menu-item" data-s="cats">Categories & fields</button>
+         <button class="menu-item" data-s="sync">Shop sync</button>`
+      : "";
+    const sh = openBottomSheet("Settings", `
+      <div class="sheet-sec">General</div>
+      <button class="menu-item" data-s="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
+      ${currencyRow}${install}
+      ${dataTools ? `<div class="sheet-sec">Data tools</div>${dataTools}` : ""}
+      ${adminTools ? `<div class="sheet-sec">Admin</div>${adminTools}` : ""}`);
+    sh.body.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-s]");
+      if (!b) return;
+      const s = b.dataset.s;
+      if (s === "theme") { sh.close(); openAppearance(); }
+      else if (s === "currency") { sh.close(); openCurrencyEditor(); }
+      else if (s === "install") { sh.close(); installApp(); }
+      else if (s === "export") { sh.close(); setView("export"); }
+      else if (s === "calib") { sh.close(); openCalibration(caps, () => setView(currentViewId)); }
+      else if (s === "audit") { sh.close(); openConsistencyAudit(caps, openReviewQueue); }
+      else if (s === "users") { sh.close(); openUsers(caps); }
+      else if (s === "cats") { sh.close(); openCategoryManager(caps); }
+      else if (s === "sync") { sh.close(); openSyncCenter(caps, refreshCurrent); }
+    });
   }
 
   function openQuickActions() {
@@ -237,49 +279,26 @@ export function renderApp(mount, profile, onSignOut) {
     });
   }
 
-  // Account / admin menu (⋮) — keeps the top bar clean; Sign out lives at the bottom.
+  // Visible command palette: the bolt button in the top bar opens Quick actions
+  // on every screen (Ctrl/Cmd-K still works too) — the power-user escape hatch.
+  mount.querySelector("#cmdBtn").onclick = openQuickActions;
+
+  // Account menu (⋮) — deliberately slim: Quick actions, Settings, Sign out.
+  // Everything that used to crowd here now lives in Quick actions (work) or
+  // Settings (config / data tools / admin).
   mount.querySelector("#menuBtn").onclick = () => {
-    const install = installAvailable() ? `<button class="menu-item" data-m="install">Install app</button>` : "";
-    // Calibration is a reviewer task (validates AI confidence), so it's offered
-    // to anyone who can edit, not just user-managers.
-    const quick = `<button class="menu-item" data-m="quick">Quick actions</button>`;
-    const calib = caps.can_edit ? `<button class="menu-item" data-m="calib">Calibration check</button>` : "";
-    const pricing = caps.can_edit ? `<button class="menu-item" data-m="pricing">Set prices</button>` : "";
-    const audit = caps.can_edit ? `<button class="menu-item" data-m="audit">AI consistency audit</button>` : "";
-    const workTools = [quick, pricing, calib, audit, `<button class="menu-item" data-m="export">Export CSV</button>`].filter(Boolean).join("");
-    const shopTools = caps.can_manage_users ? `<button class="menu-item" data-m="sync">Shop sync</button>` : "";
-    const adminTools = caps.can_manage_users
-      ? `<button class="menu-item" data-m="users">Users & permissions</button>
-         <button class="menu-item" data-m="cats">Categories & fields</button>`
-      : "";
-    const currency = caps.can_manage_users ? `<button class="menu-item" data-m="settings">Currency</button>` : "";
-    const appTools = `${currency}<button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>${install}`;
     const sh = openBottomSheet(caps.email || "Account",
       `<div class="menu-sub">Signed in as ${esc(role)}</div>
-       ${workTools ? `<div class="sheet-sec">Work tools</div>${workTools}` : ""}
-       ${shopTools ? `<div class="sheet-sec">Shop</div>${shopTools}` : ""}
-       ${adminTools ? `<div class="sheet-sec">Admin</div>${adminTools}` : ""}
-       <div class="sheet-sec">App</div>${appTools}
+       <button class="menu-item" data-m="quick">Quick actions</button>
+       <button class="menu-item" data-m="settings">Settings</button>
        <div class="sheet-sec">Account</div>
        <button class="menu-item danger" data-m="signout">Sign out</button>`);
     sh.body.addEventListener("click", async (e) => {
       const b = e.target.closest("[data-m]");
       if (!b) return;
-      if (b.dataset.m === "install") { sh.close(); installApp(); return; }
-      if (b.dataset.m === "theme") { sh.close(); openAppearance(); return; }
       sh.close();
       if (b.dataset.m === "quick") openQuickActions();
-      else if (b.dataset.m === "users") openUsers(caps);
-      else if (b.dataset.m === "cats") openCategoryManager(caps);
-      else if (b.dataset.m === "sync") openSyncCenter(caps, refreshCurrent);
-      else if (b.dataset.m === "export") setView("export");
       else if (b.dataset.m === "settings") openSettings();
-      // Menu entry opens the guided sentence-builder (the accessible default);
-      // its Advanced door reaches the pivot tool. A gallery SELECTION still
-      // opens the pivot directly — those items are already hand-picked.
-      else if (b.dataset.m === "pricing") openGuidedPricing(caps, () => setView(currentViewId));
-      else if (b.dataset.m === "calib") openCalibration(caps, () => setView(currentViewId));
-      else if (b.dataset.m === "audit") openConsistencyAudit(caps, openReviewQueue);
       else if (b.dataset.m === "signout") { await signOut(); onSignOut(); }
     });
   };
