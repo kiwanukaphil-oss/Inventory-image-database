@@ -350,6 +350,7 @@ export async function renderUpload(view, caps, onDone) {
         console.error("ai-fill failed", e);
       }
     }
+    return id;
   }
 
   const barFill = $("#barFill");
@@ -371,6 +372,7 @@ export async function renderUpload(view, caps, onDone) {
     setMode("running");
     const total = list.length;
     let done = 0, failed = 0, processed = 0, firstError = "", pausedOffline = false;
+    const uploadedIds = [];
     const doneEntries = [];
     paintRun(0, total, 0, 0);
 
@@ -382,7 +384,7 @@ export async function renderUpload(view, caps, onDone) {
         const i = idx++;
         if (i >= list.length) return;
         const entry = list[i];
-        try { await uploadOne(entry, common); done++; doneEntries.push(entry); }
+        try { const id = await uploadOne(entry, common); done++; uploadedIds.push(id); doneEntries.push(entry); }
         catch (err) {
           // Lost connection mid-batch: pause and resume automatically on reconnect.
           if (!navigator.onLine) { pausedOffline = true; stopFlag = true; break; }
@@ -416,10 +418,10 @@ export async function renderUpload(view, caps, onDone) {
       window.addEventListener("online", () => startUpload(entries.slice()), { once: true });
       return;
     }
-    finishUpload(done, failed, firstError);
+    finishUpload(done, failed, firstError, uploadedIds);
   }
 
-  function finishUpload(added, failed, firstError) {
+  function finishUpload(added, failed, firstError, uploadedIds = []) {
     if (!doneArea?.isConnected) return; // user navigated away mid-upload
     setMode("done");
     if (added) navigator.vibrate?.([12, 40, 12]); // affirmative "batch done" buzz
@@ -429,13 +431,17 @@ export async function renderUpload(view, caps, onDone) {
       (firstError ? `<div class="up-err">${esc(firstError)}</div>` : "");
     const acts = [];
     if (remaining > 0) acts.push(`<button class="primary up-go" data-d="retry">Upload remaining ${remaining}</button>`);
+    if (uploadedIds.length) acts.push(`<button class="primary up-go" data-d="batch">Review this batch</button>`);
     acts.push(`<button class="ghost up-go" data-d="more">Add more photos</button>`);
-    acts.push(`<button class="ghost up-go" data-d="review">Review in gallery</button>`);
+    acts.push(`<button class="ghost up-go" data-d="gallery">View gallery</button>`);
     $("#doneActions").innerHTML = acts.join("");
     $("#doneActions").querySelectorAll("[data-d]").forEach((b) => (b.onclick = () => {
       if (b.dataset.d === "retry") startUpload(entries.slice());
       else if (b.dataset.d === "more") { setMode("compose"); renderPicked(); renderGrid(); refreshEnabled(); }
-      else { entries.forEach((e) => URL.revokeObjectURL(e.url)); onDone?.(); }
+      else {
+        entries.forEach((e) => URL.revokeObjectURL(e.url));
+        onDone?.({ view: b.dataset.d === "batch" ? "review" : "gallery", itemIds: uploadedIds });
+      }
     }));
   }
 

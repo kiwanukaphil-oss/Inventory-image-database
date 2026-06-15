@@ -151,10 +151,16 @@ export function renderApp(mount, profile, onSignOut) {
     );
     if (id === "gallery") renderGallery(view, caps);
     else if (id === "add")
-      renderUpload(view, caps, () => {
-        nav.querySelector('button[data-view="gallery"]').classList.add("active");
-        nav.querySelector('button[data-view="add"]').classList.remove("active");
-        renderGallery(view, caps);
+      renderUpload(view, caps, (result = {}) => {
+        if (result.view === "review" && result.itemIds?.length) {
+          browseState.review.itemIds = result.itemIds;
+          browseState.review.issue = "work";
+          browseState.review.seg = "work";
+          setView("review");
+        } else {
+          browseState.gallery.itemIds = [];
+          setView("gallery");
+        }
       });
     else if (id === "export") renderExport(view, caps); // routed from the ⋮ menu
     else if (id === "shop") renderShop(view, caps, refreshCurrent);
@@ -373,8 +379,8 @@ const SORTS = [
 // `density` is the card-grid vs scan-list view mode. Both surfaces default to
 // tile/grid; reviewers can still switch to the dense list when skimming.
 const browseState = {
-  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid" },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", seg: "work", issue: "work" },
+  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", itemIds: [] },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", seg: "work", issue: "work", itemIds: [] },
 };
 
 function issueBadgesHtml(it, { compact = false } = {}) {
@@ -563,6 +569,7 @@ async function renderGallery(view, caps, opts = {}) {
   let noPrice = !!state.noPrice; // "only items without a price" — the pricing to-do filter
   const active = {}; // facetKey -> Set(values); AND across keys, OR within a key
   for (const k in (state.active || {})) if (facetByKey[k]) active[k] = new Set(state.active[k]);
+  let itemIds = new Set(state.itemIds || []);
   const facetFilter = {}; // facetKey -> typed text to narrow that facet's value list
   let filtered = []; // current filtered+sorted rows, for bulk actions
 
@@ -611,6 +618,7 @@ async function renderGallery(view, caps, opts = {}) {
     state.q = q; state.needsReview = needsReview; state.sortBy = sortBy;
     state.priceMin = priceMin; state.priceMax = priceMax; state.noPrice = noPrice;
     state.datePreset = datePreset; state.density = density;
+    state.itemIds = [...itemIds];
     if (review) { state.issue = issue; state.seg = issue === "ready" ? "ready" : "work"; }
     state.active = {};
     for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
@@ -689,6 +697,7 @@ async function renderGallery(view, caps, opts = {}) {
   // ignore its own selection (standard faceted counting).
   function matches(it, excludeKey) {
     if (!textMatch(it)) return false;
+    if (itemIds.size && !itemIds.has(it.id)) return false;
     if (review) {
       // The review queue partitions: Ready (complete — glance & approve) vs
       // Needs work (everything else in triage). No overlap, no gaps.
@@ -1015,6 +1024,7 @@ async function renderGallery(view, caps, opts = {}) {
     if (noPrice) n++;
     if (datePreset !== "all") n++;
     if (needsReview && !review) n++;
+    if (itemIds.size) n++;
     return n;
   }
   // Reset filters (not sort/group, which are view options). Review keeps triage.
@@ -1023,6 +1033,7 @@ async function renderGallery(view, caps, opts = {}) {
     for (const k in active) delete active[k];
     for (const k in facetFilter) delete facetFilter[k];
     priceMin = ""; priceMax = ""; noPrice = false; datePreset = "all";
+    itemIds = new Set();
     if (!review) needsReview = false;
     draw(); pills();
   }
@@ -1037,6 +1048,7 @@ async function renderGallery(view, caps, opts = {}) {
     if (noPrice) out.push(`<button class="apill" data-clear="noprice">Missing price ✕</button>`);
     if (priceMin || priceMax) out.push(`<button class="apill" data-clear="price">Price: ${esc(priceMin || "0")}–${esc(priceMax || "∞")} ✕</button>`);
     if (datePreset !== "all") out.push(`<button class="apill" data-clear="dt">${esc(DATE_FILTERS.find((d) => d.v === datePreset)?.label || datePreset)} ✕</button>`);
+    if (itemIds.size) out.unshift(`<button class="apill" data-clear="batch">Uploaded batch: ${itemIds.size} x</button>`);
     pillsEl.innerHTML = out.join("");
     const badge = view.querySelector("#fcount");
     if (badge) { const n = filterCount(); badge.textContent = n; badge.hidden = !n; }
@@ -1076,6 +1088,7 @@ async function renderGallery(view, caps, opts = {}) {
     if (b.dataset.facet) active[b.dataset.facet]?.delete(b.dataset.val);
     else if (b.dataset.clear === "price") { priceMin = ""; priceMax = ""; }
     else if (b.dataset.clear === "noprice") noPrice = false;
+    else if (b.dataset.clear === "batch") itemIds = new Set();
     else if (b.dataset.clear === "dt") datePreset = "all";
     else if (b.dataset.clear === "sort") sortBy = "new";
     draw(); pills();
