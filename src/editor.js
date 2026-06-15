@@ -297,7 +297,19 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   if (imgWrap && imgUrl) imgWrap.onclick = () => openLightbox([{ url: imgUrl, caption: imgAlt }], 0);
 
   // ---- interactions ----
-  let close = () => {
+  let editorHistoryArmed = false;
+  let closed = false;
+  let onBrowserBack = null;
+  let close = ({ fromBrowserBack = false } = {}) => {
+    if (closed) return;
+    closed = true;
+    if (onBrowserBack) window.removeEventListener("popstate", onBrowserBack);
+    if (editorHistoryArmed) {
+      editorHistoryArmed = false;
+      if (!fromBrowserBack) {
+        try { window.history.back(); } catch {}
+      }
+    }
     releaseFocus();
     sheet.classList.remove("open");
     setTimeout(() => sheet.remove(), 200);
@@ -310,7 +322,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const isDirty = () => !savedOk && canEdit &&
     (status !== item.status || confDirty || !!sheet.querySelector("[data-key].changed"));
   // Cancel / backdrop: confirm before throwing away unsaved work.
-  const requestClose = async () => {
+  const requestClose = async ({ fromBrowserBack = false } = {}) => {
     if (isDirty()) {
       const ok = await confirmSheet({
         title: "Discard changes?",
@@ -319,11 +331,31 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         cancelText: "Keep editing",
         danger: true,
       });
-      if (!ok) return;
+      if (!ok) return false;
     }
-    close();
+    close({ fromBrowserBack });
+    return true;
   };
-  sheet.querySelector("#cancelBtn").onclick = requestClose;
+  const armBrowserBackClose = () => {
+    if (editorHistoryArmed || !window.history?.pushState) return;
+    try {
+      window.history.pushState({ klineOverlay: "editor", itemId }, "", window.location.href);
+      editorHistoryArmed = true;
+      window.addEventListener("popstate", onBrowserBack);
+    } catch {}
+  };
+  onBrowserBack = async () => {
+    if (closed || !document.body.contains(sheet)) return;
+    editorHistoryArmed = false; // Chrome has already consumed the temporary entry.
+    if (!isTopOverlay(sheet)) {
+      armBrowserBackClose();
+      return;
+    }
+    const didClose = await requestClose({ fromBrowserBack: true });
+    if (!didClose && document.body.contains(sheet)) armBrowserBackClose();
+  };
+  armBrowserBackClose();
+  sheet.querySelector("#cancelBtn").onclick = () => requestClose();
   sheet.addEventListener("click", (e) => { if (e.target === sheet) requestClose(); });
   // Esc = Cancel (safe — the dirty-guard above still runs), matching every other
   // overlay. Ignored while a sheet/dialog/lightbox sits on top: that layer owns Esc.
@@ -423,11 +455,11 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   }
   // Tear the listeners down when the sheet closes (wrap the base close once).
   const baseClose = close;
-  close = () => {
+  close = (opts) => {
     window.removeEventListener("online", reflectOnline);
     window.removeEventListener("offline", reflectOnline);
     document.removeEventListener("keydown", onEsc);
-    baseClose();
+    baseClose(opts);
   };
 
   // Status pills
