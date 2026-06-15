@@ -451,6 +451,8 @@ body { overflow:hidden; overscroll-behavior:none; }
 .ri-copy span { color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .review-action { flex:0 0 auto; min-height:34px; border:1px solid var(--accent); border-radius:8px;
   background:var(--accent); color:#fff; padding:0 11px; font-weight:700; font-size:12px; }
+.review-actions { flex:0 0 auto; display:flex; justify-content:flex-end; gap:6px; flex-wrap:wrap; }
+.review-action.secondary { background:var(--control); color:var(--accent); }
 .issue-line { min-height:20px; margin:1px 0 2px; display:flex; flex-wrap:wrap; gap:4px; }
 .issue-line:empty { display:none; }
 .issue-pill { display:inline-flex; align-items:center; max-width:100%; padding:1px 7px;

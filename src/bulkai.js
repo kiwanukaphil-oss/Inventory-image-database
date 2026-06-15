@@ -219,7 +219,7 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
       await clearItemJobFailures(it.id, "ai_fill");
     } catch (e) {
       failed++;
-      await recordItemJobFailure(it.id, "ai_fill", e);
+      await recordItemJobFailure(it.id, "ai_fill", e, (it.latest_ai_job?.attempt_count || 0) + 1);
       logLine(`<span style="color:var(--flag-txt)">✕ ${label} — ${esc(e?.message || e)}</span>`);
     } finally {
       done++;

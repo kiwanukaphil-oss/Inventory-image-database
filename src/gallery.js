@@ -814,6 +814,7 @@ async function renderGallery(view, caps, opts = {}) {
     const rows = applySort(data.filter((it) => matches(it, null)));
     filtered = rows;          // expose current filtered+sorted set for bulk actions
     saveState();
+    const failedAiShown = rows.filter((it) => it.latest_ai_job?.status === "failed").length;
 
     // Pricing is the gate to approval, so the count line doubles as its
     // doorway: a tap on "N without a price" applies the no-price filter, and
@@ -830,7 +831,9 @@ async function renderGallery(view, caps, opts = {}) {
       ? ` · <button class="count-cta" data-cta="approveall">Approve all ${rows.length} ›</button>` : "";
     const issueCta = review && canEdit && rows.length
       ? issue === "ai"
-        ? ` · <button class="count-cta" data-cta="aifill">AI-fill ${rows.length} ›</button>`
+        ? failedAiShown
+          ? ` · <button class="count-cta" data-cta="retryai">Retry ${failedAiShown} failed ›</button>`
+          : ` · <button class="count-cta" data-cta="aifill">AI-fill ${rows.length} ›</button>`
         : issue === "price"
           ? ` · <button class="count-cta" data-cta="setprices">Set prices ›</button>`
           : issue === "sync"
@@ -873,7 +876,12 @@ async function renderGallery(view, caps, opts = {}) {
     // Filters matched nothing → actionable empty state (not a blank grid).
     function reviewActionHtml(n) {
       if (!review || !canEdit || !n) return "";
-      if (issue === "ai") return `<button class="review-action" data-cta="aifill">AI-fill visible</button>`;
+      if (issue === "ai") return failedAiShown
+        ? `<div class="review-actions">
+            <button class="review-action" data-cta="retryai">Retry failed</button>
+            <button class="review-action secondary" data-cta="aifill">AI-fill visible</button>
+          </div>`
+        : `<button class="review-action" data-cta="aifill">AI-fill visible</button>`;
       if (issue === "price") return `<button class="review-action" data-cta="setprices">Set prices</button>`;
       if (issue === "sync") return `<button class="review-action" data-cta="sync">Open shop sync</button>`;
       if (issue === "ready") return `<button class="review-action" data-cta="approveall">Approve visible</button>`;
@@ -1064,6 +1072,11 @@ async function renderGallery(view, caps, opts = {}) {
       if (review && (issue === "price" || noPrice)) quickPriceItems(filtered.map((it) => it.id));
       else if (review) openPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
       else openGuidedPricing(caps, refresh);
+    }
+    else if (cta.dataset.cta === "retryai") {
+      const failed = filtered.filter((it) => it.latest_ai_job?.status === "failed");
+      if (failed.length) openBulkAi(failed, caps, refresh);
+      else toast("No failed AI jobs in this view.");
     }
     else if (cta.dataset.cta === "aifill") openBulkAi(filtered, caps, refresh);
     else if (cta.dataset.cta === "sync") openSyncCenter(caps, refresh);
