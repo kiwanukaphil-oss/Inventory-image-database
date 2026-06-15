@@ -6,7 +6,7 @@
 **Predecessor:** V2 `feature/v2-mobile-ops-cockpit` (Shop tab, Sync Center, Consistency, Activity/work-trail, Readiness, Job Log).
 **Source of truth for findings:** [UX_PRODUCT_AUDIT.md](UX_PRODUCT_AUDIT.md) (2026-06-15). This roadmap is the prescription for that diagnosis.
 
-> **Status: proposal — pending sign-off.** Work strictly phase-by-phase; verify each phase builds/works, then stop for explicit approval before the next. Nothing here is committed or built yet.
+> **Status: BUILT (2026-06-16) on branch `feature/v3-coherence`, local-only, not pushed — awaiting review.** Every phase below was implemented and build-verified; see the Progress log in §10. Two items were deliberately scoped down with rationale (windowing skipped; design-system token/de-dup refactor left as a separate opt-in).
 
 ---
 
@@ -173,6 +173,22 @@ If V3 succeeds, a first-time user perceives the app as fast, simple, and trustwo
 1. **Lock the sequence?** Recommended `0 → 1 → 2 → 3 → 4 → 5 → 6`. Phases 0–2 are reorderable if you'd rather lead with the capture breakthrough (most visible daily value) than the quick-wins.
 2. **Phase 5 appetite:** full design-system unification, or token scales only + opportunistic clean-up (defer the big de-dup)?
 3. **Branch strategy:** continue on the V2 branch, or open a fresh `feature/v3-coherence` branch off `main` after V2 merges?
+
+---
+
+## 10. Progress log (2026-06-16)
+
+Built end-to-end on `feature/v3-coherence` (off the V2 branch), each batch build-verified and committed; **not pushed**.
+
+- **Phase 0 — Quick wins** (`32c11fe`, `cbba8fb`, `3bfdd5d`, `f470a5e`): AI-suggest fill-empty-only; numeric `inputmode`; non-admin cost-blocker copy; dialog `aria-labelledby`; ≥44px tap targets via a layout-neutral hit-overlay (look preserved); bulk-edit + calibration Undo; type-`DELETE` confirm for 2+ deletes; pricing loading spinner.
+- **Phase 1 — Make it instant** (`7c03660`, `a71b4be`): `content-visibility:auto` on cards (defers off-screen layout/paint, nodes stay in DOM so gestures/lightbox are unaffected); hover→tap reveal of POS/confidence/source chips; optimistic Approve & quick-price (local update + redraw, background activity log). **Windowing skipped** — `content-visibility` removed the layout cost at zero risk; windowing would only buy back string-parse time at real risk to selection/sweep.
+- **Phase 2 — Burst capture** (`aeeb4c7`): full-screen stay-open camera (big shutter, filmstrip, count, Undo-last, haptic+flash) feeding the existing batch→form→upload pipeline; promoted to the primary picker; "Take photo" kept as the non-secure-context fallback.
+- **Phase 3 — Consolidate IA** (`25ee420`): slim account menu (Quick actions / Settings / Sign out); grouped Settings sheet (General / Data tools / Admin); visible command-palette button in the top bar.
+- **Phase 4 — Workflows** (`412db16`): AI-on-upload status promotion made explicit in copy. *Pricing-entry unification assessed and deferred:* the guided-vs-pivot split is contextual and documented; full unification needs the guided flow to accept a hand-picked selection (a larger change) — left as future work.
+- **Phase 5 — Dead-code removal** (`b907346`): deleted the flagged dead CSS (`.selbar`/`.filterbar`/`.fdot`/old status sheet/legacy `.find*`/`.grp*`) + unused `openHistory`; CSS bundle 59.7→58.4 kB. **Token scales + component de-dup deliberately not done** (invisible refactor, regression risk, no UX change) — separate opt-in.
+- **Phase 6 — Premium finish** (`5fa929e`): guided-pricing loading spinner; tabular figures on prices/counts; tactile card press.
+
+**Needs a real-device pass:** burst capture (getUserMedia, HTTPS only); the pill hit-overlay feel; optimistic approve/price; type-`DELETE` friction.
 
 ---
 
