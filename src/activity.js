@@ -14,6 +14,7 @@ const SOURCE_LABELS = {
 };
 
 const FIELD_COLUMNS = ["name", "brand", "price", "stock_quantity", "reorder_level", "status", "category_id"];
+const HUMAN_EDIT_SOURCES = new Set(["manual", "bulk", "pricing", "approval", "undo"]);
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 const QUERY_CHUNK = 80;
 
@@ -169,13 +170,7 @@ export async function loadItemActivitySummaries(itemIds) {
   }
 
   rows.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-  const map = summarizeRows(rows);
-  const missing = uniqueIds.filter((id) => !map.has(id));
-  if (missing.length) {
-    const fallback = await loadAuditActivitySummaries(missing);
-    for (const [id, summary] of fallback) if (!map.has(id)) map.set(id, summary);
-  }
-  return map;
+  return summarizeRows(rows);
 }
 
 export function hasRecentEdit(item) {
@@ -204,41 +199,9 @@ function summarizeRows(rows) {
     s.event_count++;
     if (row.field_path) s.field_count++;
     const recent = row.created_at && now - new Date(row.created_at).getTime() <= RECENT_MS;
-    if (recent && ["manual", "bulk", "pricing", "approval", "undo", "history"].includes(row.source)) {
+    if (recent && HUMAN_EDIT_SOURCES.has(row.source)) {
       s.recent_edit = true;
     }
   }
   return map;
-}
-
-async function loadAuditActivitySummaries(itemIds) {
-  const rows = [];
-  try {
-    for (const ids of chunks(itemIds)) {
-      const { data, error } = await supabase
-        .from("audit_log")
-        .select("item_id,change_type,field,actor,created_at,notes")
-        .eq("change_type", "edit")
-        .in("item_id", ids)
-        .order("created_at", { ascending: false })
-        .limit(Math.max(200, ids.length * 8));
-      if (error) {
-        console.warn("audit activity fallback failed", error.message);
-        continue;
-      }
-      rows.push(...(data || []).map((r) => ({
-        item_id: r.item_id,
-        event_type: "manual_edit",
-        source: "history",
-        field_path: r.field,
-        summary: r.notes || "Edited in field history",
-        actor: r.actor || null,
-        created_at: r.created_at,
-      })));
-    }
-  } catch (e) {
-    console.warn("audit activity fallback failed", e?.message || e);
-  }
-  rows.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-  return summarizeRows(rows);
 }
