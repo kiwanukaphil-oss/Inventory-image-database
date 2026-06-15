@@ -8,7 +8,7 @@ import {
   normalizeAttributeValue,
   AI_BLIND_FIELDS,
 } from "./data.js";
-import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
+import { clearItemJobFailures, loadLatestFailedJobs, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, fieldKeyFromPath, loadItemActivity, logItemActivity } from "./activity.js";
 import { toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
@@ -132,7 +132,12 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       .maybeSingle();
     shopMirror = data || null;
   }
-  const recentActivity = canEdit ? await loadItemActivity(itemId, 6) : [];
+  const [recentActivity, failedAiJobs] = await Promise.all([
+    canEdit ? loadItemActivity(itemId, 6) : Promise.resolve([]),
+    loadLatestFailedJobs([itemId], "ai_fill"),
+  ]);
+  const latestAiJob = failedAiJobs.get(itemId);
+  if (latestAiJob) item.latest_ai_job = latestAiJob;
 
   // One plain-language line about this item's life in the shop. Wording is for
   // floor staff, not engineers; the gallery chips use the same states.
@@ -326,15 +331,57 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const headerSaveBtn = sheet.querySelector("#saveBtn");
   const footerSaveBtn = sheet.querySelector("#saveFootBtn");
   const saveApproveBtn = sheet.querySelector("#saveApproveBtn");
-  const saveControls = [headerSaveBtn, footerSaveBtn, saveApproveBtn].filter(Boolean);
+  const saveControls = [headerSaveBtn, footerSaveBtn].filter(Boolean);
   let saving = false;
+  const approvalReadinessFor = () =>
+    getItemReadiness(formItemForReadiness(sheet, item, fields, conf, "approved"), { forApproval: true });
+  const currentReadinessFor = () => {
+    const candidate = formItemForReadiness(sheet, item, fields, conf, status);
+    return getItemReadiness(candidate, { forApproval: status === "approved" });
+  };
+  const approvalBlockerText = (readiness) =>
+    (readiness.blockers || []).slice(0, 3).map((b) => b.detail || b.label).join(" ");
+  const paintCurrentReadiness = () => {
+    const panel = sheet.querySelector("#readyPanel");
+    if (panel) panel.outerHTML = readinessPanelHtml(currentReadinessFor());
+  };
+  const paintApprovalAffordance = () => {
+    const off = !navigator.onLine;
+    const approvalReadiness = approvalReadinessFor();
+    const blocked = approvalReadiness.blockers.length > 0;
+    const warned = !blocked && approvalReadiness.warnings.length > 0;
+    const blockerText = blocked ? approvalBlockerText(approvalReadiness) : "";
+    const approvePill = sheet.querySelector('.status-pill[data-status="approved"]');
+    if (approvePill && item.status !== "approved") {
+      approvePill.disabled = saving || off || !canEdit || blocked;
+      approvePill.title = blocked ? `Fix before approval: ${blockerText}` : "";
+    }
+    if (saveApproveBtn) {
+      saveApproveBtn.disabled = saving || off || !canEdit || blocked;
+      saveApproveBtn.textContent = saving
+        ? "Saving..."
+        : off
+          ? "Offline"
+          : blocked
+            ? "Fix issues first"
+            : warned
+              ? "Review & approve"
+              : "Save & approve";
+      saveApproveBtn.title = blocked
+        ? `Fix before approval: ${blockerText}`
+        : warned
+          ? "Approval will ask you to confirm AI checks."
+          : "";
+    }
+    paintCurrentReadiness();
+  };
   const setSaveBusy = (busy) => {
     saving = busy;
     const off = !navigator.onLine;
     saveControls.forEach((btn) => { btn.disabled = busy || off || !canEdit; });
     if (headerSaveBtn) headerSaveBtn.textContent = busy ? "Saving..." : (off ? "Offline" : "Save");
     if (footerSaveBtn) footerSaveBtn.textContent = busy ? "Saving..." : "Save";
-    if (saveApproveBtn) saveApproveBtn.textContent = busy ? "Saving..." : "Save & approve";
+    paintApprovalAffordance();
   };
   const reflectOnline = () => {
     const off = !navigator.onLine;
@@ -389,8 +436,18 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   sheet.querySelector("#statusRow").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-status]");
     if (!b || !canEdit) return;
+    if (b.dataset.status === "approved") {
+      const approvalReadiness = approvalReadinessFor();
+      if (approvalReadiness.blockers.length) {
+        toast("Can't approve yet: " + approvalBlockerText(approvalReadiness) + ".");
+        focusEditorIssue(sheet, approvalReadiness.blockers[0]?.issue || approvalReadiness.primary?.issue);
+        paintApprovalAffordance();
+        return;
+      }
+    }
     status = b.dataset.status;
     paintStatusPills();
+    paintApprovalAffordance();
   });
 
   // Legend: explain what the status labels and H/M/L confidence dots mean.
@@ -420,6 +477,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       else delete conf[key];
       confDirty = true;
       paintConfPill(pill, next);
+      paintApprovalAffordance();
     });
   });
 
@@ -429,6 +487,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     el.addEventListener("input", () => {
       const now = el.type === "checkbox" ? String(el.checked) : el.value;
       el.classList.toggle("changed", now !== initial);
+      paintApprovalAffordance();
     });
   });
 
@@ -462,6 +521,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       }
       n++;
     }
+    paintApprovalAffordance();
     return n;
   }
 
@@ -493,9 +553,13 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         if (data?.error) throw new Error(data.error);
         const n = applySuggestions(data.values, data.confidence);
         await clearItemJobFailures(itemId, "ai_fill");
+        delete item.latest_ai_job;
+        paintApprovalAffordance();
         toast(n ? `AI filled ${n} field${n === 1 ? "" : "s"} — review & Save` : "AI couldn't read any fields");
       } catch (e) {
         await recordItemJobFailure(itemId, "ai_fill", e);
+        item.latest_ai_job = { status: "failed", error_message: e?.message || String(e) };
+        paintApprovalAffordance();
         toast("AI failed: " + (e?.message || e));
       } finally {
         aiBtn.disabled = false;
@@ -504,26 +568,30 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     };
   }
 
-  const saveCurrent = async () => {
-    if (!canEdit) return;
-    if (!navigator.onLine) { toast("You're offline — reconnect to save your changes."); return; }
-    if (status === "approved") {
-      const candidate = formItemForReadiness(sheet, item, fields, conf, status);
-      const readiness = getItemReadiness(candidate, { forApproval: true });
-      if (readiness.blockers.length) {
-        toast("Can't approve: " + readiness.blockers.map((b) => b.label.toLowerCase()).join(", ") + ".");
-        return;
-      }
-      if (readiness.warnings.length) {
-        const ok = await confirmSheet({
-          title: "Approve with AI checks?",
-          message: readiness.warnings.map((w) => w.detail || w.label).join(" "),
-          confirmText: "Approve",
-          cancelText: "Review first",
-        });
-        if (!ok) return;
-      }
+  const guardApproval = async () => {
+    const readiness = approvalReadinessFor();
+    if (readiness.blockers.length) {
+      toast("Can't approve yet: " + approvalBlockerText(readiness) + ".");
+      focusEditorIssue(sheet, readiness.blockers[0]?.issue || readiness.primary?.issue);
+      paintApprovalAffordance();
+      return false;
     }
+    if (readiness.warnings.length) {
+      const ok = await confirmSheet({
+        title: "Approve with AI checks?",
+        message: readiness.warnings.map((w) => w.detail || w.label).join(" "),
+        confirmText: "I checked, approve",
+        cancelText: "Review first",
+      });
+      if (!ok) return false;
+    }
+    return true;
+  };
+
+  const saveCurrent = async ({ targetStatus = status } = {}) => {
+    if (!canEdit) return false;
+    if (!navigator.onLine) { toast("You're offline — reconnect to save your changes."); return false; }
+    if (targetStatus === "approved" && !(await guardApproval())) return false;
     // One photo = one unit: a quantity above 1 is almost certainly a mistake
     // under this shop's workflow (each identical unit gets its own photo as
     // evidence), so make the person saying otherwise mean it.
@@ -534,14 +602,14 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         message: "This shop counts one unit per photo — identical items each get their own photo. Only keep a higher number if this single photo really stands for several units.",
         confirmText: "Keep " + qtyEl.value.trim(),
       });
-      if (!sure) return;
+      if (!sure) return false;
     }
     const btn = headerSaveBtn;
     setSaveBusy(true);
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
-      const changes = await saveItem(sheet, item, fields, conf, status, canViewCost, cost);
+      const changes = await saveItem(sheet, item, fields, conf, targetStatus, canViewCost, cost);
       const approvalChanges = changes.filter((c) => c.field_path === "status" && c.after === "approved");
       const aiChanges = changes.filter((c) =>
         c.field_path !== "status" && aiSuggestedKeys.has(fieldKeyFromPath(c.field_path))
@@ -564,24 +632,19 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       savedOk = true; // don't prompt "discard changes?" on the post-save close
       onSaved?.();
       close();
+      return true;
     } catch (err) {
       toast(err.message || "Save failed");
       setSaveBusy(false);
       btn.disabled = false;
       btn.textContent = "Save";
+      return false;
     }
   };
-  headerSaveBtn.onclick = saveCurrent;
-  footerSaveBtn?.addEventListener("click", saveCurrent);
+  headerSaveBtn.onclick = () => saveCurrent();
+  footerSaveBtn?.addEventListener("click", () => saveCurrent());
   saveApproveBtn?.addEventListener("click", async () => {
-    const previousStatus = status;
-    status = "approved";
-    paintStatusPills();
-    await saveCurrent();
-    if (!savedOk && document.body.contains(sheet)) {
-      status = previousStatus;
-      paintStatusPills();
-    }
+    await saveCurrent({ targetStatus: "approved" });
   });
 
   // Per-item change history (audit log; readable by editors).
@@ -638,7 +701,7 @@ function readinessPanelHtml(readiness) {
     ...readiness.blockers.map((b) => `<li>${esc(b.detail || b.label)}</li>`),
     ...readiness.warnings.map((w) => `<li>${esc(w.detail || w.label)}</li>`),
   ].join("");
-  return `<div class="ready-panel ${readiness.isReady ? "is-ready" : readiness.blockers.length ? "is-blocked" : "is-warn"}">
+  return `<div class="ready-panel ${readiness.isReady ? "is-ready" : readiness.blockers.length ? "is-blocked" : "is-warn"}" id="readyPanel">
     <div class="ready-title">${esc(title)}</div>
     <div class="ready-detail">${esc(detail)}</div>
     ${rows ? `<ul>${rows}</ul>` : ""}
