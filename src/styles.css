@@ -883,6 +883,14 @@ body { overflow:hidden; overscroll-behavior:none; }
 .sheet-body { padding:14px; overflow-y:auto; }
 .sheet-img { aspect-ratio:1/1; max-height:38dvh; display:flex; justify-content:center; margin-bottom:12px; cursor:zoom-in; }
 .sheet-img img { max-width:100%; max-height:38dvh; object-fit:contain; border-radius:8px; }
+.ready-panel { border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin:8px 0 10px;
+  background:var(--panel); font-size:13px; line-height:1.35; }
+.ready-panel.is-ready { border-color:var(--ok-border); }
+.ready-panel.is-blocked { border-color:var(--warn); }
+.ready-panel.is-warn { border-color:var(--review-border); }
+.ready-title { font-weight:700; margin-bottom:2px; }
+.ready-detail { color:var(--muted); }
+.ready-panel ul { margin:6px 0 0 18px; padding:0; color:var(--muted); }
 
 .aibtn { width:100%; margin-bottom:12px; border-color:var(--ai-border); color:var(--ai-txt);
   display:inline-flex; align-items:center; justify-content:center; gap:8px; }

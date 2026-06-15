@@ -7,6 +7,7 @@ import {
   normalizeValue,
   normalizeAttributeValue,
 } from "./data.js";
+import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
 import { toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
 
 // The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
@@ -130,11 +131,13 @@ export async function openEditor(itemId, caps, onSaved) {
 
         ${canEdit && imgUrl ? `<button class="ghost aibtn" id="aiBtn">${ICON.sparkle} AI suggest fields from photo</button>` : ""}
 
+        ${readinessPanelHtml(getItemReadiness(item))}
+
         <div class="status-row" id="statusRow" role="group" aria-label="Status">
-          ${["draft", "needs-review", "approved", "flag"]
+          ${STATUS_OPTIONS
             .map(
               (s) =>
-                `<button class="status-pill ${item.status === s ? "on" : ""}" data-status="${s}" aria-pressed="${item.status === s}">${s}</button>`
+                `<button class="status-pill ${item.status === s ? "on" : ""}" data-status="${s}" aria-pressed="${item.status === s}">${esc(statusLabel(s))}</button>`
             )
             .join("")}
         </div>
@@ -280,10 +283,10 @@ export async function openEditor(itemId, caps, onSaved) {
     openBottomSheet("What the labels mean", `
       <div class="legend">
         <div class="sheet-sec">Status</div>
-        <div class="legend-row"><span class="stbadge st-draft">draft</span> Not reviewed yet.</div>
-        <div class="legend-row"><span class="stbadge st-review">needs-review</span> Flagged for a closer look.</div>
-        <div class="legend-row"><span class="stbadge st-ok">approved</span> Checked and good to go.</div>
-        <div class="legend-row"><span class="stbadge st-flag">flag</span> Has a problem to fix.</div>
+        <div class="legend-row"><span class="stbadge st-draft">${esc(statusLabel("draft"))}</span> Not reviewed yet.</div>
+        <div class="legend-row"><span class="stbadge st-review">${esc(statusLabel("needs-review"))}</span> Needs a closer look.</div>
+        <div class="legend-row"><span class="stbadge st-ok">${esc(statusLabel("approved"))}</span> Checked and good to go.</div>
+        <div class="legend-row"><span class="stbadge st-flag">${esc(statusLabel("flag"))}</span> Has a problem to fix.</div>
         <div class="sheet-sec">Confidence</div>
         <div class="legend-row"><span class="conf-pill conf-high">H</span> High — the AI was sure.</div>
         <div class="legend-row"><span class="conf-pill conf-medium">M</span> Medium — likely right; worth a glance.</div>
@@ -386,11 +389,22 @@ export async function openEditor(itemId, caps, onSaved) {
   sheet.querySelector("#saveBtn").onclick = async () => {
     if (!canEdit) return;
     if (!navigator.onLine) { toast("You're offline — reconnect to save your changes."); return; }
-    // An approved item must be sellable, so it can't be approved without a price.
-    const priceEl = sheet.querySelector('[data-key="price"]');
-    if (status === "approved" && (!priceEl || priceEl.value.trim() === "")) {
-      toast("Set a price before approving this item.");
-      return;
+    if (status === "approved") {
+      const candidate = formItemForReadiness(sheet, item, fields, conf, status);
+      const readiness = getItemReadiness(candidate, { forApproval: true });
+      if (readiness.blockers.length) {
+        toast("Can't approve: " + readiness.blockers.map((b) => b.label.toLowerCase()).join(", ") + ".");
+        return;
+      }
+      if (readiness.warnings.length) {
+        const ok = await confirmSheet({
+          title: "Approve with AI checks?",
+          message: readiness.warnings.map((w) => w.detail || w.label).join(" "),
+          confirmText: "Approve",
+          cancelText: "Review first",
+        });
+        if (!ok) return;
+      }
     }
     // One photo = one unit: a quantity above 1 is almost certainly a mistake
     // under this shop's workflow (each identical unit gets its own photo as
@@ -466,6 +480,25 @@ export async function openEditor(itemId, caps, onSaved) {
   }
 }
 
+function readinessPanelHtml(readiness) {
+  const primary = readiness.primary;
+  const title = readiness.isReady
+    ? "Ready to approve"
+    : primary?.label || "Approved";
+  const detail = primary?.detail || (readiness.isReady
+    ? "Price and required details are present."
+    : "This item has already been approved.");
+  const rows = [
+    ...readiness.blockers.map((b) => `<li>${esc(b.detail || b.label)}</li>`),
+    ...readiness.warnings.map((w) => `<li>${esc(w.detail || w.label)}</li>`),
+  ].join("");
+  return `<div class="ready-panel ${readiness.isReady ? "is-ready" : readiness.blockers.length ? "is-blocked" : "is-warn"}">
+    <div class="ready-title">${esc(title)}</div>
+    <div class="ready-detail">${esc(detail)}</div>
+    ${rows ? `<ul>${rows}</ul>` : ""}
+  </div>`;
+}
+
 // Render one labelled field row with the right control + a confidence pill.
 // `canEdit:false` renders the control disabled — read-only users used to get
 // editable-looking fields with a dead Save button, a confusing dead end.
@@ -512,6 +545,41 @@ function paintConfPill(pill, level) {
 }
 
 // Collect values, normalise vocab fields, and write to Supabase.
+function formItemForReadiness(sheet, item, fields, conf, status) {
+  const attributes = { ...(item.attributes || {}) };
+  for (const f of fields) {
+    const el = sheet.querySelector(`[data-key="${f.key}"]`);
+    if (!el) continue;
+    let val;
+    if (f.type === "boolean") val = el.checked;
+    else {
+      val = el.value.trim();
+      if (f.vocab) val = normalizeValue(f.vocab, val);
+      val = normalizeAttributeValue(item.category_id, f.key, val);
+    }
+    if (val === "" || val === false || val === null) delete attributes[f.key];
+    else attributes[f.key] = f.type === "number" ? Number(val) : val;
+  }
+
+  const textVal = (key) => sheet.querySelector(`[data-key="${key}"]`)?.value.trim() || "";
+  const numVal = (key) => {
+    const v = textVal(key);
+    return v ? Number(v) : null;
+  };
+
+  return {
+    ...item,
+    status,
+    name: textVal("name") || null,
+    brand: normalizeValue("brand", textVal("brand")) || null,
+    price: numVal("price"),
+    stock_quantity: numVal("stock_quantity") ?? 1,
+    reorder_level: numVal("reorder_level"),
+    attributes,
+    confidence: conf,
+  };
+}
+
 async function saveItem(sheet, item, fields, conf, status, canViewCost) {
   const attributes = { ...(item.attributes || {}) };
 

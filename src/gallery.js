@@ -3,6 +3,20 @@ import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
 import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, normalizeAttributeValue, vocabSuggestions, AI_BLIND_FIELDS, loadPosMirror } from "./data.js";
+import {
+  ISSUE_META,
+  REVIEW_QUEUE,
+  STATUS_OPTIONS,
+  approvalSummary,
+  getItemReadiness,
+  hasAiDoubt,
+  issueState,
+  missingCoreFields,
+  needsReviewItem,
+  queueMatches,
+  readyItem,
+  statusLabel,
+} from "./readiness.js";
 import { openCalibration } from "./calibration.js";
 import { openPricing } from "./pricing.js";
 import { openGuidedPricing } from "./pricing_guided.js";
@@ -362,89 +376,12 @@ const browseState = {
   review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", seg: "work", issue: "work" },
 };
 
-// AI_BLIND_FIELDS (fit, …) is imported from data.js — fields the AI can never
-// read from a photo, so a Low there is structural, not genuine doubt.
-// True when the AI flagged genuine doubt: a Low on a field it was actually
-// expected to read (AI-blind fields excluded).
-const hasLowConf = (it) =>
-  !!it.confidence &&
-  Object.entries(it.confidence).some(([k, v]) => v === "Low" && !AI_BLIND_FIELDS.has(k));
-// Triage predicate: an item needs review while it's flagged or still unreviewed,
-// or while it's a draft the AI is unsure about. An APPROVED item is finished — a
-// human signed off, low-confidence fields and all — so it never returns here.
-function hasAiSignal(it) {
-  if (it.brand || it.name) return true;
-  if (Object.keys(it.attributes || {}).some((k) => {
-    const v = it.attributes?.[k];
-    return v !== null && v !== undefined && v !== "";
-  })) return true;
-  return Object.keys(it.confidence || {}).length > 0;
-}
-
-function missingCoreFields(it) {
-  const missing = [];
-  if (!it.image_path) missing.push("photo");
-  if (!it.brand && !it.name) missing.push("brand/name");
-  if (!Object.keys(it.attributes || {}).some((k) => {
-    const v = it.attributes?.[k];
-    return v !== null && v !== undefined && v !== "";
-  })) missing.push("details");
-  return missing;
-}
-
-function issueState(it) {
-  if (it.status === "approved") {
-    if (it.pos_sync_status === "error" || it.pos_dirty) return "sync";
-    return null;
-  }
-  if (it.status === "flag") return "flag";
-  if (it.pos_sync_status === "error") return "sync";
-  if (it.image_path && !hasAiSignal(it)) return "ai";
-  if (missingCoreFields(it).length) return "missing";
-  if (it.price == null) return "price";
-  if (hasLowConf(it)) return "doubt";
-  return "ready";
-}
-
-const ISSUE_META = {
-  work:    { label: "Needs work", short: "Work", empty: "work", cls: "iss-work" },
-  ai:      { label: "Needs AI fill", short: "AI", empty: "AI-fill", cls: "iss-ai" },
-  price:   { label: "No price", short: "Price", empty: "unpriced", cls: "iss-price" },
-  doubt:   { label: "AI doubts", short: "Check", empty: "AI-doubt", cls: "iss-doubt" },
-  missing: { label: "Missing details", short: "Missing", empty: "missing-detail", cls: "iss-missing" },
-  flag:    { label: "Flagged", short: "Flag", empty: "flagged", cls: "iss-flag" },
-  sync:    { label: "Shop errors", short: "Shop", empty: "shop-error", cls: "iss-sync" },
-  ready:   { label: "Ready", short: "Ready", cls: "iss-ready" },
-};
-
-const REVIEW_QUEUE = ["work", "ai", "price", "doubt", "missing", "flag", "sync", "ready"];
-
-function queueMatches(it, issue) {
-  const st = issueState(it);
-  if (issue === "work") return !!st && st !== "ready";
-  return st === issue;
-}
-
-const needsReviewItem = (it) => {
-  const st = issueState(it);
-  return !!st && st !== "ready";
-};
-// "Ready to approve": everything necessary is present — priced, no genuine AI
-// doubt, not flagged — so a human glance is all that stands before approval.
-// Clean priced drafts qualify too: complete is complete, whichever status the
-// upload happened to choose. Partitions the Review tab with needsReviewItem.
-const readyItem = (it) => issueState(it) === "ready";
-
 function issueBadgesHtml(it, { compact = false } = {}) {
-  const st = issueState(it);
+  const readiness = getItemReadiness(it);
+  const st = readiness.issue;
   if (!st) return "";
   const meta = ISSUE_META[st] || ISSUE_META.work;
-  let title = meta.label;
-  if (st === "missing") title = `Missing ${missingCoreFields(it).join(", ")}`;
-  else if (st === "sync") title = it.pos_sync_error || "Shop sync needs attention";
-  else if (st === "ai") title = "Photo has not been read by AI yet";
-  else if (st === "price") title = "Set a retail price before approval";
-  else if (st === "doubt") title = "AI returned at least one low-confidence value";
+  const title = readiness.primary?.detail || meta.label;
   const label = compact ? meta.short : meta.label;
   return `<span class="issue-pill ${meta.cls}" title="${esc(title)}">${esc(label)}</span>`;
 }
@@ -580,7 +517,7 @@ async function renderGallery(view, caps, opts = {}) {
   // The value of a given facet key for an item.
   const valueOf = (it, key) => {
     if (key === "brand") return it.brand || "";
-    if (key === "status") return it.status || "";
+    if (key === "status") return statusLabel(it.status);
     if (key === "issue") return ISSUE_META[issueState(it)]?.label || "Clean";
     if (key === "shop") return shopState(it);
     if (key === "top") return (categoryPath(it.category_id) || "").split(" › ")[0] || "";
@@ -796,19 +733,19 @@ async function renderGallery(view, caps, opts = {}) {
       ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
       : `<span style="color:var(--muted);font-size:12px">no image</span>`;
     const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
-      ${inner}<span class="selcheck">✓</span>${hasLowConf(it) ? '<span class="lowdot" title="Has a low-confidence field"></span>' : ""}</div>`;
+      ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check"></span>' : ""}</div>`;
     return `<div class="card${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
       ${thumb}
       <div class="body">
         <div class="cardtop">
           <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
-          <span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span>
+          <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
         </div>
         <div class="issue-line">${issueBadgesHtml(it)}</div>
         <div class="cbrand">${esc(brand)}</div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
         <div class="cmeta">
-          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">No price</span>`}
+          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
           ${posChipHtml(it)}
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
@@ -832,19 +769,19 @@ async function renderGallery(view, caps, opts = {}) {
       ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
       : `<span class="row-noimg">—</span>`;
     const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
-      ${inner}<span class="selcheck">✓</span>${hasLowConf(it) ? '<span class="lowdot" title="Has a low-confidence field"></span>' : ""}</div>`;
+      ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check"></span>' : ""}</div>`;
     return `<div class="card card-row${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
       ${thumb}
       <div class="row-main">
         <div class="row-top">
           <span class="row-brand">${esc(brand)}</span>
-          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span></span>
+          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span></span>
         </div>
         <div class="row-sub">
           ${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}${variant ? `<span class="row-attr">${variant}</span>` : ""}
         </div>
         <div class="row-meta">
-          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">No price</span>`}
+          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
           ${posChipHtml(it)}
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
@@ -901,10 +838,10 @@ async function renderGallery(view, caps, opts = {}) {
       if (issue === "work") return `${n} need${n === 1 ? "s" : ""} work`;
       if (issue === "ai") return `${n} need${n === 1 ? "s" : ""} AI fill`;
       if (issue === "price") return `${n} without a price`;
-      if (issue === "doubt") return `${n} with AI doubts`;
+      if (issue === "doubt") return `${n} to check with AI`;
       if (issue === "missing") return `${n} missing details`;
-      if (issue === "flag") return `${n} flagged`;
-      if (issue === "sync") return `${n} shop error${n === 1 ? "" : "s"}`;
+      if (issue === "flag") return `${n} problem item${n === 1 ? "" : "s"}`;
+      if (issue === "sync") return `${n} shop issue${n === 1 ? "" : "s"}`;
       if (issue === "ready") return `${n} ready to approve`;
       return `${n} review item${n === 1 ? "" : "s"}`;
     };
@@ -1059,7 +996,7 @@ async function renderGallery(view, caps, opts = {}) {
     for (const k in active) for (const v of active[k]) {
       out.push(`<button class="apill" data-facet="${esc(k)}" data-val="${esc(v)}">${esc(facetByKey[k]?.label || k)}: ${esc(v)} ✕</button>`);
     }
-    if (noPrice) out.push(`<button class="apill" data-clear="noprice">No price yet ✕</button>`);
+    if (noPrice) out.push(`<button class="apill" data-clear="noprice">Missing price ✕</button>`);
     if (priceMin || priceMax) out.push(`<button class="apill" data-clear="price">Price: ${esc(priceMin || "0")}–${esc(priceMax || "∞")} ✕</button>`);
     if (datePreset !== "all") out.push(`<button class="apill" data-clear="dt">${esc(DATE_FILTERS.find((d) => d.v === datePreset)?.label || datePreset)} ✕</button>`);
     pillsEl.innerHTML = out.join("");
@@ -1111,7 +1048,7 @@ async function renderGallery(view, caps, opts = {}) {
     const matchCount = () => data.filter((it) => matches(it, null)).length;
     const PRIMARY = ["issue", "shop", "category", "brand"]; // shown directly; the rest go under "More"
     const moreFacets = facets.filter((f) => !PRIMARY.includes(f.key));
-    const priceLabel = () => noPrice ? "No price yet"
+    const priceLabel = () => noPrice ? "Missing price"
       : (priceMin || priceMax)
         ? `${fmtPrice(priceMin || 0)}–${priceMax ? fmtPrice(priceMax) : "∞"}` : "Any";
     const dateLabel = () => DATE_FILTERS.find((d) => d.v === datePreset)?.label || "Any date";
@@ -1397,7 +1334,7 @@ async function renderGallery(view, caps, opts = {}) {
     let body = `
       <div class="be-note muted">Only the fields you fill are applied to the ${ids.length} selected item${ids.length === 1 ? "" : "s"}.</div>
       <div class="cm-label">Status</div>
-      <select id="be-status"><option value="">${UNCH}</option>${["draft", "needs-review", "approved", "flag"].map((s) => `<option value="${s}">${s}</option>`).join("")}</select>
+      <select id="be-status"><option value="">${UNCH}</option>${STATUS_OPTIONS.filter((s) => s !== "approved").map((s) => `<option value="${s}">${esc(statusLabel(s))}</option>`).join("")}</select>
       <div class="cm-label">Brand</div>
       <input id="be-brand" list="dl-brand" placeholder="${UNCH}">
       <datalist id="dl-brand">${vocabSuggestions("brand").map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
@@ -1493,29 +1430,67 @@ async function renderGallery(view, caps, opts = {}) {
   }
   // The shared approve core — used by the selection bar AND the Ready
   // segment's "Approve all" (identical guard/Undo semantics either way).
+  function approvalReasonText(entries, key = "blockers") {
+    const counts = {};
+    for (const entry of entries) {
+      for (const issue of entry.readiness[key] || []) {
+        counts[issue.label] = (counts[issue.label] || 0) + 1;
+      }
+    }
+    return Object.entries(counts)
+      .map(([label, n]) => `${n} ${label.toLowerCase()}`)
+      .join(", ");
+  }
+
   async function approveItems(ids) {
     if (!ids.length) return;
     // No price ⇒ not sellable ⇒ can't be approved. Approve the priced ones and
     // report how many were skipped, rather than blocking the whole batch.
-    const priced = ids.filter((id) => byId[id]?.price != null);
-    const skipped = ids.length - priced.length;
-    if (!priced.length) {
-      // Don't just name the problem — offer the cure: the pricing tool accepts
-      // exactly this selection.
-      toast(`Can't approve — ${skipped} item${skipped === 1 ? "" : "s"} have no price.`, {
-        label: "Set prices",
-        onClick: () => { if (selectionMode) exitSelection(); openPricing(caps, refresh, { itemIds: ids }); },
-      });
+    const items = ids.map((id) => byId[id]).filter(Boolean);
+    const summary = approvalSummary(items);
+    const approveIds = summary.approvable.map(({ item }) => item.id);
+    const blockedN = summary.blocked.length;
+    if (!approveIds.length) {
+      const reasons = approvalReasonText(summary.blocked) || "not ready";
+      const hasPriceBlocker = summary.blocked.some(({ readiness }) =>
+        readiness.blockers.some((b) => b.issue === "price")
+      );
+      const action = hasPriceBlocker
+        ? { label: "Set prices", onClick: () => { if (selectionMode) exitSelection(); openPricing(caps, refresh, { itemIds: ids }); } }
+        : null;
+      toast(`Can't approve: ${reasons}.`, action);
       return;
     }
-    const prior = priced.map((id) => ({ id, status: byId[id]?.status }));
-    const { error } = await supabase.from("items").update({ status: "approved" }).in("id", priced);
+    if (blockedN) {
+      const reasons = approvalReasonText(summary.blocked) || "not ready";
+      const ok = await confirmSheet({
+        title: "Approve ready items?",
+        message: `${approveIds.length} item${approveIds.length === 1 ? "" : "s"} can be approved. ${blockedN} will stay in Review: ${reasons}.`,
+        confirmText: `Approve ${approveIds.length}`,
+        cancelText: "Cancel",
+      });
+      if (!ok) return;
+    }
+
+    if (summary.warned.length) {
+      const reasons = approvalReasonText(summary.warned, "warnings") || "AI fields need a check";
+      const ok = await confirmSheet({
+        title: "Approve with AI checks?",
+        message: `${summary.warned.length} item${summary.warned.length === 1 ? " has" : "s have"} warnings: ${reasons}. Approve only if you have checked them.`,
+        confirmText: "Approve",
+        cancelText: "Review first",
+      });
+      if (!ok) return;
+    }
+
+    const prior = approveIds.map((id) => ({ id, status: byId[id]?.status }));
+    const { error } = await supabase.from("items").update({ status: "approved" }).in("id", approveIds);
     if (error) { toast("Approve failed: " + error.message); return; }
     navigator.vibrate?.([12, 40, 12]);
     if (selectionMode) exitSelection();
-    const msg = skipped
-      ? `Approved ${priced.length} · ${skipped} skipped (no price)`
-      : `Approved ${priced.length} item${priced.length === 1 ? "" : "s"}`;
+    const msg = blockedN
+      ? `Approved ${approveIds.length}; ${blockedN} left in Review`
+      : `Approved ${approveIds.length} item${approveIds.length === 1 ? "" : "s"}`;
     toast(msg, {
       label: "Undo",
       onClick: async () => {
