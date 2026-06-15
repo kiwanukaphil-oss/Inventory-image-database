@@ -1034,6 +1034,10 @@ async function openActivity(itemId) {
      ${!eventRows && !auditRows && !audit.error ? '<div class="muted">No history yet.</div>' : ""}`);
 }
 
+// REMOVAL CANDIDATE: openHistory is no longer wired anywhere — the editor's
+// "View full activity" (#historyBtn) calls openActivity, which already shows
+// the audit log under a "Field history" section. Kept flagged (not deleted)
+// per the flag-then-delete convention; safe to remove on confirmation.
 // Per-item change history from the audit log, shown in a bottom sheet.
 async function openHistory(itemId) {
   const { data, error } = await supabase

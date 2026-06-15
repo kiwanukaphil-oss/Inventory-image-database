@@ -53,13 +53,23 @@ function valueOf(it, key) {
  * @param {object} [opts]    { itemIds } to price only a selected subset
  */
 export async function openPricing(caps, onClose, opts = {}) {
+  // Show the overlay immediately with a spinner so tapping "Set prices" feels
+  // responsive — loading the catalogue (up to 5000 rows) can take a moment.
+  // The real content replaces this innerHTML once the data + groups are ready.
+  const el = document.createElement("div");
+  el.className = "calib pricing";
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Set prices</span></div>
+    <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("open"));
+
   await loadRefData(); // category tree + field labels drive grouping + labels
 
   const { data: rows, error } = await supabase
     .from("items")
     .select("id, brand, attributes, category_id, price")
     .limit(5000);
-  if (error) { toast("Couldn't load items: " + error.message); return; }
+  if (error) { toast("Couldn't load items: " + error.message); el.remove(); return; }
   // When launched from a gallery selection, price only those items.
   const idset = opts.itemIds?.length ? new Set(opts.itemIds) : null;
   const items = (rows || []).filter((it) => !idset || idset.has(it.id));
@@ -118,10 +128,7 @@ export async function openPricing(caps, onClose, opts = {}) {
   const scopedItems = () => items.filter(matchesScope);
 
   // ---- overlay shell (reuses the calibration overlay layout) --------------
-  const el = document.createElement("div");
-  el.className = "calib pricing";
-  document.body.appendChild(el);
-  requestAnimationFrame(() => el.classList.add("open"));
+  // el is already created + shown (with a loading spinner) at the top of openPricing.
   const release = trapFocus(el);
   const close = () => {
     document.removeEventListener("keydown", onKey);
