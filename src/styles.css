@@ -470,7 +470,7 @@ body { overflow:hidden; overscroll-behavior:none; }
 .source-pill.src-manual, .source-pill.src-bulk, .source-pill.src-mixed { color:var(--review-txt); border-color:var(--review-border); }
 .source-pill.src-pricing, .source-pill.src-approval { color:var(--ok-txt); border-color:var(--ok-border); }
 .source-pill.src-undo { color:var(--warn); border-color:var(--warn); }
-.source-pill.src-upload, .source-pill.src-system, .source-pill.src-shop { color:var(--muted); border-color:var(--line); }
+.source-pill.src-upload, .source-pill.src-system, .source-pill.src-shop, .source-pill.src-history { color:var(--muted); border-color:var(--line); }
 .card .cbrand { font-weight:600; line-height:1.25; }
 .card .cattr { font-size:13px; color:var(--txt); }
 .card .cstyle { font-size:12px; color:var(--muted); }

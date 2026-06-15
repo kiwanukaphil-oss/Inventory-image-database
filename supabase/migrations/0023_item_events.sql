@@ -72,12 +72,12 @@ alter table public.item_events enable row level security;
 
 drop policy if exists item_events_read on public.item_events;
 create policy item_events_read on public.item_events
-  for select using (public.current_user_role() in ('editor','admin'));
+  for select using (public.auth_can_edit());
 
 drop policy if exists item_events_insert on public.item_events;
 create policy item_events_insert on public.item_events
-  for insert with check (public.current_user_role() in ('editor','admin'));
+  for insert with check (public.auth_can_edit());
 
 drop policy if exists item_events_delete on public.item_events;
 create policy item_events_delete on public.item_events
-  for delete using (public.current_user_role() = 'admin');
+  for delete using (public.auth_can_manage_users());

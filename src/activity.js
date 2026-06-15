@@ -10,10 +10,12 @@ const SOURCE_LABELS = {
   undo: "Undo",
   shop: "Shop sync",
   system: "System",
+  history: "Edited",
 };
 
 const FIELD_COLUMNS = ["name", "brand", "price", "stock_quantity", "reorder_level", "status", "category_id"];
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+const QUERY_CHUNK = 80;
 
 export function activitySourceLabel(source) {
   return SOURCE_LABELS[source] || source || "Updated";
@@ -42,6 +44,12 @@ function sameValue(a, b) {
 
 function jsonValue(v) {
   return v === undefined ? null : v;
+}
+
+function chunks(values, size = QUERY_CHUNK) {
+  const out = [];
+  for (let i = 0; i < values.length; i += size) out.push(values.slice(i, i + size));
+  return out;
 }
 
 export function diffItemValues(before = {}, after = {}) {
@@ -85,7 +93,12 @@ export async function logItemActivity(itemId, eventType, source, changes = [], s
         summary,
       }))
     : [{ item_id: itemId, event_type: eventType, source, summary }];
-  try { await supabase.from("item_events").insert(rows); } catch {}
+  try {
+    const { error } = await supabase.from("item_events").insert(rows);
+    if (error) console.warn("item activity logging failed", error.message);
+  } catch (e) {
+    console.warn("item activity logging failed", e?.message || e);
+  }
 }
 
 export async function logManyItemActivities(itemIds, eventType, source, changesByItem = new Map(), summary = "") {
@@ -109,7 +122,12 @@ export async function logManyItemActivities(itemIds, eventType, source, changesB
       rows.push({ item_id: id, event_type: eventType, source, summary });
     }
   }
-  try { await supabase.from("item_events").insert(rows); } catch {}
+  try {
+    const { error } = await supabase.from("item_events").insert(rows);
+    if (error) console.warn("item activity logging failed", error.message);
+  } catch (e) {
+    console.warn("item activity logging failed", e?.message || e);
+  }
 }
 
 export async function loadItemActivity(itemId, limit = 40) {
@@ -130,46 +148,97 @@ export async function loadItemActivity(itemId, limit = 40) {
 
 export async function loadItemActivitySummaries(itemIds) {
   if (!itemIds?.length) return new Map();
+  const uniqueIds = [...new Set(itemIds)];
+  const rows = [];
   try {
-    const { data, error } = await supabase
-      .from("item_events")
-      .select("item_id,event_type,source,field_path,summary,actor,created_at")
-      .in("item_id", itemIds)
-      .order("created_at", { ascending: false })
-      .limit(Math.min(6000, Math.max(400, itemIds.length * 12)));
-    if (error) return new Map();
-
-    const map = new Map();
-    const now = Date.now();
-    for (const row of data || []) {
-      if (!row.item_id) continue;
-      if (!map.has(row.item_id)) {
-        map.set(row.item_id, {
-          latest_at: row.created_at,
-          latest_summary: row.summary || activitySourceLabel(row.source),
-          latest_source: row.source,
-          latest_actor: row.actor || null,
-          sources: new Set(),
-          event_count: 0,
-          field_count: 0,
-          recent_edit: false,
-        });
+    for (const ids of chunks(uniqueIds)) {
+      const { data, error } = await supabase
+        .from("item_events")
+        .select("item_id,event_type,source,field_path,summary,actor,created_at")
+        .in("item_id", ids)
+        .order("created_at", { ascending: false })
+        .limit(Math.max(200, ids.length * 12));
+      if (error) {
+        console.warn("item activity summary failed", error.message);
+        continue;
       }
-      const s = map.get(row.item_id);
-      s.sources.add(row.source);
-      s.event_count++;
-      if (row.field_path) s.field_count++;
-      const recent = row.created_at && now - new Date(row.created_at).getTime() <= RECENT_MS;
-      if (recent && ["manual", "bulk", "pricing", "approval", "undo"].includes(row.source)) {
-        s.recent_edit = true;
-      }
+      rows.push(...(data || []));
     }
-    return map;
-  } catch {
-    return new Map();
+  } catch (e) {
+    console.warn("item activity summary failed", e?.message || e);
   }
+
+  rows.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  const map = summarizeRows(rows);
+  const missing = uniqueIds.filter((id) => !map.has(id));
+  if (missing.length) {
+    const fallback = await loadAuditActivitySummaries(missing);
+    for (const [id, summary] of fallback) if (!map.has(id)) map.set(id, summary);
+  }
+  return map;
 }
 
 export function hasRecentEdit(item) {
   return !!item?.activity?.recent_edit;
+}
+
+function summarizeRows(rows) {
+  const map = new Map();
+  const now = Date.now();
+  for (const row of rows || []) {
+    if (!row.item_id) continue;
+    if (!map.has(row.item_id)) {
+      map.set(row.item_id, {
+        latest_at: row.created_at,
+        latest_summary: row.summary || activitySourceLabel(row.source),
+        latest_source: row.source,
+        latest_actor: row.actor || null,
+        sources: new Set(),
+        event_count: 0,
+        field_count: 0,
+        recent_edit: false,
+      });
+    }
+    const s = map.get(row.item_id);
+    s.sources.add(row.source);
+    s.event_count++;
+    if (row.field_path) s.field_count++;
+    const recent = row.created_at && now - new Date(row.created_at).getTime() <= RECENT_MS;
+    if (recent && ["manual", "bulk", "pricing", "approval", "undo", "history"].includes(row.source)) {
+      s.recent_edit = true;
+    }
+  }
+  return map;
+}
+
+async function loadAuditActivitySummaries(itemIds) {
+  const rows = [];
+  try {
+    for (const ids of chunks(itemIds)) {
+      const { data, error } = await supabase
+        .from("audit_log")
+        .select("item_id,change_type,field,actor,created_at,notes")
+        .eq("change_type", "edit")
+        .in("item_id", ids)
+        .order("created_at", { ascending: false })
+        .limit(Math.max(200, ids.length * 8));
+      if (error) {
+        console.warn("audit activity fallback failed", error.message);
+        continue;
+      }
+      rows.push(...(data || []).map((r) => ({
+        item_id: r.item_id,
+        event_type: "manual_edit",
+        source: "history",
+        field_path: r.field,
+        summary: r.notes || "Edited in field history",
+        actor: r.actor || null,
+        created_at: r.created_at,
+      })));
+    }
+  } catch (e) {
+    console.warn("audit activity fallback failed", e?.message || e);
+  }
+  rows.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  return summarizeRows(rows);
 }
