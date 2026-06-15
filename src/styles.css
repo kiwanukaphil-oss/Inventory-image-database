@@ -539,6 +539,14 @@ body { overflow:hidden; overscroll-behavior:none; }
 .shop-chip.on { border-color:var(--accent); color:var(--accent); font-weight:600; }
 .shop-asof { display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .shop-refresh { border:none; background:none; color:var(--muted); font-size:16px; padding:2px 6px; }
+.shop-health { display:grid; grid-template-columns:repeat(5, minmax(0,1fr)); gap:6px; }
+.shop-health span, .shop-health button { min-width:0; border:1px solid var(--line); border-radius:8px;
+  background:var(--control); color:var(--txt); padding:7px 5px; text-align:left; }
+.shop-health button { cursor:pointer; }
+.shop-health b { display:block; font-size:16px; line-height:1.05; }
+.shop-health small { display:block; color:var(--muted); font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.shop-health .warn { border-color:var(--warn); }
+.shop-health .bad { border-color:var(--flag-border); color:var(--flag-txt); }
 .shop-showall { width:100%; margin-top:6px; padding:7px; border:none; background:none;
   color:var(--accent); font-weight:600; font-size:13px; }
 .shop-toggle { display:inline-flex; gap:0; margin-left:auto; margin-right:8px; border:1px solid var(--line);

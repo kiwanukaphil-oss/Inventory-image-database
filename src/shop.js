@@ -1,6 +1,7 @@
 import { supabase } from "./db.js";
 import { loadRefData, loadPosMirror, getSetting, categoryPath } from "./data.js";
 import { openEditor } from "./editor.js";
+import { openSyncCenter } from "./synccenter.js";
 import { ICON } from "./ui.js";
 
 // The Shop tab — answers, not analytics. Each card is a question floor staff
@@ -33,7 +34,7 @@ export async function renderShop(view, caps, onChanged) {
   const [{ data: items, error }, posMirror] = await Promise.all([
     supabase
       .from("items")
-      .select("id, name, brand, sku, status, image_path, attributes, category_id, pos_sync_status, pos_variant_id, pos_synced_at, categories(name)")
+      .select("id, name, brand, sku, status, image_path, attributes, category_id, pos_sync_status, pos_variant_id, pos_synced_at, pos_dirty, categories(name)")
       .order("created_at", { ascending: true }),
     loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
   ]);
@@ -46,10 +47,13 @@ export async function renderShop(view, caps, onChanged) {
   // One representative catalog item per POS variant (oldest with a photo) —
   // duplicate-SKU photos collapse here; the report counts products, not photos.
   const repByVariant = new Map();
-  let queued = 0, errors = 0;
+  let queued = 0, errors = 0, sending = 0, dirty = 0, inShop = 0;
   for (const it of items || []) {
     if (it.status === "approved" && !it.pos_sync_status) queued++;
     if (it.pos_sync_status === "error") errors++;
+    if (it.pos_sync_status === "awaiting_approval" || it.pos_sync_status === "pending") sending++;
+    if (it.pos_dirty) dirty++;
+    if (it.pos_sync_status === "synced") inShop++;
     if (!it.pos_variant_id) continue;
     const cur = repByVariant.get(it.pos_variant_id);
     if (!cur || (!cur.image_path && it.image_path)) repByVariant.set(it.pos_variant_id, it);
@@ -191,6 +195,14 @@ export async function renderShop(view, caps, onChanged) {
           <button class="shop-refresh" id="shopRefresh" aria-label="Refresh">${ICON.refresh || "↻"}</button>
         </div>
 
+        <div class="shop-health">
+          <span><b>${inShop}</b><small>In shop</small></span>
+          <button data-synccenter><b>${queued}</b><small>Queued</small></button>
+          <button data-synccenter><b>${sending}</b><small>Sending</small></button>
+          <button data-synccenter class="${dirty ? "warn" : ""}"><b>${dirty}</b><small>Update needed</small></button>
+          <button data-synccenter class="${errors ? "bad" : ""}"><b>${errors}</b><small>Shop issues</small></button>
+        </div>
+
         <div class="shop-card shop-today">
           <div class="shop-head"><span>${filtered ? "Selection" : "Today at the shop"}</span></div>
           <div class="shop-bignums">
@@ -240,6 +252,7 @@ export async function renderShop(view, caps, onChanged) {
       if (chip) { state.top = chip.dataset.top; draw(); return; }
       const row = e.target.closest(".shop-row[data-id]");
       if (row) openEditor(row.dataset.id, caps, onChanged);
+      if (e.target.closest("[data-synccenter]")) openSyncCenter(caps, () => renderShop(view, caps, onChanged));
     });
     let qTimer;
     wrap.querySelector("#shopQ").addEventListener("input", (e) => {
