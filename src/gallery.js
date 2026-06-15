@@ -694,7 +694,6 @@ async function renderGallery(view, caps, opts = {}) {
         <span class="spacer"></span>
         <button class="linkbtn" id="selAll">Select all</button>
       </div>
-      ${review ? `<div class="review-inbox" id="reviewInbox" aria-live="polite"></div>` : ""}
       ${review ? `<div class="seg-row review-queues" id="segRow" aria-label="Review queues">
         ${REVIEW_QUEUE.map((k) => `<button class="seg${issue === k ? " on" : ""} ${ISSUE_META[k].cls}" data-issue="${k}">
           ${esc(ISSUE_META[k].label)}<span class="seg-n" id="segN-${k}"></span></button>`).join("")}
@@ -718,7 +717,6 @@ async function renderGallery(view, caps, opts = {}) {
   const hdrNormal = view.querySelector("#hdrNormal");
   const hdrSelect = view.querySelector("#hdrSelect");
   const actionbar = view.querySelector("#actionbar");
-  const reviewInbox = view.querySelector("#reviewInbox");
 
   // Persist the current view state for this surface (so tab switches keep place).
   const saveState = () => {
@@ -760,7 +758,6 @@ async function renderGallery(view, caps, opts = {}) {
     hdrSelect.hidden = false;
     pillsEl.hidden = true;
     countEl.hidden = true;
-    if (reviewInbox) reviewInbox.hidden = true;
     const sr = view.querySelector("#segRow"); if (sr) sr.hidden = true;
     if (actionbar) actionbar.hidden = false;
     if (appNav) appNav.style.display = "none"; // one bottom bar at a time
@@ -775,7 +772,6 @@ async function renderGallery(view, caps, opts = {}) {
     hdrNormal.hidden = false;
     pillsEl.hidden = false;
     countEl.hidden = false;
-    if (reviewInbox) reviewInbox.hidden = false;
     const sr = view.querySelector("#segRow"); if (sr) sr.hidden = false;
     if (actionbar) actionbar.hidden = true;
     if (appNav) appNav.style.display = "";
@@ -980,39 +976,6 @@ async function renderGallery(view, caps, opts = {}) {
       ? reviewCountText(n)
       : `${n} of ${data.length} item${data.length === 1 ? "" : "s"}`;
 
-    // Filters matched nothing → actionable empty state (not a blank grid).
-    function reviewActionHtml(n) {
-      if (!review || !canEdit || !n) return "";
-      if (issue === "ai") return failedAiShown
-        ? `<div class="review-actions">
-            <button class="review-action" data-cta="retryai">Retry failed</button>
-            <button class="review-action secondary" data-cta="aifill">AI-fill visible</button>
-          </div>`
-        : `<button class="review-action" data-cta="aifill">AI-fill visible</button>`;
-      if (issue === "price") return `<button class="review-action" data-cta="setprices">Set prices</button>`;
-      if (issue === "sync") return `<button class="review-action" data-cta="sync">Open shop sync</button>`;
-      if (issue === "ready") return `<button class="review-action" data-cta="approveall">Approve visible</button>`;
-      return `<button class="review-action" data-cta="openfirst">Open first item</button>`;
-    }
-
-    function paintReviewInbox(n) {
-      if (!reviewInbox) return;
-      const counts = Object.fromEntries(REVIEW_QUEUE.map((k) => [k, data.filter((it) => queueMatches(it, k)).length]));
-      const meta = ISSUE_META[issue] || ISSUE_META.work;
-      reviewInbox.innerHTML = `
-        <div class="ri-stats">
-          <span><b>${counts.work || 0}</b><small>Needs work</small></span>
-          <span><b>${counts.edited || 0}</b><small>Edited</small></span>
-          <span><b>${counts.price || 0}</b><small>Missing price</small></span>
-          <span><b>${counts.ready || 0}</b><small>Ready</small></span>
-        </div>
-        <div class="ri-focus">
-          <div class="ri-copy"><strong>${esc(meta.label)}</strong><span>${esc(reviewCountText(n))}</span></div>
-          ${reviewActionHtml(n)}
-        </div>`;
-    }
-
-    if (review) paintReviewInbox(rows.length);
 
     if (rows.length === 0) {
       countEl.innerHTML = `${countText(0)}${countNote}${freshnessNote()}`;
@@ -1207,7 +1170,6 @@ async function renderGallery(view, caps, opts = {}) {
     else if (cta.dataset.cta === "openfirst" && filtered[0]) openItemEditor(filtered[0].id, reviewFocusIssue(filtered[0]));
   }
   countEl.addEventListener("click", handleCtaClick);
-  if (reviewInbox) reviewInbox.addEventListener("click", handleCtaClick);
 
   // Review-tab segment switch (Needs work ⇄ Ready to approve).
   const segRow = view.querySelector("#segRow");
@@ -1249,7 +1211,6 @@ async function renderGallery(view, caps, opts = {}) {
     }, { passive: true });
     el.addEventListener("pointercancel", () => { start = null; }, { passive: true });
   }
-  bindReviewSwipe(reviewInbox);
   bindReviewSwipe(countEl);
 
   pillsEl.addEventListener("click", (e) => {
