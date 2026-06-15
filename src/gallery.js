@@ -1635,6 +1635,23 @@ async function renderGallery(view, caps, opts = {}) {
         if (costVal !== undefined) changes.push({ field_path: "cost_price", before: null, after: costVal });
         if (changes.length) changesByItem.set(it.id, changes);
       }
+
+      // Snapshot prior state so the edit is reversible (Undo). We capture the
+      // exact prior column values + attributes object per item, plus prior cost
+      // rows (read before the upsert), so Undo restores cleanly.
+      const priorCost = new Map();
+      if (costVal !== undefined) {
+        const { data: pc } = await supabase.from("item_costs").select("item_id, cost_price").in("item_id", ids);
+        for (const r of pc || []) priorCost.set(r.item_id, r.cost_price);
+      }
+      const colKeys = Object.keys(col);
+      const attrKeys = Object.keys(attrChanges);
+      const editUndoSnapshot = items.map((it) => ({
+        id: it.id,
+        col: Object.fromEntries(colKeys.map((k) => [k, it[k] ?? null])),
+        attributes: it.attributes ? { ...it.attributes } : {},
+        cost: priorCost.has(it.id) ? priorCost.get(it.id) : undefined,
+      }));
       sh.close();
       try {
         if (Object.keys(col).length) {
@@ -1655,8 +1672,38 @@ async function renderGallery(view, caps, opts = {}) {
           }
         }
         await logManyItemActivities(ids, "bulk_edit", "bulk", changesByItem, "Bulk edited selected items");
-        toast(`Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`);
         navigator.vibrate?.([12, 40, 12]);
+        toast(`Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
+          label: "Undo",
+          onClick: async () => {
+            try {
+              // Restore prior columns + (if attributes changed) the exact prior
+              // attributes object per item, cleanly removing any added keys.
+              for (const s of editUndoSnapshot) {
+                const upd = { ...s.col };
+                if (attrKeys.length) upd.attributes = s.attributes;
+                if (Object.keys(upd).length) {
+                  const { error: uErr } = await supabase.from("items").update(upd).eq("id", s.id);
+                  if (uErr) throw uErr;
+                }
+              }
+              if (costVal !== undefined) {
+                const noPrior = editUndoSnapshot.filter((s) => s.cost == null).map((s) => s.id);
+                const hadPrior = editUndoSnapshot.filter((s) => s.cost != null);
+                if (noPrior.length) await supabase.from("item_costs").delete().in("item_id", noPrior);
+                if (hadPrior.length) await supabase.from("item_costs")
+                  .upsert(hadPrior.map((s) => ({ item_id: s.id, cost_price: s.cost })), { onConflict: "item_id" });
+              }
+              const undoChanges = new Map([...changesByItem].map(([id, arr]) =>
+                [id, arr.map((c) => ({ field_path: c.field_path, before: c.after, after: c.before }))]));
+              await logManyItemActivities(ids, "undo", "undo", undoChanges, "Undid bulk edit");
+              toast("Bulk edit undone");
+              refresh();
+            } catch (e) {
+              toast("Undo failed: " + (e.message || e));
+            }
+          },
+        });
       } catch (e) {
         toast("Bulk edit failed: " + (e.message || e));
       }
@@ -1874,15 +1921,31 @@ async function renderGallery(view, caps, opts = {}) {
           // Deletion rule: pushed items' POS products are never deleted from
           // here (sales history) — only the catalog records/photos go.
           const inShop = ids.filter((id) => byId[id]?.pos_sync_status === "synced").length;
-          const ok = await confirmSheet({
-            title: `Delete ${ids.length} item${ids.length === 1 ? "" : "s"}?`,
-            message: inShop
-              ? `The selected items and their photos will be permanently deleted. ${inShop} of them ${inShop === 1 ? "is" : "are"} in the shop — the POS products and their stock are NOT touched; adjust stock in the POS if units physically left.`
-              : "The selected items and their photos will be permanently deleted. This cannot be undone.",
-            confirmText: "Delete",
-            danger: true,
-          });
-          if (!ok) return;
+          const warn = inShop
+            ? `The selected items and their photos will be permanently deleted. ${inShop} of them ${inShop === 1 ? "is" : "are"} in the shop — the POS products and their stock are NOT touched; adjust stock in the POS if units physically left.`
+            : "The selected items and their photos will be permanently deleted. This cannot be undone.";
+          // Deleting is irreversible. For a single item a red confirm is enough;
+          // for 2+ items require the word DELETE to be typed so a stray tap can't
+          // wipe a whole batch (there is no Undo for a hard delete).
+          if (ids.length >= 2) {
+            const typed = await promptSheet({
+              title: `Delete ${ids.length} items?`,
+              message: warn,
+              label: "Type DELETE to confirm",
+              placeholder: "DELETE",
+              confirmText: "Delete permanently",
+            });
+            if (typed === null) return;
+            if (typed.trim().toUpperCase() !== "DELETE") { toast("Not deleted — you didn't type DELETE."); return; }
+          } else {
+            const ok = await confirmSheet({
+              title: "Delete 1 item?",
+              message: warn,
+              confirmText: "Delete",
+              danger: true,
+            });
+            if (!ok) return;
+          }
           sh.close();
           const paths = ids.map((id) => byId[id]?.image_path).filter(Boolean);
           const { error } = await supabase.from("items").delete().in("id", ids);

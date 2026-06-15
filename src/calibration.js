@@ -268,13 +268,33 @@ export async function openCalibration(caps, onClose) {
     el.querySelector("#cX").onclick = close;
     el.querySelector("#cDone").onclick = close;
     const ap = el.querySelector("#cApprove");
+    const apLabel = ap?.textContent;
     if (ap) ap.onclick = async () => {
       ap.disabled = true;
+      // Snapshot prior statuses so the bulk approve is reversible (Undo).
+      const priorById = new Map(items.map(({ it }) => [it.id, it.status]));
       const { error } = await supabase.from("items").update({ status: "approved" }).in("id", allCorrectItems);
       if (error) { toast("Approve failed: " + error.message); ap.disabled = false; return; }
-      toast(`Approved ${allCorrectItems.length} item${allCorrectItems.length === 1 ? "" : "s"}`);
       navigator.vibrate?.([12, 40, 12]);
       ap.textContent = "Approved ✓";
+      toast(`Approved ${allCorrectItems.length} item${allCorrectItems.length === 1 ? "" : "s"}`, {
+        label: "Undo",
+        onClick: async () => {
+          // Restore each item's prior status — one write per distinct status.
+          const byStatus = {};
+          for (const id of allCorrectItems) {
+            const st = priorById.get(id);
+            if (st) (byStatus[st] ||= []).push(id);
+          }
+          for (const [st, sids] of Object.entries(byStatus)) {
+            const { error: uErr } = await supabase.from("items").update({ status: st }).in("id", sids);
+            if (uErr) { toast("Undo failed: " + uErr.message); return; }
+          }
+          toast("Approval undone");
+          ap.disabled = false;
+          if (apLabel) ap.textContent = apLabel;
+        },
+      });
     };
   }
 
