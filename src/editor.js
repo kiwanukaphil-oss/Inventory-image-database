@@ -127,6 +127,8 @@ export async function openEditor(itemId, caps, onSaved) {
         <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>Save</button>
       </header>
       <div class="sheet-body">
+        <section class="ed-section ed-verify" aria-label="Verify item">
+          <div class="ed-section-title">Verify</div>
         <div class="ed-offline" id="edOffline" hidden>● Offline — your changes are kept; tap Save once you reconnect.</div>
         ${imgUrl ? `<div class="sheet-img"><img src="${imgUrl}" alt="${imgAlt}"></div>` : ""}
 
@@ -143,6 +145,10 @@ export async function openEditor(itemId, caps, onSaved) {
             .join("")}
         </div>
         <button type="button" class="linkbtn legend-btn" id="legendBtn">What do these labels mean?</button>
+        </section>
+
+        <section class="ed-section ed-details" aria-label="Item details">
+          <div class="ed-section-title">Details</div>
 
         <div id="dupWarn" class="dup-warn" style="display:none"></div>
 
@@ -153,8 +159,10 @@ export async function openEditor(itemId, caps, onSaved) {
         ${fieldRow({ key: "name", label: "Name", type: "text" }, item.name, conf, false, canEdit)}
         ${fieldRow({ key: "brand", label: "Brand", type: "text", vocab: "brand" }, item.brand, conf, canEdit, canEdit)}
         ${fields.map((f) => fieldRow(f, item.attributes?.[f.key], conf, canEdit, canEdit)).join("")}
+        </section>
 
-        <div class="field-sec">Stock & pricing</div>
+        <section class="ed-section ed-selling" aria-label="Selling">
+          <div class="ed-section-title">Selling</div>
         ${shopLineHtml()}
         ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
         ${fieldRow(
@@ -165,10 +173,14 @@ export async function openEditor(itemId, caps, onSaved) {
           canEdit && item.pos_sync_status !== "synced"
         )}
         ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false, canEdit)}
+        </section>
+
+        <section class="ed-section ed-admin" aria-label="Admin">
+          <div class="ed-section-title">Admin</div>
         ${
           canViewCost
-            ? `<div class="field-sec">Cost <span class="adminonly">restricted</span></div>
-               ${fieldRow({ key: "cost_price", label: "Cost price", type: "number" }, cost, conf, false, canEdit)}`
+            ? `${fieldRow({ key: "cost_price", label: "Cost price", type: "number" }, cost, conf, false, canEdit)}
+               <div class="admin-note">Cost is restricted to admin roles.</div>`
             : ""
         }
 
@@ -178,7 +190,12 @@ export async function openEditor(itemId, caps, onSaved) {
 
         ${canEdit ? `<button class="ghost histbtn" id="historyBtn">View change history</button>` : ""}
         ${canDelete ? `<button class="danger del-btn" id="deleteBtn">Delete item</button>` : ""}
+        </section>
       </div>
+      ${canEdit ? `<div class="sheet-foot">
+        <button class="ghost" id="saveFootBtn" type="button">Save</button>
+        ${item.status === "approved" ? "" : `<button class="primary" id="saveApproveBtn" type="button">Save &amp; approve</button>`}
+      </div>` : ""}
     </div>`;
 
   // Datalists for vocab-backed fields (brand + any field with a vocab).
@@ -216,6 +233,7 @@ export async function openEditor(itemId, caps, onSaved) {
   };
   // Are there unsaved edits? (status changed, any highlighted field, or a
   // confidence pill the user touched). Used to guard accidental dismissal.
+  let status = item.status;
   let confDirty = false;
   let savedOk = false; // set true after a successful save so close doesn't prompt
   const isDirty = () => !savedOk && canEdit &&
@@ -244,15 +262,23 @@ export async function openEditor(itemId, caps, onSaved) {
   // Offline awareness: surface the state up front (banner + Save button) instead
   // of only failing on tap. Edits stay in the form; the user saves on reconnect.
   const offlineNote = sheet.querySelector("#edOffline");
+  const headerSaveBtn = sheet.querySelector("#saveBtn");
+  const footerSaveBtn = sheet.querySelector("#saveFootBtn");
+  const saveApproveBtn = sheet.querySelector("#saveApproveBtn");
+  const saveControls = [headerSaveBtn, footerSaveBtn, saveApproveBtn].filter(Boolean);
+  let saving = false;
+  const setSaveBusy = (busy) => {
+    saving = busy;
+    const off = !navigator.onLine;
+    saveControls.forEach((btn) => { btn.disabled = busy || off || !canEdit; });
+    if (headerSaveBtn) headerSaveBtn.textContent = busy ? "Saving..." : (off ? "Offline" : "Save");
+    if (footerSaveBtn) footerSaveBtn.textContent = busy ? "Saving..." : "Save";
+    if (saveApproveBtn) saveApproveBtn.textContent = busy ? "Saving..." : "Save & approve";
+  };
   const reflectOnline = () => {
     const off = !navigator.onLine;
     offlineNote.hidden = !off;
-    const btn = sheet.querySelector("#saveBtn");
-    // Don't fight the not-editable disable or an in-flight "Saving…".
-    if (btn && canEdit && btn.textContent !== "Saving…") {
-      btn.disabled = off;
-      btn.textContent = off ? "Offline" : "Save";
-    }
+    if (!saving) setSaveBusy(false);
   };
   window.addEventListener("online", reflectOnline);
   window.addEventListener("offline", reflectOnline);
@@ -267,16 +293,18 @@ export async function openEditor(itemId, caps, onSaved) {
   };
 
   // Status pills
-  let status = item.status;
-  sheet.querySelector("#statusRow").addEventListener("click", (e) => {
-    const b = e.target.closest("button[data-status]");
-    if (!b || !canEdit) return;
-    status = b.dataset.status;
+  const paintStatusPills = () => {
     sheet.querySelectorAll(".status-pill").forEach((p) => {
       const on = p.dataset.status === status;
       p.classList.toggle("on", on);
       p.setAttribute("aria-pressed", on);
     });
+  };
+  sheet.querySelector("#statusRow").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-status]");
+    if (!b || !canEdit) return;
+    status = b.dataset.status;
+    paintStatusPills();
   });
 
   // Legend: explain what the status labels and H/M/L confidence dots mean.
@@ -389,7 +417,7 @@ export async function openEditor(itemId, caps, onSaved) {
     };
   }
 
-  sheet.querySelector("#saveBtn").onclick = async () => {
+  const saveCurrent = async () => {
     if (!canEdit) return;
     if (!navigator.onLine) { toast("You're offline — reconnect to save your changes."); return; }
     if (status === "approved") {
@@ -421,7 +449,8 @@ export async function openEditor(itemId, caps, onSaved) {
       });
       if (!sure) return;
     }
-    const btn = sheet.querySelector("#saveBtn");
+    const btn = headerSaveBtn;
+    setSaveBusy(true);
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
@@ -436,10 +465,23 @@ export async function openEditor(itemId, caps, onSaved) {
       close();
     } catch (err) {
       toast(err.message || "Save failed");
+      setSaveBusy(false);
       btn.disabled = false;
       btn.textContent = "Save";
     }
   };
+  headerSaveBtn.onclick = saveCurrent;
+  footerSaveBtn?.addEventListener("click", saveCurrent);
+  saveApproveBtn?.addEventListener("click", async () => {
+    const previousStatus = status;
+    status = "approved";
+    paintStatusPills();
+    await saveCurrent();
+    if (!savedOk && document.body.contains(sheet)) {
+      status = previousStatus;
+      paintStatusPills();
+    }
+  });
 
   // Per-item change history (audit log; readable by editors).
   const histBtn = sheet.querySelector("#historyBtn");

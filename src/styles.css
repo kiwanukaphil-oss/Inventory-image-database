@@ -899,7 +899,17 @@ body { overflow:hidden; overscroll-behavior:none; }
 }
 .sheet-title { flex:1; text-align:center; font-size:13px; color:var(--muted);
                white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.sheet-body { padding:14px; overflow-y:auto; }
+.sheet-body { flex:1; min-height:0; padding:14px; overflow-y:auto; }
+.ed-section { padding:0 0 14px; margin:0 0 14px; border-bottom:1px solid var(--line); }
+.ed-section:last-child { margin-bottom:0; border-bottom:none; }
+.ed-section-title { margin:0 0 10px; font-size:12px; color:var(--muted);
+  text-transform:uppercase; letter-spacing:.04em; }
+.admin-note { margin:-2px 0 10px 104px; color:var(--muted); font-size:12px; }
+.sheet-foot {
+  display:flex; gap:8px; padding:10px 14px calc(10px + var(--safe-bottom));
+  border-top:1px solid var(--line); background:var(--elevated);
+}
+.sheet-foot button { flex:1; min-height:42px; }
 .sheet-img { aspect-ratio:1/1; max-height:38dvh; display:flex; justify-content:center; margin-bottom:12px; cursor:zoom-in; }
 .sheet-img img { max-width:100%; max-height:38dvh; object-fit:contain; border-radius:8px; }
 .ready-panel { border:1px solid var(--line); border-radius:8px; padding:9px 10px; margin:8px 0 10px;
