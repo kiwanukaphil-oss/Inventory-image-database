@@ -89,7 +89,10 @@ function makeIssue(issue, label, detail = "", critical = true) {
   };
 }
 
-export function getItemReadiness(it, { forApproval = false } = {}) {
+// canViewCost lets the caller (the editor) tailor the cost blocker: admins get
+// "set a cost price", non-admins — who can't see or edit cost — get a message
+// telling them to ask an admin, instead of a blocker they can't act on.
+export function getItemReadiness(it, { forApproval = false, canViewCost = true } = {}) {
   const blockers = [];
   const warnings = [];
 
@@ -130,7 +133,9 @@ export function getItemReadiness(it, { forApproval = false } = {}) {
   }
 
   if (!hasCostPrice(it)) {
-    blockers.push(makeIssue("price", "Missing cost price", "Set a cost price before approval."));
+    blockers.push(canViewCost
+      ? makeIssue("price", "Missing cost price", "Set a cost price before approval.")
+      : makeIssue("price", "Cost price needed", "A cost price is needed before approval — ask an admin to add it."));
   }
 
   const doubts = aiDoubtFields(it);

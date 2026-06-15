@@ -175,7 +175,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
   const fields = resolveFields(item.category_id);
   const conf = { ...(item.confidence || {}) }; // working copy of per-field confidence
-  const readiness = getItemReadiness(item);
+  const readiness = getItemReadiness(item, { canViewCost });
   const fixPlan = buildEditorFixPlan(item, fields, conf, { canViewCost });
   const aiSuggestedKeys = new Set();
 
@@ -232,13 +232,13 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         ${shopLineHtml()}
         ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
         ${fieldRow(
-          { key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Units received (live stock lives in the POS)" : "Units in this batch (1 photo = 1 unit)", type: "number" },
+          { key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Units received (live stock lives in the POS)" : "Units in this batch (1 photo = 1 unit)", type: "number", inputmode: "numeric" },
           item.stock_quantity, conf, false,
           // Frozen once pushed: the receipt is booked, the POS ledger owns
           // stock from here. Restocking = photograph the new units.
           canEdit && item.pos_sync_status !== "synced"
         )}
-        ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false, canEdit)}
+        ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number", inputmode: "numeric" }, item.reorder_level, conf, false, canEdit)}
         </section>
 
         <section class="ed-section ed-activity" data-ed-section="activity" aria-label="Activity">
@@ -371,10 +371,10 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const saveControls = [headerSaveBtn, footerSaveBtn].filter(Boolean);
   let saving = false;
   const approvalReadinessFor = () =>
-    getItemReadiness(formItemForReadiness(sheet, item, fields, conf, "approved"), { forApproval: true });
+    getItemReadiness(formItemForReadiness(sheet, item, fields, conf, "approved"), { forApproval: true, canViewCost });
   const currentReadinessFor = () => {
     const candidate = formItemForReadiness(sheet, item, fields, conf, status);
-    return getItemReadiness(candidate, { forApproval: status === "approved" });
+    return getItemReadiness(candidate, { forApproval: status === "approved", canViewCost });
   };
   const approvalBlockerText = (readiness) =>
     (readiness.blockers || []).slice(0, 3).map((b) => b.detail || b.label).join(" ");
@@ -538,6 +538,11 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       if (AI_PLACEHOLDER.has(String(raw).trim().toLowerCase())) continue;
       const el = sheet.querySelector(`[data-key="${key}"]`);
       if (!el) continue;
+      // Fill empty fields only — never silently overwrite a value already in the
+      // form. This matches the upload + bulk-AI paths (only-empty) and the intent
+      // stated above; to re-suggest a field, clear it first then run AI again.
+      // (Checkboxes have no "empty" state, so they're left to the AI as before.)
+      if (el.type !== "checkbox" && String(el.value).trim() !== "") continue;
       let val = String(raw);
       if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
       val = normalizeAttributeValue(item.category_id, key, val);
@@ -833,7 +838,10 @@ function fieldRow(def, value, conf, showConf, canEdit = true) {
   } else {
     const list = def.vocab ? ` list="dl-${def.vocab}"` : "";
     const type = def.type === "number" ? "number" : "text";
-    control = `<input id="${id}" type="${type}"${list} data-key="${def.key}" data-kind="value"
+    // Number fields get a numeric keypad on mobile: decimal for money/measures,
+    // "numeric" (integer) for counts. Callers override via def.inputmode.
+    const im = def.type === "number" ? ` inputmode="${def.inputmode || "decimal"}"` : "";
+    control = `<input id="${id}" type="${type}"${im}${list} data-key="${def.key}" data-kind="value"
       data-vocab="${def.vocab || ""}" value="${esc(v)}"${dis}>`;
   }
 

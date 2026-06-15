@@ -245,6 +245,10 @@ function paintLightbox() {
     : `${s.caption} <span style="color:var(--muted)">· ${lbState.i + 1}/${lbState.slides.length}</span>`;
 }
 
+// Per-dialog id so each dialog's title can be linked via aria-labelledby even
+// when dialogs stack (a confirm over a prompt). Ids must be unique in the DOM.
+let dlgIdSeq = 0;
+
 // --- Confirm ------------------------------------------------------------------
 // App-styled replacement for window.confirm(). Resolves true if the user
 // confirms, false if they cancel / dismiss. Set danger:true for destructive
@@ -259,8 +263,9 @@ export function confirmSheet({
   return new Promise((resolve) => {
     const el = document.createElement("div");
     el.className = "msheet dlg";
-    el.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true">
-        <div class="msheet-head"><span>${esc(title)}</span></div>
+    const titleId = `dlg-title-${++dlgIdSeq}`;
+    el.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
+        <div class="msheet-head"><span id="${titleId}">${esc(title)}</span></div>
         <div class="msheet-body">
           ${message ? `<p class="dlg-msg">${esc(message)}</p>` : ""}
           <div class="dlg-actions">
@@ -317,8 +322,9 @@ export function promptSheet({
   return new Promise((resolve) => {
     const el = document.createElement("div");
     el.className = "msheet dlg";
-    el.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true">
-        <div class="msheet-head"><span>${esc(title)}</span></div>
+    const titleId = `dlg-title-${++dlgIdSeq}`;
+    el.innerHTML = `<div class="msheet-panel" role="dialog" aria-modal="true" aria-labelledby="${titleId}">
+        <div class="msheet-head"><span id="${titleId}">${esc(title)}</span></div>
         <div class="msheet-body">
           ${message ? `<p class="dlg-msg">${esc(message)}</p>` : ""}
           ${label ? `<label class="dlg-label" for="dlgInput">${esc(label)}</label>` : ""}
