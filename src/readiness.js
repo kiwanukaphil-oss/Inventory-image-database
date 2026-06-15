@@ -1,4 +1,5 @@
 import { AI_BLIND_FIELDS, resolveFields } from "./data.js";
+import { hasRecentEdit } from "./activity.js";
 import { jobErrorHelp } from "./joblog.js";
 
 export const STATUS_LABELS = {
@@ -22,10 +23,11 @@ export const ISSUE_META = {
   missing: { label: "Missing details", short: "Missing", empty: "missing-detail", cls: "iss-missing", action: "Complete details" },
   flag:    { label: "Problem", short: "Problem", empty: "problem", cls: "iss-flag", action: "Fix problem" },
   sync:    { label: "Shop issue", short: "Shop", empty: "shop-issue", cls: "iss-sync", action: "Open shop sync" },
+  edited:  { label: "Recently edited", short: "Edited", empty: "recently-edited", cls: "iss-edited", action: "Check recent edit" },
   ready:   { label: "Ready", short: "Ready", cls: "iss-ready", action: "Approve" },
 };
 
-export const REVIEW_QUEUE = ["work", "ai", "price", "doubt", "missing", "flag", "sync", "ready"];
+export const REVIEW_QUEUE = ["work", "edited", "ai", "price", "doubt", "missing", "flag", "sync", "ready"];
 
 function hasValue(v) {
   return v !== null && v !== undefined && v !== "";
@@ -152,6 +154,7 @@ export function issueState(it) {
 }
 
 export function queueMatches(it, issue) {
+  if (issue === "edited") return hasRecentEdit(it);
   const st = issueState(it);
   if (issue === "work") return !!st && st !== "ready";
   return st === issue;

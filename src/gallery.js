@@ -28,6 +28,7 @@ import { openSyncCenter } from "./synccenter.js";
 import { openCategoryManager } from "./categories_admin.js";
 import { loadLatestFailedJobs } from "./joblog.js";
 import { openConsistencyAudit } from "./consistency.js";
+import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
 import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
@@ -198,6 +199,7 @@ export function renderApp(mount, profile, onSignOut) {
     const actions = [
       { id: "add", label: "Add photos", sub: "Capture or upload a new batch", icon: ICON.navAdd, show: !!caps.can_upload },
       { id: "review-work", label: "Review needs work", sub: "Open all blocked items", icon: ICON.navReview, show: true },
+      { id: "review-edited", label: "Recently edited", sub: "Return to items you touched", icon: ICON.pencil, show: true },
       { id: "review-ai", label: "Needs AI", sub: "Find photos that need AI fill or retry", icon: ICON.sparkle, show: true },
       { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
       { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
@@ -222,6 +224,7 @@ export function renderApp(mount, profile, onSignOut) {
       const cmd = b.dataset.cmd;
       if (cmd === "add") setView("add");
       else if (cmd === "review-work") openReviewQueue("work");
+      else if (cmd === "review-edited") openReviewQueue("edited");
       else if (cmd === "review-ai") openReviewQueue("ai");
       else if (cmd === "review-price") openReviewQueue("price");
       else if (cmd === "review-ready") openReviewQueue("ready");
@@ -451,6 +454,20 @@ function issueBadgesHtml(it, { compact = false } = {}) {
   const label = compact ? meta.short : meta.label;
   return `<span class="issue-pill ${meta.cls}" title="${esc(title)}">${esc(label)}</span>`;
 }
+
+function activityBadgesHtml(it, { compact = false } = {}) {
+  const a = it.activity;
+  if (!a) return "";
+  const hasAi = a.sources?.has?.("ai");
+  const hasHuman = ["manual", "bulk", "pricing", "approval", "undo"].some((s) => a.sources?.has?.(s));
+  let label = activitySourceLabel(a.latest_source);
+  let cls = activitySourceClass(a.latest_source);
+  if (hasAi && hasHuman) { label = "Mixed"; cls = "mixed"; }
+  else if (hasAi) { label = compact ? "AI" : "AI filled"; cls = "ai"; }
+  else if (hasHuman && !["pricing", "approval", "bulk", "undo"].includes(a.latest_source)) { label = compact ? "Manual" : "Manual edit"; cls = "manual"; }
+  const when = a.latest_at ? new Date(a.latest_at).toLocaleString() : "";
+  return `<span class="source-pill src-${esc(cls)}" title="${esc([label, a.latest_summary, when].filter(Boolean).join(" · "))}">${esc(compact ? label.replace(" edit", "") : label)}</span>`;
+}
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 let _appCmdKey = null; // current Ctrl/Cmd+K handler for the signed-in shell
 
@@ -502,13 +519,19 @@ async function renderGallery(view, caps, opts = {}) {
 
   // Keep the Review tab's badge in sync on every load (any surface refreshes
   // it). Both segments count — ready-to-approve items await action too.
-  const failedAiJobs = await loadLatestFailedJobs((data || []).map((it) => it.id), "ai_fill");
+  const itemIdsForMeta = (data || []).map((it) => it.id);
+  const [failedAiJobs, activitySummaries] = await Promise.all([
+    loadLatestFailedJobs(itemIdsForMeta, "ai_fill"),
+    loadItemActivitySummaries(itemIdsForMeta),
+  ]);
   for (const it of data || []) {
     const job = failedAiJobs.get(it.id);
     if (job) it.latest_ai_job = job;
+    const activity = activitySummaries.get(it.id);
+    if (activity) it.activity = activity;
   }
 
-  setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it)).length);
+  setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
 
   if (!data || data.length === 0) {
     view.innerHTML = `<div class="empty"><div class="big">📭</div>
@@ -821,7 +844,7 @@ async function renderGallery(view, caps, opts = {}) {
           <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
           <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
         </div>
-        <div class="issue-line">${issueBadgesHtml(it)}</div>
+        <div class="issue-line">${issueBadgesHtml(it)}${activityBadgesHtml(it)}</div>
         <div class="cbrand">${esc(brand)}</div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
         <div class="cmeta">
@@ -855,7 +878,7 @@ async function renderGallery(view, caps, opts = {}) {
       <div class="row-main">
         <div class="row-top">
           <span class="row-brand">${esc(brand)}</span>
-          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span></span>
+          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}${activityBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span></span>
         </div>
         <div class="row-sub">
           ${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}${variant ? `<span class="row-attr">${variant}</span>` : ""}
@@ -919,6 +942,7 @@ async function renderGallery(view, caps, opts = {}) {
     // review queue — say what it is instead.
     const reviewCountText = (n) => {
       if (issue === "work") return `${n} need${n === 1 ? "s" : ""} work`;
+      if (issue === "edited") return `${n} recently edited`;
       if (issue === "ai") return `${n} need${n === 1 ? "s" : ""} AI fill`;
       if (issue === "price") return `${n} without a price`;
       if (issue === "doubt") return `${n} to check with AI`;
@@ -954,6 +978,7 @@ async function renderGallery(view, caps, opts = {}) {
       reviewInbox.innerHTML = `
         <div class="ri-stats">
           <span><b>${counts.work || 0}</b><small>Needs work</small></span>
+          <span><b>${counts.edited || 0}</b><small>Edited</small></span>
           <span><b>${counts.price || 0}</b><small>Missing price</small></span>
           <span><b>${counts.ready || 0}</b><small>Ready</small></span>
         </div>
@@ -1278,6 +1303,7 @@ async function renderGallery(view, caps, opts = {}) {
 
     const smartViews = [
       { id: "today", label: "Uploaded today" },
+      ...(review ? [{ id: "edited", label: ISSUE_META.edited.label }] : []),
       { id: "ai", label: ISSUE_META.ai.label },
       { id: "price", label: ISSUE_META.price.label },
       { id: "doubt", label: ISSUE_META.doubt.label },
@@ -1587,6 +1613,16 @@ async function renderGallery(view, caps, opts = {}) {
       if (!Object.keys(col).length && costVal === undefined && !Object.keys(attrChanges).length) {
         toast("Enter at least one field to apply."); return;
       }
+      const changesByItem = new Map();
+      for (const it of items) {
+        const after = { ...it, ...col };
+        if (Object.keys(attrChanges).length) {
+          after.attributes = { ...(it.attributes || {}), ...attrChanges };
+        }
+        const changes = diffItemValues(it, after);
+        if (costVal !== undefined) changes.push({ field_path: "cost_price", before: null, after: costVal });
+        if (changes.length) changesByItem.set(it.id, changes);
+      }
       sh.close();
       try {
         if (Object.keys(col).length) {
@@ -1606,6 +1642,7 @@ async function renderGallery(view, caps, opts = {}) {
             if (error) throw error;
           }
         }
+        await logManyItemActivities(ids, "bulk_edit", "bulk", changesByItem, "Bulk edited selected items");
         toast(`Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`);
         navigator.vibrate?.([12, 40, 12]);
       } catch (e) {
@@ -1655,6 +1692,13 @@ async function renderGallery(view, caps, opts = {}) {
     const prior = targetIds.map((id) => ({ id, value: byId[id]?.price ?? null }));
     const { error } = await supabase.from("items").update({ price: value }).in("id", targetIds);
     if (error) { toast("Couldn't set price: " + error.message); return; }
+    await logManyItemActivities(
+      targetIds,
+      "pricing",
+      "pricing",
+      new Map(prior.map((p) => [p.id, [{ field_path: "price", before: p.value, after: value }]])),
+      `Set price ${fmtPrice(value)}`
+    );
     toast(`Set price ${fmtPrice(value)} on ${targetIds.length} item${targetIds.length === 1 ? "" : "s"}`, {
       label: "Undo",
       onClick: async () => {
@@ -1665,6 +1709,13 @@ async function renderGallery(view, caps, opts = {}) {
           const { error: uErr } = await supabase.from("items").update({ price }).in("id", oldIds);
           if (uErr) { toast("Undo failed: " + uErr.message); return; }
         }
+        await logManyItemActivities(
+          targetIds,
+          "undo",
+          "undo",
+          new Map(prior.map((p) => [p.id, [{ field_path: "price", before: value, after: p.value }]])),
+          "Undid price change"
+        );
         toast("Price change undone");
         refresh();
       },
@@ -1738,6 +1789,13 @@ async function renderGallery(view, caps, opts = {}) {
     const prior = approveIds.map((id) => ({ id, status: byId[id]?.status }));
     const { error } = await supabase.from("items").update({ status: "approved" }).in("id", approveIds);
     if (error) { toast("Approve failed: " + error.message); return; }
+    await logManyItemActivities(
+      approveIds,
+      "approval",
+      "approval",
+      new Map(prior.map((p) => [p.id, [{ field_path: "status", before: p.status, after: "approved" }]])),
+      "Approved from Review"
+    );
     navigator.vibrate?.([12, 40, 12]);
     if (selectionMode) exitSelection();
     const msg = blockedN
@@ -1753,6 +1811,13 @@ async function renderGallery(view, caps, opts = {}) {
         for (const [st, sids] of Object.entries(byStatus)) {
           await supabase.from("items").update({ status: st }).in("id", sids);
         }
+        await logManyItemActivities(
+          approveIds,
+          "undo",
+          "undo",
+          new Map(prior.map((p) => [p.id, [{ field_path: "status", before: "approved", after: p.status }]])),
+          "Undid approval"
+        );
         toast("Approval undone");
         refresh();
       },

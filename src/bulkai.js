@@ -1,6 +1,7 @@
 import { supabase } from "./db.js";
 import { resolveFields, normalizeValue, normalizeAttributeValue, categoryPath } from "./data.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
+import { diffItemValues, logItemActivity } from "./activity.js";
 import { trapFocus, isTopOverlay } from "./ui.js";
 
 // Bulk AI fill: run the ai-extract Edge Function across a set of items (the
@@ -210,6 +211,13 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
         if (it.status === "draft") update.status = "needs-review";
         const { error: upErr } = await supabase.from("items").update(update).eq("id", it.id);
         if (upErr) throw upErr;
+        await logItemActivity(
+          it.id,
+          "ai_fill",
+          "ai",
+          diffItemValues(it, { ...it, ...update }),
+          `AI filled ${changed} field${changed === 1 ? "" : "s"}`
+        );
         filled++;
         logLine(`✓ ${label} — filled ${changed} field${changed === 1 ? "" : "s"}`);
       } else {

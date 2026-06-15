@@ -2,6 +2,7 @@ import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, resolveFields, getSetting } from "./data.js";
 import { toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
 import { openPricing } from "./pricing.js";
+import { logManyItemActivities } from "./activity.js";
 
 // ============================================================================
 //  Guided pricing — "price like you'd say it".
@@ -501,6 +502,13 @@ export async function openGuidedPricing(caps, onClose) {
       if (wErr) { toast("Couldn't set prices: " + wErr.message); return; }
     }
     const priceById = new Map([...writes.entries()].flatMap(([v, ids]) => ids.map((id) => [id, v])));
+    await logManyItemActivities(
+      prior.map((p) => p.id),
+      "pricing",
+      "pricing",
+      new Map(prior.map((p) => [p.id, [{ field_path: "price", before: p.value, after: priceById.get(p.id) }]])),
+      "Applied guided pricing"
+    );
     for (const it of pile) if (priceById.has(it.id)) it.price = priceById.get(it.id);
     navigator.vibrate?.([12, 40, 12]);
     toast(`Priced ${prior.length} item${prior.length === 1 ? "" : "s"}`, {
@@ -514,6 +522,13 @@ export async function openGuidedPricing(caps, onClose) {
         }
         const priorById = new Map(prior.map((p) => [p.id, p.value]));
         for (const it of items) if (priorById.has(it.id)) it.price = priorById.get(it.id);
+        await logManyItemActivities(
+          prior.map((p) => p.id),
+          "undo",
+          "undo",
+          new Map(prior.map((p) => [p.id, [{ field_path: "price", before: priceById.get(p.id), after: p.value }]])),
+          "Undid guided pricing"
+        );
         toast("Price change undone");
       },
     });

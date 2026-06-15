@@ -10,6 +10,7 @@ import {
 } from "./data.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
+import { activitySourceClass, activitySourceLabel, diffItemValues, fieldKeyFromPath, loadItemActivity, logItemActivity } from "./activity.js";
 import { toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
 
 // The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
@@ -38,6 +39,7 @@ function fieldNameForKey(key, fields) {
   if (key === "brand") return "Brand";
   if (key === "name") return "Name";
   if (key === "price") return "Retail price";
+  if (key === "cost_price") return "Cost price";
   if (key === "stock_quantity") return "Units";
   if (key === "reorder_level") return "Reorder level";
   return fields.find((f) => f.key === key)?.label || key;
@@ -130,6 +132,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       .maybeSingle();
     shopMirror = data || null;
   }
+  const recentActivity = canEdit ? await loadItemActivity(itemId, 6) : [];
 
   // One plain-language line about this item's life in the shop. Wording is for
   // floor staff, not engineers; the gallery chips use the same states.
@@ -164,6 +167,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const conf = { ...(item.confidence || {}) }; // working copy of per-field confidence
   const readiness = getItemReadiness(item);
   const fixPlan = buildEditorFixPlan(item, fields, conf);
+  const aiSuggestedKeys = new Set();
 
   // ---- build the sheet ----
   const sheet = document.createElement("div");
@@ -227,6 +231,11 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false, canEdit)}
         </section>
 
+        <section class="ed-section ed-activity" data-ed-section="activity" aria-label="Activity">
+          <div class="ed-section-title">Activity</div>
+          ${activitySectionHtml(recentActivity, canEdit, fields)}
+        </section>
+
         <section class="ed-section ed-admin" data-ed-section="admin" aria-label="Admin">
           <div class="ed-section-title">Admin</div>
         ${
@@ -240,7 +249,6 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
           <span style="color:var(--muted)"> (updates automatically)</span></div>
         ${item.created_at ? `<div class="added-line">Added ${esc(new Date(item.created_at).toLocaleString())}</div>` : ""}
 
-        ${canEdit ? `<button class="ghost histbtn" id="historyBtn">View change history</button>` : ""}
         ${canDelete ? `<button class="danger del-btn" id="deleteBtn">Delete item</button>` : ""}
         </section>
       </div>
@@ -445,6 +453,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       }
       el.value = val;
       el.classList.add("changed");
+      aiSuggestedKeys.add(key);
       const lvl = confidence?.[key];
       if (lvl) {
         conf[key] = lvl;
@@ -532,7 +541,21 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
-      await saveItem(sheet, item, fields, conf, status, canViewCost);
+      const changes = await saveItem(sheet, item, fields, conf, status, canViewCost, cost);
+      const approvalChanges = changes.filter((c) => c.field_path === "status" && c.after === "approved");
+      const aiChanges = changes.filter((c) =>
+        c.field_path !== "status" && aiSuggestedKeys.has(fieldKeyFromPath(c.field_path))
+      );
+      const manualChanges = changes.filter((c) => !approvalChanges.includes(c) && !aiChanges.includes(c));
+      if (aiChanges.length) {
+        await logItemActivity(item.id, "ai_fill", "ai", aiChanges, `AI filled ${aiChanges.length} field${aiChanges.length === 1 ? "" : "s"}`);
+      }
+      if (manualChanges.length) {
+        await logItemActivity(item.id, "manual_edit", "manual", manualChanges, `Manually edited ${manualChanges.length} field${manualChanges.length === 1 ? "" : "s"}`);
+      }
+      if (approvalChanges.length) {
+        await logItemActivity(item.id, "approval", "approval", approvalChanges, "Approved from editor");
+      }
       const { sku: newSku, dups } = await refreshSkuAndDupCheck(sheet, itemId);
       toast(dups
         ? `Saved · SKU ${newSku} — ⚠ shared with ${dups} other item${dups === 1 ? "" : "s"}`
@@ -563,7 +586,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
   // Per-item change history (audit log; readable by editors).
   const histBtn = sheet.querySelector("#historyBtn");
-  if (histBtn) histBtn.onclick = () => openHistory(itemId);
+  if (histBtn) histBtn.onclick = () => openActivity(itemId);
 
   // Delete (capability-gated): removes the item and its stored image.
   const deleteBtn = sheet.querySelector("#deleteBtn");
@@ -632,6 +655,39 @@ function fixModeHtml(plan) {
     </button>
     ${labels ? `<div class="fixmode-note">Focus: ${esc(labels + extra)}</div>` : ""}
   </div>`;
+}
+
+function activityValue(v) {
+  if (v === null || v === undefined || v === "") return "empty";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
+}
+
+function activityFieldLabel(path, fields = []) {
+  const key = fieldKeyFromPath(path);
+  if (!key) return "";
+  return fieldNameForKey(key, fields);
+}
+
+function activityRowHtml(row, fields = []) {
+  const when = row.created_at ? new Date(row.created_at).toLocaleString() : "";
+  const label = activitySourceLabel(row.source);
+  const field = activityFieldLabel(row.field_path, fields);
+  const detail = row.field_path
+    ? `${field}: ${activityValue(row.before_value)} -> ${activityValue(row.after_value)}`
+    : (row.summary || label);
+  return `<div class="act-row">
+    <span class="source-pill src-${esc(activitySourceClass(row.source))}">${esc(label)}</span>
+    <div class="act-copy"><b>${esc(detail)}</b>${when ? `<span>${esc(when)}</span>` : ""}</div>
+  </div>`;
+}
+
+function activitySectionHtml(rows, canEdit, fields = []) {
+  const preview = rows?.length
+    ? rows.slice(0, 4).map((r) => activityRowHtml(r, fields)).join("")
+    : `<div class="muted">No source-aware activity yet. New saves, AI fills, pricing, and approvals will appear here.</div>`;
+  return `<div class="activity-list">${preview}</div>
+    ${canEdit ? `<button class="ghost histbtn" id="historyBtn" type="button">View full activity</button>` : ""}`;
 }
 
 function sectionForIssue(issue) {
@@ -731,7 +787,7 @@ function formItemForReadiness(sheet, item, fields, conf, status) {
   };
 }
 
-async function saveItem(sheet, item, fields, conf, status, canViewCost) {
+async function saveItem(sheet, item, fields, conf, status, canViewCost, currentCost = null) {
   const attributes = { ...(item.attributes || {}) };
 
   // Resolved category fields -> attributes.
@@ -771,6 +827,7 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost) {
     attributes,
     confidence: conf,
   };
+  const changes = diffItemValues(item, { ...item, ...update });
 
   const { error } = await supabase.from("items").update(update).eq("id", item.id);
   if (error) throw error;
@@ -778,6 +835,9 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost) {
   // Cost -> capability-gated table (upsert).
   if (canViewCost) {
     const cost = num("cost_price");
+    if (JSON.stringify(currentCost ?? null) !== JSON.stringify(cost ?? null)) {
+      changes.push({ field_path: "cost_price", before: currentCost ?? null, after: cost ?? null });
+    }
     const { error: cErr } = await supabase
       .from("item_costs")
       .upsert({ item_id: item.id, cost_price: cost }, { onConflict: "item_id" });
@@ -788,6 +848,8 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost) {
   if (brand && !vocabSuggestions("brand").includes(brand)) {
     await supabase.from("vocabularies").insert({ field: "brand", canonical: brand }).select();
   }
+
+  return changes;
 }
 
 // How many OTHER items share this SKU (0 = unique). head:true → count only.
@@ -819,6 +881,36 @@ async function refreshSkuAndDupCheck(sheet, itemId) {
   const dups = await countSkuDups(itemId, sku);
   paintDupWarn(sheet, sku, dups);
   return { sku, dups };
+}
+
+async function openActivity(itemId) {
+  const [events, audit] = await Promise.all([
+    loadItemActivity(itemId, 120),
+    supabase
+      .from("audit_log")
+      .select("created_at, change_type, field, before, after, notes")
+      .eq("item_id", itemId)
+      .order("created_at", { ascending: false })
+      .limit(200),
+  ]);
+
+  const eventRows = (events || []).map((r) => activityRowHtml(r)).join("");
+  const auditRows = (audit.data || []).map((r) => {
+    const when = new Date(r.created_at).toLocaleString();
+    let desc;
+    if (r.change_type === "create") desc = "Created";
+    else if (r.change_type === "delete") desc = "Deleted";
+    else desc = `${esc(r.field || "")}: ${esc(r.before ?? "empty")} -> ${esc(r.after ?? "empty")}`;
+    return `<div class="hist-row"><div class="hist-when">${esc(when)}</div><div>${desc}</div>${
+      r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ""
+    }</div>`;
+  }).join("");
+
+  openBottomSheet("Activity",
+    `${eventRows ? `<div class="sheet-sec">Work trail</div><div class="activity-list">${eventRows}</div>` : ""}
+     ${auditRows ? `<div class="sheet-sec">Field history</div>${auditRows}` : ""}
+     ${audit.error ? `<div class="muted">${esc(audit.error.message)}</div>` : ""}
+     ${!eventRows && !auditRows && !audit.error ? '<div class="muted">No history yet.</div>' : ""}`);
 }
 
 // Per-item change history from the audit log, shown in a bottom sheet.

@@ -2,6 +2,7 @@ import { supabase } from "./db.js";
 import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue, normalizeAttributeValue } from "./data.js";
 import { compressImage } from "./imageCompress.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
+import { diffItemValues, logItemActivity } from "./activity.js";
 import { toast, trapFocus, ICON } from "./ui.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
@@ -92,7 +93,27 @@ async function aiFillItem(id, common) {
   // Same rule as bulk AI-fill: an AI-touched draft surfaces in Review rather
   // than sitting silently as a confident-but-unchecked draft.
   if (filled && common.status === "draft") update.status = "needs-review";
-  await supabase.from("items").update(update).eq("id", id);
+  const before = {
+    id,
+    category_id: common.categoryId,
+    brand: common.brand,
+    name: null,
+    attributes: common.attributes || {},
+    confidence: {},
+    status: common.status,
+    stock_quantity: 1,
+  };
+  const { error: upErr } = await supabase.from("items").update(update).eq("id", id);
+  if (upErr) throw upErr;
+  if (filled) {
+    await logItemActivity(
+      id,
+      "ai_fill",
+      "ai",
+      diffItemValues(before, { ...before, ...update }),
+      `AI filled ${filled} field${filled === 1 ? "" : "s"} after upload`
+    );
+  }
   await clearItemJobFailures(id, "ai_fill");
 }
 
@@ -390,6 +411,7 @@ export async function renderUpload(view, caps, onDone) {
       stock_quantity: 1,
     });
     if (ins.error) throw ins.error;
+    await logItemActivity(id, "upload", "upload", [], "Uploaded product photo");
     // Opt-in: read the photo and fill any still-empty fields. Soft-fails — the
     // photo is already saved, so an AI hiccup never fails the upload.
     if (common.ai) {

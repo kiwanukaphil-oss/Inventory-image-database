@@ -13,6 +13,7 @@
 
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, getSetting } from "./data.js";
+import { logManyItemActivities } from "./activity.js";
 import { toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
 
 // Grouping key chosen last time, remembered across opens (per the "I pick the
@@ -753,6 +754,14 @@ export async function openPricing(caps, onClose, opts = {}) {
     const prior = ids.map((id) => ({ id, value: mode === "cost" ? byId[id].cost ?? null : byId[id].price ?? null }));
     const { error } = await writePrice(ids, value, mode);
     if (error) { toast("Couldn't set price: " + error.message); return; }
+    const fieldPath = mode === "cost" ? "cost_price" : "price";
+    await logManyItemActivities(
+      ids,
+      "pricing",
+      "pricing",
+      new Map(prior.map((p) => [p.id, [{ field_path: fieldPath, before: p.value, after: value }]])),
+      `Set ${mode === "cost" ? "cost" : "price"} ${fmt(value)}`
+    );
     for (const id of ids) setLocal(byId[id], value, mode);
     groups = buildGroups();
     navigator.vibrate?.([12, 40, 12]);
@@ -776,6 +785,13 @@ export async function openPricing(caps, onClose, opts = {}) {
             if (uErr) { toast("Undo failed: " + uErr.message); return; }
           }
         }
+        await logManyItemActivities(
+          ids,
+          "undo",
+          "undo",
+          new Map(prior.map((p) => [p.id, [{ field_path: fieldPath, before: value, after: p.value }]])),
+          "Undid pricing change"
+        );
         for (const p of prior) setLocal(byId[p.id], p.value, mode);
         groups = buildGroups();
         render();
