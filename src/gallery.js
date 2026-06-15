@@ -26,6 +26,7 @@ import { renderExport } from "./exportcsv.js";
 import { renderShop } from "./shop.js";
 import { openSyncCenter } from "./synccenter.js";
 import { openCategoryManager } from "./categories_admin.js";
+import { loadCostPresence } from "./costs.js";
 import { loadLatestFailedJobs } from "./joblog.js";
 import { openConsistencyAudit } from "./consistency.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
@@ -520,15 +521,17 @@ async function renderGallery(view, caps, opts = {}) {
   // Keep the Review tab's badge in sync on every load (any surface refreshes
   // it). Both segments count — ready-to-approve items await action too.
   const itemIdsForMeta = (data || []).map((it) => it.id);
-  const [failedAiJobs, activitySummaries] = await Promise.all([
+  const [failedAiJobs, activitySummaries, costPresence] = await Promise.all([
     loadLatestFailedJobs(itemIdsForMeta, "ai_fill"),
     loadItemActivitySummaries(itemIdsForMeta),
+    loadCostPresence(itemIdsForMeta, { canViewCost: !!caps.can_view_cost }),
   ]);
   for (const it of data || []) {
     const job = failedAiJobs.get(it.id);
     if (job) it.latest_ai_job = job;
     const activity = activitySummaries.get(it.id);
     if (activity) it.activity = activity;
+    if (costPresence.has(it.id)) it.has_cost_price = costPresence.get(it.id);
   }
 
   setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
@@ -1022,11 +1025,16 @@ async function renderGallery(view, caps, opts = {}) {
   let drag = null;             // { action:'add'|'remove', processed:Set }
   let lpTimer = null;
   const cancelLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+  const reviewFocusIssue = (it) => {
+    const st = issueState(it);
+    if (st === "price" && it?.price != null && it?.has_cost_price === false) return "cost";
+    return st;
+  };
   const openItemEditor = (id, focusIssue) => openEditor(
     id,
     caps,
     refresh,
-    review ? { focusIssue: focusIssue || issueState(byId[id]) } : {}
+    review ? { focusIssue: focusIssue || reviewFocusIssue(byId[id]) } : {}
   );
 
   function setSelected(card, on) {
@@ -1171,7 +1179,7 @@ async function renderGallery(view, caps, opts = {}) {
     else if (cta.dataset.cta === "aifill") openBulkAi(filtered, caps, refresh);
     else if (cta.dataset.cta === "sync") openSyncCenter(caps, refresh, { focus: "errors" });
     else if (cta.dataset.cta === "approveall") approveItems(filtered.map((it) => it.id));
-    else if (cta.dataset.cta === "openfirst" && filtered[0]) openItemEditor(filtered[0].id, issueState(filtered[0]));
+    else if (cta.dataset.cta === "openfirst" && filtered[0]) openItemEditor(filtered[0].id, reviewFocusIssue(filtered[0]));
   }
   countEl.addEventListener("click", handleCtaClick);
   if (reviewInbox) reviewInbox.addEventListener("click", handleCtaClick);

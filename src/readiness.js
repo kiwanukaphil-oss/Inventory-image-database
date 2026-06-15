@@ -33,6 +33,13 @@ function hasValue(v) {
   return v !== null && v !== undefined && v !== "";
 }
 
+function hasCostPrice(it) {
+  if (hasValue(it.cost_price)) return true;
+  if (it.has_cost_price === true) return true;
+  if (it.has_cost_price === false) return false;
+  return true;
+}
+
 export function hasAiSignal(it) {
   if (hasValue(it.brand) || hasValue(it.name)) return true;
   if (Object.keys(it.attributes || {}).some((k) => hasValue(it.attributes?.[k]))) return true;
@@ -56,7 +63,7 @@ export function missingCoreFields(it) {
   const missing = [];
   const attrs = it.attributes || {};
   if (!it.image_path) missing.push("photo");
-  if (!hasValue(it.brand) && !hasValue(it.name)) missing.push("brand/name");
+  if (!hasValue(it.name)) missing.push("name");
 
   const fields = resolveFields(it.category_id);
   const required = fields.filter((f) => f.required);
@@ -120,6 +127,10 @@ export function getItemReadiness(it, { forApproval = false } = {}) {
 
   if (it.price == null) {
     blockers.push(makeIssue("price", ISSUE_META.price.label, "Set a retail price before approval."));
+  }
+
+  if (!hasCostPrice(it)) {
+    blockers.push(makeIssue("price", "Missing cost price", "Set a cost price before approval."));
   }
 
   const doubts = aiDoubtFields(it);

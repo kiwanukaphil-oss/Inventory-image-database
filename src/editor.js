@@ -8,6 +8,7 @@ import {
   normalizeAttributeValue,
   AI_BLIND_FIELDS,
 } from "./data.js";
+import { loadCostPresence } from "./costs.js";
 import { clearItemJobFailures, loadLatestFailedJobs, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, fieldKeyFromPath, loadItemActivity, logItemActivity } from "./activity.js";
@@ -45,7 +46,7 @@ function fieldNameForKey(key, fields) {
   return fields.find((f) => f.key === key)?.label || key;
 }
 
-function buildEditorFixPlan(item, fields, conf) {
+function buildEditorFixPlan(item, fields, conf, { canViewCost = false } = {}) {
   const keys = new Set();
   const labels = [];
   const add = (key, label) => {
@@ -54,11 +55,8 @@ function buildEditorFixPlan(item, fields, conf) {
   };
 
   if (item.price == null) add("price", "Retail price");
-  if (!hasValue(item.brand) && !hasValue(item.name)) {
-    keys.add("brand");
-    keys.add("name");
-    add(null, "Brand or name");
-  }
+  if (!hasValue(item.name)) add("name", "Name");
+  if (canViewCost && item.has_cost_price === false) add("cost_price", "Cost price");
 
   const attrs = item.attributes || {};
   const required = fields.filter((f) => f.required);
@@ -112,6 +110,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   }
 
   let cost = null;
+  let hasCostPrice;
   if (canViewCost) {
     const { data } = await supabase
       .from("item_costs")
@@ -119,7 +118,13 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       .eq("item_id", itemId)
       .maybeSingle();
     cost = data?.cost_price ?? null;
+    hasCostPrice = cost !== null && cost !== undefined;
+  } else {
+    const costPresence = await loadCostPresence([itemId]);
+    if (costPresence.has(itemId)) hasCostPrice = costPresence.get(itemId);
   }
+  if (canViewCost) item.cost_price = cost;
+  if (hasCostPrice !== undefined) item.has_cost_price = hasCostPrice;
 
   // Live shop numbers for this item's POS variant (read-only mirror — the POS
   // owns stock/sold/price after push). Null when not pushed or not mirrored yet.
@@ -171,7 +176,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const fields = resolveFields(item.category_id);
   const conf = { ...(item.confidence || {}) }; // working copy of per-field confidence
   const readiness = getItemReadiness(item);
-  const fixPlan = buildEditorFixPlan(item, fields, conf);
+  const fixPlan = buildEditorFixPlan(item, fields, conf, { canViewCost });
   const aiSuggestedKeys = new Set();
 
   // ---- build the sheet ----
@@ -440,7 +445,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       const approvalReadiness = approvalReadinessFor();
       if (approvalReadiness.blockers.length) {
         toast("Can't approve yet: " + approvalBlockerText(approvalReadiness) + ".");
-        focusEditorIssue(sheet, approvalReadiness.blockers[0]?.issue || approvalReadiness.primary?.issue);
+        focusEditorIssue(sheet, focusIssueForBlocker(approvalReadiness.blockers[0]) || approvalReadiness.primary?.issue);
         paintApprovalAffordance();
         return;
       }
@@ -572,7 +577,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     const readiness = approvalReadinessFor();
     if (readiness.blockers.length) {
       toast("Can't approve yet: " + approvalBlockerText(readiness) + ".");
-      focusEditorIssue(sheet, readiness.blockers[0]?.issue || readiness.primary?.issue);
+      focusEditorIssue(sheet, focusIssueForBlocker(readiness.blockers[0]) || readiness.primary?.issue);
       paintApprovalAffordance();
       return false;
     }
@@ -754,10 +759,16 @@ function activitySectionHtml(rows, canEdit, fields = []) {
 }
 
 function sectionForIssue(issue) {
+  if (issue === "cost") return "admin";
   if (issue === "price" || issue === "sync") return "selling";
   if (issue === "missing") return "details";
   if (issue === "ai" || issue === "doubt" || issue === "flag") return "verify";
   return "verify";
+}
+
+function focusIssueForBlocker(blocker) {
+  if (blocker?.label === "Missing cost price") return "cost";
+  return blocker?.issue || "verify";
 }
 
 function focusEditorIssue(sheet, issue) {
@@ -836,6 +847,11 @@ function formItemForReadiness(sheet, item, fields, conf, status) {
     const v = textVal(key);
     return v ? Number(v) : null;
   };
+  const costEl = sheet.querySelector('[data-key="cost_price"]');
+  const costPrice = costEl ? numVal("cost_price") : item.cost_price;
+  const hasCostPrice = costEl
+    ? hasValue(costPrice)
+    : item.has_cost_price;
 
   return {
     ...item,
@@ -845,6 +861,8 @@ function formItemForReadiness(sheet, item, fields, conf, status) {
     price: numVal("price"),
     stock_quantity: numVal("stock_quantity") ?? 1,
     reorder_level: numVal("reorder_level"),
+    cost_price: costPrice,
+    has_cost_price: hasCostPrice,
     attributes,
     confidence: conf,
   };
