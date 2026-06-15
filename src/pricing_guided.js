@@ -31,6 +31,15 @@ function esc(v) {
 const isNumericish = (v) => v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v));
 
 export async function openGuidedPricing(caps, onClose) {
+  // Show the overlay immediately with a spinner so "Set prices" feels responsive
+  // while the catalogue (up to 5000 rows) loads; real content replaces it below.
+  const el = document.createElement("div");
+  el.className = "calib pricing pgd";
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Set prices</span></div>
+    <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("open"));
+
   await loadRefData();
   const ref = await loadRefData(); // cached — gives us the raw category tree
 
@@ -38,7 +47,7 @@ export async function openGuidedPricing(caps, onClose) {
     .from("items")
     .select("id, brand, attributes, category_id, price, image_path, pos_sync_status")
     .limit(5000);
-  if (error) { toast("Couldn't load items: " + error.message); return; }
+  if (error) { toast("Couldn't load items: " + error.message); el.remove(); return; }
   // Once an item is in the POS, the POS owns its price (catalog price changes
   // deliberately do NOT propagate) — so this surface only offers items whose
   // price will actually take effect: never pushed, or errored (the price goes
@@ -131,10 +140,7 @@ export async function openGuidedPricing(caps, onClose) {
   };
 
   // ---- overlay shell --------------------------------------------------------
-  const el = document.createElement("div");
-  el.className = "calib pricing pgd";
-  document.body.appendChild(el);
-  requestAnimationFrame(() => el.classList.add("open"));
+  // el is already created + shown (with a loading spinner) at the top.
   const release = trapFocus(el);
   const close = () => {
     document.removeEventListener("keydown", onKey);

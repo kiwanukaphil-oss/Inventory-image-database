@@ -304,6 +304,11 @@ body { overflow:hidden; overscroll-behavior:none; }
    real size after first paint, so scroll position stays stable. */
 .grid > .card { content-visibility:auto; contain-intrinsic-size:auto 280px; }
 .scanlist > .card-row { content-visibility:auto; contain-intrinsic-size:auto 64px; }
+/* Premium finish (V3 phase 6): tactile press feedback + tabular figures so
+   prices/counts have aligned digit widths and don't jitter as they change. */
+.grid > .card, .scanlist > .card-row { transition:transform .1s ease; }
+.grid > .card:active { transform:scale(.985); }
+.cprice, .noprice, #count, .ri-stats b, .up-stat b, .navbadge, .fcount { font-variant-numeric:tabular-nums; }
 .card .thumb {
   aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
   overflow:hidden; cursor:zoom-in; position:relative;
