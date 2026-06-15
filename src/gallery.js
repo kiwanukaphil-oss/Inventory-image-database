@@ -1060,7 +1060,8 @@ async function renderGallery(view, caps, opts = {}) {
     if (!cta) return;
     if (cta.dataset.cta === "noprice") { noPrice = true; priceMin = ""; priceMax = ""; draw(); pills(); }
     else if (cta.dataset.cta === "setprices") {
-      if (review) openPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
+      if (review && (issue === "price" || noPrice)) quickPriceItems(filtered.map((it) => it.id));
+      else if (review) openPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
       else openGuidedPricing(caps, refresh);
     }
     else if (cta.dataset.cta === "aifill") openBulkAi(filtered, caps, refresh);
@@ -1472,6 +1473,40 @@ async function renderGallery(view, caps, opts = {}) {
       }
       refresh();
     };
+  }
+
+  async function quickPriceItems(ids) {
+    const targetIds = ids.filter((id) => byId[id]?.price == null);
+    if (!targetIds.length) { toast("Those items already have prices."); return; }
+    const raw = await promptSheet({
+      title: "Set price",
+      message: `Set one retail price on ${targetIds.length} visible item${targetIds.length === 1 ? "" : "s"}.`,
+      label: "Retail price",
+      inputType: "number",
+      confirmText: "Set price",
+    });
+    if (raw === null) return;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) { toast("Enter a valid price."); return; }
+
+    const prior = targetIds.map((id) => ({ id, value: byId[id]?.price ?? null }));
+    const { error } = await supabase.from("items").update({ price: value }).in("id", targetIds);
+    if (error) { toast("Couldn't set price: " + error.message); return; }
+    toast(`Set price ${fmtPrice(value)} on ${targetIds.length} item${targetIds.length === 1 ? "" : "s"}`, {
+      label: "Undo",
+      onClick: async () => {
+        const byValue = {};
+        for (const p of prior) (byValue[p.value ?? "__null__"] ||= []).push(p.id);
+        for (const [old, oldIds] of Object.entries(byValue)) {
+          const price = old === "__null__" ? null : Number(old);
+          const { error: uErr } = await supabase.from("items").update({ price }).in("id", oldIds);
+          if (uErr) { toast("Undo failed: " + uErr.message); return; }
+        }
+        toast("Price change undone");
+        refresh();
+      },
+    });
+    refresh();
   }
 
   // One-tap bulk approve for the current selection. Approving is fully
