@@ -190,25 +190,26 @@ export function renderApp(mount, profile, onSignOut) {
 
   // Account / admin menu (⋮) — keeps the top bar clean; Sign out lives at the bottom.
   mount.querySelector("#menuBtn").onclick = () => {
-    const admin = caps.can_manage_users
-      ? `<button class="menu-item" data-m="users">Users & permissions</button>
-         <button class="menu-item" data-m="cats">Categories & fields</button>
-         <button class="menu-item" data-m="sync">Shop sync</button>
-         <button class="menu-item" data-m="settings">Settings</button>`
-      : "";
     const install = installAvailable() ? `<button class="menu-item" data-m="install">Install app</button>` : "";
     // Calibration is a reviewer task (validates AI confidence), so it's offered
     // to anyone who can edit, not just user-managers.
     const calib = caps.can_edit ? `<button class="menu-item" data-m="calib">Calibration check</button>` : "";
     const pricing = caps.can_edit ? `<button class="menu-item" data-m="pricing">Set prices</button>` : "";
+    const workTools = [pricing, calib, `<button class="menu-item" data-m="export">Export CSV</button>`].filter(Boolean).join("");
+    const shopTools = caps.can_manage_users ? `<button class="menu-item" data-m="sync">Shop sync</button>` : "";
+    const adminTools = caps.can_manage_users
+      ? `<button class="menu-item" data-m="users">Users & permissions</button>
+         <button class="menu-item" data-m="cats">Categories & fields</button>
+         <button class="menu-item" data-m="settings">Catalog settings</button>`
+      : "";
+    const appTools = `<button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>${install}`;
     const sh = openBottomSheet(caps.email || "Account",
       `<div class="menu-sub">Signed in as ${esc(role)}</div>
-       ${admin}
-       ${pricing}
-       ${calib}
-       <button class="menu-item" data-m="export">Export CSV</button>
-       <button class="menu-item" data-m="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
-       ${install}
+       ${workTools ? `<div class="sheet-sec">Work tools</div>${workTools}` : ""}
+       ${shopTools ? `<div class="sheet-sec">Shop</div>${shopTools}` : ""}
+       ${adminTools ? `<div class="sheet-sec">Admin</div>${adminTools}` : ""}
+       <div class="sheet-sec">App</div>${appTools}
+       <div class="sheet-sec">Account</div>
        <button class="menu-item danger" data-m="signout">Sign out</button>`);
     sh.body.addEventListener("click", async (e) => {
       const b = e.target.closest("[data-m]");
