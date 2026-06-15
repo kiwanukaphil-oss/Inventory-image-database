@@ -192,7 +192,8 @@ body { overflow:hidden; overscroll-behavior:none; }
   padding:calc(10px + var(--safe-top)) 14px 10px;
   display:flex; align-items:center; gap:10px;
 }
-.topbar h1 { font-size:16px; margin:0; font-weight:650; }
+.topbar h1 { font-size:16px; margin:0; font-weight:650;
+  min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .topbar .spacer { flex:1; }
 .rolechip {
   font-size:11px; padding:2px 8px; border-radius:10px;
@@ -206,7 +207,7 @@ body { overflow:hidden; overscroll-behavior:none; }
    overscroll containment stops edge-bounce from chaining anywhere. The large
    bottom padding is scroll headroom for the floating FAB and the selection
    action bar (both viewport-fixed overlays). */
-.content { flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+.content { flex:1; min-height:0; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch;
   overscroll-behavior:contain; padding:12px 12px calc(78px + var(--safe-bottom)); }
 
 /* Offline banner (thin bar under the top bar, inside .topwrap). */
@@ -640,7 +641,9 @@ body { overflow:hidden; overscroll-behavior:none; }
 /* ---------------- premium gallery toolbar ---------------- */
 .galtop { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
 .ghdr { display:flex; align-items:center; gap:8px; }
-.ghdr .fb-search { flex:1 1 auto; width:auto; }
+/* min-width:0 lets the search input shrink inside the flex row instead of
+   forcing it wider than the screen (inputs have a large intrinsic min-width). */
+.ghdr .fb-search { flex:1 1 auto; width:auto; min-width:0; }
 .ghdr .spacer { flex:1; }
 .iconbtn {
   position:relative; display:inline-flex; align-items:center; justify-content:center;
