@@ -1282,6 +1282,10 @@ async function renderGallery(view, caps, opts = {}) {
     const titleEl = el.querySelector("#fsTitle");
     const backBtn = el.querySelector("#fsBack");
     const showBtn = el.querySelector("#fsShow");
+    const setFilterBody = (html) => {
+      bodyEl.innerHTML = html;
+      requestAnimationFrame(() => { bodyEl.scrollTop = 0; });
+    };
 
     const close = () => { document.removeEventListener("keydown", onKey); release(); el.classList.remove("open"); setTimeout(() => el.remove(), 200); };
     let currentBack = null; // where the head back-button goes (null = at master)
@@ -1348,15 +1352,15 @@ async function renderGallery(view, caps, opts = {}) {
       html += `</div>`;
       if (moreFacets.length) html += `<div class="fs-list">${rowLink("more", "More filters", moreSummary())}</div>`;
       html += `<div class="fs-list">${rowLink("saved", "Saved views", savedViews.length ? `${savedViews.length}` : "None")}</div>`;
-      bodyEl.innerHTML = html;
+      setFilterBody(html);
       refreshShow();
     }
 
     // ---- SORT detail (single choice) ----
     function showSort() {
       titleEl.textContent = "Sort";
-      bodyEl.innerHTML = `<div class="fs-list">${SORTS.map((s) =>
-        optRow(`data-sort="${s.v}"`, s.label, sortBy === s.v)).join("")}</div>`;
+      setFilterBody(`<div class="fs-list">${SORTS.map((s) =>
+        optRow(`data-sort="${s.v}"`, s.label, sortBy === s.v)).join("")}</div>`);
     }
 
     // ---- PRICE detail ----
@@ -1365,28 +1369,28 @@ async function renderGallery(view, caps, opts = {}) {
     // a range — a range can only match priced items — so the inputs disable.
     function showPrice() {
       titleEl.textContent = "Price";
-      bodyEl.innerHTML = `<div class="fs-detail">
+      setFilterBody(`<div class="fs-detail">
         <div class="fs-list" style="margin-bottom:10px">${optRow("data-noprice", "Only items without a price", noPrice)}</div>
         <label class="cm-label" for="fsMin">Minimum price</label>
         <input id="fsMin" class="rng" type="number" inputmode="numeric" placeholder="No minimum" value="${esc(priceMin)}"${noPrice ? " disabled" : ""}>
         <label class="cm-label" for="fsMax">Maximum price</label>
         <input id="fsMax" class="rng" type="number" inputmode="numeric" placeholder="No maximum" value="${esc(priceMax)}"${noPrice ? " disabled" : ""}>
-      </div>`;
+      </div>`);
       if (!noPrice) requestAnimationFrame(() => bodyEl.querySelector("#fsMin")?.focus());
     }
 
     // ---- ADDED (date) detail (single choice) ----
     function showDate() {
       titleEl.textContent = "Added";
-      bodyEl.innerHTML = `<div class="fs-list">${DATE_FILTERS.map((d) =>
-        optRow(`data-dt="${d.v}"`, d.label, datePreset === d.v)).join("")}</div>`;
+      setFilterBody(`<div class="fs-list">${DATE_FILTERS.map((d) =>
+        optRow(`data-dt="${d.v}"`, d.label, datePreset === d.v)).join("")}</div>`);
     }
 
     // ---- MORE filters: list of the remaining facets ----
     function showMore() {
       titleEl.textContent = "More filters";
-      bodyEl.innerHTML = `<div class="fs-list">${moreFacets.map((f) =>
-        rowLink("facet:" + f.key, f.label, facetSummary(f))).join("")}</div>`;
+      setFilterBody(`<div class="fs-list">${moreFacets.map((f) =>
+        rowLink("facet:" + f.key, f.label, facetSummary(f))).join("")}</div>`);
     }
 
     // ---- FACET detail (multi-select checklist with live counts) ----
@@ -1407,7 +1411,7 @@ async function renderGallery(view, caps, opts = {}) {
       const search = f.values.length > 8
         ? `<input class="facet-filter" type="search" placeholder="Search ${esc(f.label.toLowerCase())}…" value="${esc(ff)}">`
         : "";
-      bodyEl.innerHTML = `<div class="fs-detail">${search}<div class="fs-list">${rows || `<div class="muted" style="padding:14px">No matches.</div>`}</div></div>`;
+      setFilterBody(`<div class="fs-detail">${search}<div class="fs-list">${rows || `<div class="muted" style="padding:14px">No matches.</div>`}</div></div>`);
     }
     function showFacet(f, backFn) { curFacet = f; titleEl.textContent = f.label; go(renderFacet, backFn); }
 
@@ -1419,10 +1423,10 @@ async function renderGallery(view, caps, opts = {}) {
             <span class="fs-opt-label">${esc(v.name)}</span>
             <button class="sx" data-del="${v.id}" aria-label="Delete view">${ICON.x}</button></div>`).join("")
         : `<div class="muted" style="padding:14px">No saved views yet.</div>`;
-      bodyEl.innerHTML = `<div class="fs-detail">
+      setFilterBody(`<div class="fs-detail">
         <div class="fs-list">${list}</div>
         <button class="ghost" id="fsSaveView" style="margin-top:12px">★ Save current view</button>
-      </div>`;
+      </div>`);
     }
 
     // ---- one delegated click handler for the whole sheet body ----

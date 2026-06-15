@@ -692,7 +692,7 @@ body { overflow:hidden; overscroll-behavior:none; }
 .msheet.open { opacity:1; }
 .msheet-panel { width:100%; max-width:520px; max-height:88dvh; display:flex; flex-direction:column;
   background:var(--elevated); border:1px solid var(--line); box-shadow:var(--shadow-pop);
-  border-radius:16px 16px 0 0; transform:translateY(16px); transition:transform .2s; }
+  border-radius:16px 16px 0 0; transform:translateY(16px); transition:transform .2s; overflow:hidden; }
 .msheet.open .msheet-panel { transform:translateY(0); }
 @media (min-width:560px) { .msheet { align-items:center; } .msheet-panel { border-radius:16px; } }
 .msheet-head { flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
@@ -876,17 +876,21 @@ body { overflow:hidden; overscroll-behavior:none; }
 /* ---- Filters & sort drill-down sheet ---- */
 /* Head: back chevron + title + close. Title takes the middle. */
 .filter-sheet .msheet-head { gap:6px; }
-.filter-sheet .msheet-head #fsTitle { flex:1 1 auto; }
-.filter-sheet .msheet-body { gap:0; } /* groups manage their own spacing */
+.filter-sheet .msheet-panel { height:calc(100dvh - 12px - var(--safe-top)); max-height:calc(100dvh - 12px - var(--safe-top)); }
+.filter-sheet .msheet-head #fsTitle { flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.filter-sheet .msheet-body { flex:1 1 0; min-height:0; gap:0; overflow-y:auto; } /* groups manage their own spacing */
+@media (min-width:560px) {
+  .filter-sheet .msheet-panel { height:min(760px, calc(100dvh - 32px)); max-height:calc(100dvh - 32px); }
+}
 /* iOS-settings-style grouped list of tappable rows. */
 .fs-list { display:flex; flex-direction:column; background:var(--panel);
   border:1px solid var(--line); border-radius:12px; overflow:hidden; }
 .fs-list + .fs-list { margin-top:14px; }
 .fs-link, .fs-opt { display:flex; align-items:center; gap:12px; width:100%; text-align:left;
-  background:transparent; border:none; border-radius:0; padding:14px; color:var(--txt); font-size:15px; min-height:50px; }
+  background:transparent; border:none; border-radius:0; padding:14px; color:var(--txt); font-size:15px; min-height:50px; min-width:0; }
 .fs-link + .fs-link, .fs-opt + .fs-opt { border-top:1px solid var(--line); }
 .fs-link:active, .fs-opt:active { background:var(--control); }
-.fs-label, .fs-opt-label { flex:1 1 auto; }
+.fs-label, .fs-opt-label { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; line-height:1.25; }
 .fs-val { color:var(--muted); font-size:14px; white-space:nowrap; max-width:55%; overflow:hidden; text-overflow:ellipsis; }
 .fs-opt-n { color:var(--muted); font-size:12px; }
 .fs-check { color:var(--accent); }
