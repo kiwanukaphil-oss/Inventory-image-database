@@ -355,11 +355,11 @@ const SORTS = [
 // Session-remembered view state, kept separate per surface so the Gallery and
 // Review tabs don't clobber each other's search/filters/sort. `active` holds
 // facet selections serialised as arrays (rehydrated to Sets on render).
-// `density` is the card-grid vs scan-list view mode. Review defaults to the
-// dense list (built for skimming many uploads at once); Gallery to the grid.
+// `density` is the card-grid vs scan-list view mode. Both surfaces default to
+// tile/grid; reviewers can still switch to the dense list when skimming.
 const browseState = {
   gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid" },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list", seg: "work", issue: "work" },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", seg: "work", issue: "work" },
 };
 
 // AI_BLIND_FIELDS (fit, …) is imported from data.js — fields the AI can never
