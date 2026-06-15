@@ -35,15 +35,6 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 
-const jwtPayload = (token: string) => {
-  try {
-    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(b64));
-  } catch {
-    return {};
-  }
-};
-
 async function posLogin(baseUrl: string) {
   const res = await fetch(`${baseUrl}/auth/login`, {
     method: "POST",
@@ -98,11 +89,12 @@ Deno.serve(async (req) => {
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const POS_BASE_URL = (Deno.env.get("POS_BASE_URL") || "").replace(/\/$/, "");
 
-  // Same gate as the other loops: service caller, invoke key, or admin user.
+  // Same gate as the other loops: exact service secret, invoke key, or an
+  // authenticated admin/user-manager. Deployed with --no-verify-jwt, so never
+  // trust decoded JWT claims here.
   const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   const INVOKE_KEY = Deno.env.get("MIRROR_INVOKE_KEY") || "";
   const isService =
-    jwtPayload(bearer).role === "service_role" ||
     (bearer && bearer === SERVICE_KEY) ||
     (INVOKE_KEY && bearer === INVOKE_KEY);
   if (!isService) {
@@ -141,12 +133,15 @@ Deno.serve(async (req) => {
     if (mErr) throw new Error(`mirror read failed: ${mErr.message}`);
     const mirror = new Map((mirrorRows || []).map((r) => [r.pos_variant_id, r]));
 
-    // Group synced items per variant: expected receipt units = each item's qty
-    // (zero-qty items expect no receipt, by the zero/blank-stock rule).
+    // Group synced items per variant: expected receipt units = each item's qty.
+    // Blank legacy quantities are one photographed unit; explicit zero expects
+    // no receipt.
     const expect = new Map(); // variant_id -> { sku, units, itemIds }
     for (const it of synced || []) {
       const slot = expect.get(it.pos_variant_id) || { sku: it.sku, units: 0, itemIds: [] };
-      slot.units += it.stock_quantity ?? 0;
+      // Match pos-push: legacy blank quantity means one photographed unit;
+      // explicit 0 still means catalog-only/no receipt expected.
+      slot.units += it.stock_quantity ?? 1;
       slot.itemIds.push(it.id);
       expect.set(it.pos_variant_id, slot);
     }

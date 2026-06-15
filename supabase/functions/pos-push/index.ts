@@ -43,15 +43,6 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 
-const jwtPayload = (token: string) => {
-  try {
-    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(b64));
-  } catch {
-    return {};
-  }
-};
-
 // ---------------------------------------------------------------------------
 // POS REST client (subset of the connector's posClient, fetch-native).
 // ---------------------------------------------------------------------------
@@ -125,9 +116,16 @@ class Pos {
   }
   /** Does this variant's ledger already hold a movement for this catalog item? */
   async hasMovementWithReference(variantId: string, referenceId: string) {
-    const { status, body } = await this.req(`/inventory/movements/${variantId}?limit=500&offset=0`);
+    const qs = new URLSearchParams({
+      variant_id: variantId,
+      reference_id: referenceId,
+      movement_type: RECEIVE_MOVEMENT_TYPE,
+      limit: "1",
+      offset: "0",
+    });
+    const { status, body } = await this.req(`/inventory/movements?${qs.toString()}`);
     if (status !== 200) throw new Error(`movement check failed (${status})`);
-    return (body.data || []).some((m) => m.reference_id === referenceId);
+    return (body.data || []).some((m) => m.reference_id === referenceId && m.variant_id === variantId);
   }
   async adjustStock(payload: unknown) {
     const { status, body } = await this.req("/inventory/adjust", { method: "POST", body: payload });
@@ -295,11 +293,12 @@ Deno.serve(async (req) => {
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const POS_BASE_URL = (Deno.env.get("POS_BASE_URL") || "").replace(/\/$/, "");
 
-  // Same gate as pos-mirror: service caller, shared invoke key, or admin user.
+  // Same gate as pos-mirror: exact service secret, shared invoke key, or an
+  // authenticated admin/user-manager. Deployed with --no-verify-jwt, so never
+  // trust decoded JWT claims here.
   const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   const INVOKE_KEY = Deno.env.get("MIRROR_INVOKE_KEY") || "";
   const isService =
-    jwtPayload(bearer).role === "service_role" ||
     (bearer && bearer === SERVICE_KEY) ||
     (INVOKE_KEY && bearer === INVOKE_KEY);
   if (!isService) {
@@ -392,7 +391,18 @@ Deno.serve(async (req) => {
     for (const item of queue || []) {
       summary.queue_seen++;
       const posCategoryId = categoryMap.get(item.category_id);
-      if (item.price == null || !item.sku || !posCategoryId) { summary.blocked++; continue; }
+      if (item.price == null || !item.sku || !posCategoryId) {
+        const reasons = [];
+        if (item.price == null) reasons.push("missing price");
+        if (!item.sku) reasons.push("missing SKU");
+        if (!posCategoryId) reasons.push("category not mapped to POS");
+        summary.blocked++;
+        await db.from("items").update({
+          pos_sync_status: "error",
+          pos_sync_error: `Blocked before POS push: ${reasons.join("; ")}`,
+        }).eq("id", item.id);
+        continue;
+      }
       const costPrice = extractCostPrice(item);
       const groupKey = getGroupKey(item);
       let posProductId = item.pos_product_id;

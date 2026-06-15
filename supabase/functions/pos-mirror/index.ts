@@ -34,17 +34,6 @@ const cors = {
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 
-// Decode a (platform-verified) JWT payload without re-verifying — we only need
-// the role claim to distinguish the cron/service caller from a real user.
-const jwtPayload = (token: string) => {
-  try {
-    const b64 = token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(b64));
-  } catch {
-    return {};
-  }
-};
-
 /** Log in to the POS as catalog_sync and return a Bearer token. */
 async function posLogin(baseUrl: string) {
   const res = await fetch(`${baseUrl}/auth/login`, {
@@ -126,13 +115,14 @@ Deno.serve(async (req) => {
   // Deployed with --no-verify-jwt (the project uses new-style sb_secret_ keys,
   // which the gateway's JWT check doesn't understand), so THIS block is the
   // only gate. Accepted callers:
-  //   1. the service-role key itself (legacy JWT claim OR exact new-key match)
+  //   1. the exact service-role/secret key value
   //   2. the dedicated MIRROR_INVOKE_KEY secret (what the cron job sends)
   //   3. a signed-in admin / user-manager (the future "Sync now" button)
+  // Never trust a decoded JWT role claim here because the gateway is not
+  // verifying the token for this function.
   const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   const INVOKE_KEY = Deno.env.get("MIRROR_INVOKE_KEY") || "";
   const isService =
-    jwtPayload(bearer).role === "service_role" ||
     (bearer && bearer === SERVICE_KEY) ||
     (INVOKE_KEY && bearer === INVOKE_KEY);
   if (!isService) {
