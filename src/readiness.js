@@ -99,6 +99,13 @@ export function getItemReadiness(it, { forApproval = false } = {}) {
     blockers.push(makeIssue("sync", ISSUE_META.sync.label, it.pos_sync_error || "Shop sync needs attention."));
   }
 
+  if (it.latest_ai_job?.status === "failed") {
+    const detail = it.latest_ai_job.error_category
+      ? `${it.latest_ai_job.error_category}: ${it.latest_ai_job.error_message || "Retry AI fill."}`
+      : (it.latest_ai_job.error_message || "AI fill failed. Retry when ready.");
+    blockers.push(makeIssue("ai", ISSUE_META.ai.label, detail));
+  }
+
   if (it.image_path && !hasAiSignal(it)) {
     blockers.push(makeIssue("ai", ISSUE_META.ai.label, "Photo has not been read by AI yet."));
   }

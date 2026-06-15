@@ -1,6 +1,7 @@
 import { supabase } from "./db.js";
 import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue, normalizeAttributeValue } from "./data.js";
 import { compressImage } from "./imageCompress.js";
+import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { toast, trapFocus, ICON } from "./ui.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
@@ -40,7 +41,9 @@ async function aiFillItem(id, common) {
   const { data, error } = await supabase.functions.invoke("ai-extract", {
     body: { item_id: id, category: categoryPath(common.categoryId), fields: defs },
   });
-  if (error || data?.error || !data?.values) return;
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  if (!data?.values) throw new Error("AI returned no values.");
 
   const vocabByKey = { brand: "brand" };
   const typeByKey = {};
@@ -68,6 +71,7 @@ async function aiFillItem(id, common) {
   // than sitting silently as a confident-but-unchecked draft.
   if (filled && common.status === "draft") update.status = "needs-review";
   await supabase.from("items").update(update).eq("id", id);
+  await clearItemJobFailures(id, "ai_fill");
 }
 
 // Leaf categories (no children) are where items actually go.
@@ -338,7 +342,14 @@ export async function renderUpload(view, caps, onDone) {
     if (ins.error) throw ins.error;
     // Opt-in: read the photo and fill any still-empty fields. Soft-fails — the
     // photo is already saved, so an AI hiccup never fails the upload.
-    if (common.ai) { try { await aiFillItem(id, common); } catch (e) { console.error("ai-fill failed", e); } }
+    if (common.ai) {
+      try {
+        await aiFillItem(id, common);
+      } catch (e) {
+        await recordItemJobFailure(id, "ai_fill", e);
+        console.error("ai-fill failed", e);
+      }
+    }
   }
 
   const barFill = $("#barFill");

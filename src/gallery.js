@@ -26,6 +26,7 @@ import { renderExport } from "./exportcsv.js";
 import { renderShop } from "./shop.js";
 import { openSyncCenter } from "./synccenter.js";
 import { openCategoryManager } from "./categories_admin.js";
+import { loadLatestFailedJobs } from "./joblog.js";
 import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
@@ -435,6 +436,12 @@ async function renderGallery(view, caps, opts = {}) {
 
   // Keep the Review tab's badge in sync on every load (any surface refreshes
   // it). Both segments count — ready-to-approve items await action too.
+  const failedAiJobs = await loadLatestFailedJobs((data || []).map((it) => it.id), "ai_fill");
+  for (const it of data || []) {
+    const job = failedAiJobs.get(it.id);
+    if (job) it.latest_ai_job = job;
+  }
+
   setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it)).length);
 
   if (!data || data.length === 0) {

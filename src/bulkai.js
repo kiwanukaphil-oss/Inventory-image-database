@@ -1,5 +1,6 @@
 import { supabase } from "./db.js";
 import { resolveFields, normalizeValue, normalizeAttributeValue, categoryPath } from "./data.js";
+import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { trapFocus, isTopOverlay } from "./ui.js";
 
 // Bulk AI fill: run the ai-extract Edge Function across a set of items (the
@@ -215,8 +216,10 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
         skipped++;
         logLine(`· ${label} — nothing to fill`);
       }
+      await clearItemJobFailures(it.id, "ai_fill");
     } catch (e) {
       failed++;
+      await recordItemJobFailure(it.id, "ai_fill", e);
       logLine(`<span style="color:var(--flag-txt)">✕ ${label} — ${esc(e?.message || e)}</span>`);
     } finally {
       done++;

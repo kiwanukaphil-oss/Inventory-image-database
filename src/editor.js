@@ -7,6 +7,7 @@ import {
   normalizeValue,
   normalizeAttributeValue,
 } from "./data.js";
+import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
 import { toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
 
@@ -376,8 +377,10 @@ export async function openEditor(itemId, caps, onSaved) {
         }
         if (data?.error) throw new Error(data.error);
         const n = applySuggestions(data.values, data.confidence);
+        await clearItemJobFailures(itemId, "ai_fill");
         toast(n ? `AI filled ${n} field${n === 1 ? "" : "s"} — review & Save` : "AI couldn't read any fields");
       } catch (e) {
+        await recordItemJobFailure(itemId, "ai_fill", e);
         toast("AI failed: " + (e?.message || e));
       } finally {
         aiBtn.disabled = false;
