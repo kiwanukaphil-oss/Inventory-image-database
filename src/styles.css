@@ -879,6 +879,9 @@ body { overflow:hidden; overscroll-behavior:none; }
 .filter-sheet .msheet-panel { height:calc(100dvh - 12px - var(--safe-top)); max-height:calc(100dvh - 12px - var(--safe-top)); }
 .filter-sheet .msheet-head #fsTitle { flex:1 1 auto; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .filter-sheet .msheet-body { flex:1 1 0; min-height:0; gap:0; overflow-y:auto; } /* groups manage their own spacing */
+.filter-sheet .msheet-body > *,
+.filter-sheet .fs-list,
+.filter-sheet .fs-detail { flex-shrink:0; }
 @media (min-width:560px) {
   .filter-sheet .msheet-panel { height:min(760px, calc(100dvh - 32px)); max-height:calc(100dvh - 32px); }
 }
