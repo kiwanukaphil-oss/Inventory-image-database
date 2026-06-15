@@ -1531,6 +1531,29 @@ async function renderGallery(view, caps, opts = {}) {
     if (raw === null) return;
     const value = Number(raw);
     if (!Number.isFinite(value) || value < 0) { toast("Enter a valid price."); return; }
+    const targetItems = targetIds.map((id) => byId[id]).filter(Boolean);
+    const summarizeCounts = (values) => {
+      const counts = new Map();
+      for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
+      const rows = [...counts.entries()]
+        .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
+      const shown = rows.slice(0, 3).map(([label, n]) => `${label} (${n})`);
+      const rest = rows.length - shown.length;
+      return shown.join(", ") + (rest > 0 ? `, plus ${rest} more` : "");
+    };
+    const brands = summarizeCounts(targetItems.map((it) => it.brand || it.name || "Unbranded"));
+    const cats = summarizeCounts(targetItems.map((it) => it.categories?.name || categoryPath(it.category_id) || "Uncategorized"));
+    const examples = targetItems
+      .slice(0, 4)
+      .map((it) => [it.brand || it.name || "Unnamed", it.categories?.name || categoryPath(it.category_id)].filter(Boolean).join(" / "))
+      .join("; ");
+    const ok = await confirmSheet({
+      title: "Confirm price scope",
+      message: `Apply ${fmtPrice(value)} to ${targetIds.length} visible unpriced item${targetIds.length === 1 ? "" : "s"}. Existing prices will not change. Categories: ${cats}. Brands: ${brands}. Examples: ${examples}.`,
+      confirmText: "Apply price",
+      cancelText: "Review first",
+    });
+    if (!ok) return;
 
     const prior = targetIds.map((id) => ({ id, value: byId[id]?.price ?? null }));
     const { error } = await supabase.from("items").update({ price: value }).in("id", targetIds);
