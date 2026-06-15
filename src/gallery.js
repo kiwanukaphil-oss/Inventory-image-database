@@ -467,7 +467,9 @@ function activityBadgesHtml(it, { compact = false } = {}) {
   else if (hasAi) { label = compact ? "AI" : "AI filled"; cls = "ai"; }
   else if (hasHuman && !["pricing", "approval", "bulk", "undo"].includes(a.latest_source)) { label = compact ? "Manual" : "Manual edit"; cls = "manual"; }
   const when = a.latest_at ? new Date(a.latest_at).toLocaleString() : "";
-  return `<span class="source-pill src-${esc(cls)}" title="${esc([label, a.latest_summary, when].filter(Boolean).join(" · "))}">${esc(compact ? label.replace(" edit", "") : label)}</span>`;
+  // data-tip mirrors title so touch users (no hover) can tap to read the detail.
+  const tip = esc([label, a.latest_summary, when].filter(Boolean).join(" · "));
+  return `<span class="source-pill src-${esc(cls)}" title="${tip}" data-tip="${tip}">${esc(compact ? label.replace(" edit", "") : label)}</span>`;
 }
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 let _appCmdKey = null; // current Ctrl/Cmd+K handler for the signed-in shell
@@ -598,7 +600,7 @@ async function renderGallery(view, caps, opts = {}) {
       "Sync error":     ["ps-err",    "⚠ Error",         `Couldn't reach the shop: ${it.pos_sync_error || "unknown error"}`],
       "Update pending": ["ps-dirty",  "✎ Edited",        "Edited since it went to the shop — the update hasn't reached the POS yet"],
     }[st];
-    return `<span class="poschip ${C[0]}" title="${esc(C[2])}">${esc(C[1])}</span>`;
+    return `<span class="poschip ${C[0]}" title="${esc(C[2])}" data-tip="${esc(C[2])}">${esc(C[1])}</span>`;
   }
   // The freshness line: when the mirror last spoke to the POS. Stale or failing
   // data is SHOWN as such — never silently presented as live.
@@ -839,7 +841,7 @@ async function renderGallery(view, caps, opts = {}) {
       ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
       : `<span style="color:var(--muted);font-size:12px">no image</span>`;
     const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
-      ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check"></span>' : ""}</div>`;
+      ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check" data-tip="Has an AI field to check"></span>' : ""}</div>`;
     return `<div class="card${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
       ${thumb}
       <div class="body">
@@ -875,7 +877,7 @@ async function renderGallery(view, caps, opts = {}) {
       ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
       : `<span class="row-noimg">—</span>`;
     const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
-      ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check"></span>' : ""}</div>`;
+      ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check" data-tip="Has an AI field to check"></span>' : ""}</div>`;
     return `<div class="card card-row${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
       ${thumb}
       <div class="row-main">
@@ -1092,6 +1094,10 @@ async function renderGallery(view, caps, opts = {}) {
       else { toggleSelect(card.dataset.id, card); anchorIndex = cardIndex(card); }
       return;
     }
+    // Touch has no hover: a tap on an info chip/dot (POS state, AI-doubt, source)
+    // reveals its detail in a toast instead of opening the editor/lightbox.
+    const tip = e.target.closest("[data-tip]");
+    if (tip) { toast(tip.dataset.tip); return; }
     const thumb = e.target.closest(".thumb[data-slide]");
     if (thumb) { openLightbox(grid._slides, Number(thumb.dataset.slide)); return; }
     if (card) openItemEditor(card.dataset.id);

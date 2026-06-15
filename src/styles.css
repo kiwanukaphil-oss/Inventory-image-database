@@ -297,6 +297,13 @@ body { overflow:hidden; overscroll-behavior:none; }
   background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
   overflow:hidden; display:flex; flex-direction:column; box-shadow:var(--shadow-card);
 }
+/* Perf (V3 phase 1 — "make it feel instant"): skip layout+paint for cards that
+   are off-screen. Nodes STAY in the DOM, so selection / drag-sweep / shift-range
+   and the lightbox slide indices keep working unchanged — only rendering of
+   off-screen cards is deferred. `auto` lets the browser remember each card's
+   real size after first paint, so scroll position stays stable. */
+.grid > .card { content-visibility:auto; contain-intrinsic-size:auto 280px; }
+.scanlist > .card-row { content-visibility:auto; contain-intrinsic-size:auto 64px; }
 .card .thumb {
   aspect-ratio:1/1; display:flex; align-items:center; justify-content:center;
   overflow:hidden; cursor:zoom-in; position:relative;
