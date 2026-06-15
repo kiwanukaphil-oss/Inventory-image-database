@@ -146,3 +146,44 @@ export function normalizeValue(field, value) {
   }
   return v;
 }
+
+function isCategoryOrDescendant(categoryId, slug) {
+  if (!cache) return false;
+  let cur = cache.byId[categoryId];
+  let depth = 0;
+  while (cur && depth++ < 20) {
+    if (cur.slug === slug) return true;
+    cur = cur.parent_id ? cache.byId[cur.parent_id] : null;
+  }
+  return false;
+}
+
+function normalizePantsWaist(value) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return raw;
+  const v = raw.replace(/\s+/g, " ").toUpperCase();
+  const patterns = [
+    /^(?:W|WAIST)\s*([0-9]{2,3})\s*(?:"|IN|INCH|INCHES)?$/,
+    /^([0-9]{2,3})\s*(?:W|WAIST)$/,
+    /^([0-9]{2,3})\s*(?:"|IN|INCH|INCHES)$/,
+    /^(?:W\s*)?([0-9]{2,3})\s*(?:X|\/|-|L|LEG|INSEAM)\s*[0-9]{2,3}\s*(?:"|IN|INCH|INCHES)?$/,
+  ];
+  for (const p of patterns) {
+    const m = v.match(p);
+    if (m) return m[1];
+  }
+  return raw;
+}
+
+/**
+ * Canonicalise free-text category attributes where a controlled vocabulary is
+ * too rigid. Pants waist size is stored as the numeric waist only, so AI/manual
+ * variants like W32, W 32, 32W, or W32 L34 all group/SKU as 32.
+ */
+export function normalizeAttributeValue(categoryId, key, value) {
+  if (value === null || value === undefined) return value;
+  if (key === "size" && isCategoryOrDescendant(categoryId, "pants")) {
+    return normalizePantsWaist(value);
+  }
+  return typeof value === "string" ? value.trim() : value;
+}

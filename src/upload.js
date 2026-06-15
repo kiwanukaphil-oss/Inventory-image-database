@@ -1,5 +1,5 @@
 import { supabase } from "./db.js";
-import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue } from "./data.js";
+import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue, normalizeAttributeValue } from "./data.js";
 import { compressImage } from "./imageCompress.js";
 import { toast, trapFocus, ICON } from "./ui.js";
 
@@ -58,6 +58,7 @@ async function aiFillItem(id, common) {
     if (key === "brand") { if (!brand) { brand = val; filled++; } if (data.confidence?.brand) confidence.brand = data.confidence.brand; continue; }
     if (key === "name") { if (!name) { name = val; filled++; } if (data.confidence?.name) confidence.name = data.confidence.name; continue; }
     if (attributes[key] !== undefined && attributes[key] !== "") continue; // keep batch-common values
+    val = normalizeAttributeValue(common.categoryId, key, val);
     attributes[key] = typeByKey[key] === "number" ? Number(val) : val;
     if (data.confidence?.[key]) confidence[key] = data.confidence[key];
     filled++;
@@ -310,6 +311,7 @@ export async function renderUpload(view, caps, onDone) {
       if (!val) return;
       if (el.dataset.ck === "brand") { brand = normalizeValue("brand", val); return; }
       if (el.dataset.vocab) val = normalizeValue(el.dataset.vocab, val);
+      val = normalizeAttributeValue(categoryId, el.dataset.ck, val);
       attributes[el.dataset.ck] = el.dataset.type === "number" ? Number(val) : val;
     });
     return {

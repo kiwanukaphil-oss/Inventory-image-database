@@ -5,6 +5,7 @@ import {
   categoryPath,
   vocabSuggestions,
   normalizeValue,
+  normalizeAttributeValue,
 } from "./data.js";
 import { toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
 
@@ -325,6 +326,7 @@ export async function openEditor(itemId, caps, onSaved) {
       if (!el) continue;
       let val = String(raw);
       if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
+      val = normalizeAttributeValue(item.category_id, key, val);
       if (el.tagName === "SELECT" && ![...el.options].some((o) => o.value === val)) {
         const o = document.createElement("option");
         o.value = val;
@@ -522,6 +524,7 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost) {
     else {
       val = el.value.trim();
       if (f.vocab) val = normalizeValue(f.vocab, val); // Grey -> Gray
+      val = normalizeAttributeValue(item.category_id, f.key, val);
     }
     if (val === "" || val === false || val === null) delete attributes[f.key];
     else attributes[f.key] = f.type === "number" ? Number(val) : val;

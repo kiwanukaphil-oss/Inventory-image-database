@@ -1,5 +1,5 @@
 import { supabase } from "./db.js";
-import { resolveFields, normalizeValue, categoryPath } from "./data.js";
+import { resolveFields, normalizeValue, normalizeAttributeValue, categoryPath } from "./data.js";
 import { trapFocus, isTopOverlay } from "./ui.js";
 
 // Bulk AI fill: run the ai-extract Edge Function across a set of items (the
@@ -194,6 +194,7 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
         }
         const existing = attributes[key];
         if (onlyEmpty && existing !== undefined && existing !== null && existing !== "") continue;
+        val = normalizeAttributeValue(it.category_id, key, val);
         const finalVal = typeByKey[key] === "number" ? Number(val) : val;
         if (finalVal !== existing) {
           attributes[key] = finalVal;

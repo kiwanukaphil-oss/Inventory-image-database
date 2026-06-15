@@ -2,7 +2,7 @@ import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
 import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
-import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, vocabSuggestions, AI_BLIND_FIELDS, loadPosMirror } from "./data.js";
+import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, normalizeAttributeValue, vocabSuggestions, AI_BLIND_FIELDS, loadPosMirror } from "./data.js";
 import { openCalibration } from "./calibration.js";
 import { openPricing } from "./pricing.js";
 import { openGuidedPricing } from "./pricing_guided.js";
@@ -1448,6 +1448,7 @@ async function renderGallery(view, caps, opts = {}) {
         let v = el.value.trim();
         if (v === "") return;
         if (el.dataset.vocab) v = normalizeValue(el.dataset.vocab, v);
+        v = normalizeAttributeValue(sameCat, el.dataset.key, v);
         attrChanges[el.dataset.key] = el.dataset.type === "number" ? Number(v) : v;
       });
 
