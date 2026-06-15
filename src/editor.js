@@ -32,18 +32,20 @@ function esc(v) {
 /**
  * Open the editor for an item.
  * @param {string} itemId
- * @param {string} role     admin | editor | viewer
+ * @param {object} caps     capability object
  * @param {Function} onSaved called after a successful save (to refresh the grid)
+ * @param {object} opts     { focusIssue } to open near the relevant fix section
  */
 // Re-entry guard: a fast double-tap fires two opens before the first sheet
 // reaches the DOM (the item fetch is async), which used to stack two editors.
 let _editorOpening = false;
 
-export async function openEditor(itemId, caps, onSaved) {
+export async function openEditor(itemId, caps, onSaved, opts = {}) {
   if (_editorOpening || document.querySelector(".sheet")) return;
   _editorOpening = true;
   await loadRefData();
   caps = caps || {};
+  opts = opts || {};
   const canEdit = !!caps.can_edit;
   const canViewCost = !!caps.can_view_cost;
   const canDelete = !!caps.can_delete;
@@ -127,7 +129,7 @@ export async function openEditor(itemId, caps, onSaved) {
         <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>Save</button>
       </header>
       <div class="sheet-body">
-        <section class="ed-section ed-verify" aria-label="Verify item">
+        <section class="ed-section ed-verify" data-ed-section="verify" aria-label="Verify item">
           <div class="ed-section-title">Verify</div>
         <div class="ed-offline" id="edOffline" hidden>● Offline — your changes are kept; tap Save once you reconnect.</div>
         ${imgUrl ? `<div class="sheet-img"><img src="${imgUrl}" alt="${imgAlt}"></div>` : ""}
@@ -147,7 +149,7 @@ export async function openEditor(itemId, caps, onSaved) {
         <button type="button" class="linkbtn legend-btn" id="legendBtn">What do these labels mean?</button>
         </section>
 
-        <section class="ed-section ed-details" aria-label="Item details">
+        <section class="ed-section ed-details" data-ed-section="details" aria-label="Item details">
           <div class="ed-section-title">Details</div>
 
         <div id="dupWarn" class="dup-warn" style="display:none"></div>
@@ -161,7 +163,7 @@ export async function openEditor(itemId, caps, onSaved) {
         ${fields.map((f) => fieldRow(f, item.attributes?.[f.key], conf, canEdit, canEdit)).join("")}
         </section>
 
-        <section class="ed-section ed-selling" aria-label="Selling">
+        <section class="ed-section ed-selling" data-ed-section="selling" aria-label="Selling">
           <div class="ed-section-title">Selling</div>
         ${shopLineHtml()}
         ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
@@ -175,7 +177,7 @@ export async function openEditor(itemId, caps, onSaved) {
         ${fieldRow({ key: "reorder_level", label: "Reorder level", type: "number" }, item.reorder_level, conf, false, canEdit)}
         </section>
 
-        <section class="ed-section ed-admin" aria-label="Admin">
+        <section class="ed-section ed-admin" data-ed-section="admin" aria-label="Admin">
           <div class="ed-section-title">Admin</div>
         ${
           canViewCost
@@ -215,6 +217,7 @@ export async function openEditor(itemId, caps, onSaved) {
   // Focus the Cancel control first (not a text field) so opening the editor
   // doesn't pop the mobile keyboard before the user has looked at the photo.
   requestAnimationFrame(() => sheet.querySelector("#cancelBtn")?.focus());
+  requestAnimationFrame(() => focusEditorIssue(sheet, opts.focusIssue || getItemReadiness(item).issue));
 
   // A SKU can already collide from an earlier save — surface that when the
   // editor opens, not only after the next save (when the sheet is closing).
@@ -542,6 +545,22 @@ function readinessPanelHtml(readiness) {
     <div class="ready-detail">${esc(detail)}</div>
     ${rows ? `<ul>${rows}</ul>` : ""}
   </div>`;
+}
+
+function sectionForIssue(issue) {
+  if (issue === "price" || issue === "sync") return "selling";
+  if (issue === "missing") return "details";
+  if (issue === "ai" || issue === "doubt" || issue === "flag") return "verify";
+  return "verify";
+}
+
+function focusEditorIssue(sheet, issue) {
+  const body = sheet.querySelector(".sheet-body");
+  const section = sheet.querySelector(`[data-ed-section="${sectionForIssue(issue)}"]`);
+  if (!body || !section) return;
+  section.classList.add("is-focus");
+  body.scrollTo({ top: Math.max(0, section.offsetTop - 10), behavior: "smooth" });
+  setTimeout(() => section.classList.remove("is-focus"), 1600);
 }
 
 // Render one labelled field row with the right control + a confidence pill.

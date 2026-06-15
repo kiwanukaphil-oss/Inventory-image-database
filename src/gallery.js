@@ -938,6 +938,12 @@ async function renderGallery(view, caps, opts = {}) {
   let drag = null;             // { action:'add'|'remove', processed:Set }
   let lpTimer = null;
   const cancelLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+  const openItemEditor = (id, focusIssue) => openEditor(
+    id,
+    caps,
+    refresh,
+    review ? { focusIssue: focusIssue || issueState(byId[id]) } : {}
+  );
 
   function setSelected(card, on) {
     const id = card.dataset.id;
@@ -996,7 +1002,7 @@ async function renderGallery(view, caps, opts = {}) {
     }
     const thumb = e.target.closest(".thumb[data-slide]");
     if (thumb) { openLightbox(grid._slides, Number(thumb.dataset.slide)); return; }
-    if (card) openEditor(card.dataset.id, caps, refresh);
+    if (card) openItemEditor(card.dataset.id);
   });
 
   let lpStart = null;
@@ -1081,7 +1087,7 @@ async function renderGallery(view, caps, opts = {}) {
     else if (cta.dataset.cta === "aifill") openBulkAi(filtered, caps, refresh);
     else if (cta.dataset.cta === "sync") openSyncCenter(caps, refresh, { focus: "errors" });
     else if (cta.dataset.cta === "approveall") approveItems(filtered.map((it) => it.id));
-    else if (cta.dataset.cta === "openfirst" && filtered[0]) openEditor(filtered[0].id, caps, refresh);
+    else if (cta.dataset.cta === "openfirst" && filtered[0]) openItemEditor(filtered[0].id, issueState(filtered[0]));
   }
   countEl.addEventListener("click", handleCtaClick);
   if (reviewInbox) reviewInbox.addEventListener("click", handleCtaClick);

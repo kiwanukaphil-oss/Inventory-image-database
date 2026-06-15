@@ -164,7 +164,7 @@ export function openSyncCenter(caps, onChanged, opts = {}) {
       btn.onclick = () => {
         const id = btn.dataset.openItem;
         sh.close();
-        openEditor(id, caps, onChanged);
+        openEditor(id, caps, onChanged, { focusIssue: "sync" });
       };
     });
     runBtn("#syncPush", "pos-push", (r) =>
