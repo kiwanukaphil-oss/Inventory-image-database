@@ -348,18 +348,19 @@ export async function renderUpload(view, caps, onDone) {
       } catch (e) {
         await recordItemJobFailure(id, "ai_fill", e);
         console.error("ai-fill failed", e);
+        return { id, aiFailed: true, aiError: e?.message || String(e) };
       }
     }
-    return id;
+    return { id, aiFailed: false, aiError: "" };
   }
 
   const barFill = $("#barFill");
   const runStats = $("#runStats");
   const stopBtn = $("#stopBtn");
-  function paintRun(p, total, done, failed) {
+  function paintRun(p, total, done, failed, aiFailed = 0) {
     if (!barFill?.isConnected) return;
     barFill.style.width = `${total ? Math.round((p / total) * 100) : 0}%`;
-    runStats.innerHTML = `${p}/${total} processed · <b>${done}</b> added${failed ? ` · <span style="color:var(--flag-txt)">${failed} failed</span>` : ""}`;
+    runStats.innerHTML = `${p}/${total} processed · <b>${done}</b> added${aiFailed ? ` · <span style="color:var(--review-txt)">${aiFailed} AI issue${aiFailed === 1 ? "" : "s"}</span>` : ""}${failed ? ` · <span style="color:var(--flag-txt)">${failed} failed</span>` : ""}`;
   }
 
   async function startUpload(list) {
@@ -371,9 +372,10 @@ export async function renderUpload(view, caps, onDone) {
     stopBtn.textContent = "Stop";
     setMode("running");
     const total = list.length;
-    let done = 0, failed = 0, processed = 0, firstError = "", pausedOffline = false;
+    let done = 0, failed = 0, aiFailed = 0, processed = 0, firstError = "", firstAiError = "", pausedOffline = false;
     const uploadedIds = [];
     const doneEntries = [];
+    const aiFailedIds = [];
     paintRun(0, total, 0, 0);
 
     try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* best effort */ }
@@ -384,7 +386,17 @@ export async function renderUpload(view, caps, onDone) {
         const i = idx++;
         if (i >= list.length) return;
         const entry = list[i];
-        try { const id = await uploadOne(entry, common); done++; uploadedIds.push(id); doneEntries.push(entry); }
+        try {
+          const result = await uploadOne(entry, common);
+          done++;
+          uploadedIds.push(result.id);
+          doneEntries.push(entry);
+          if (result.aiFailed) {
+            aiFailed++;
+            aiFailedIds.push(result.id);
+            if (!firstAiError) firstAiError = result.aiError;
+          }
+        }
         catch (err) {
           // Lost connection mid-batch: pause and resume automatically on reconnect.
           if (!navigator.onLine) { pausedOffline = true; stopFlag = true; break; }
@@ -393,7 +405,7 @@ export async function renderUpload(view, caps, onDone) {
           console.error("upload failed", entry.file.name, err);
         }
         processed++;
-        paintRun(processed, total, done, failed);
+        paintRun(processed, total, done, failed, aiFailed);
       }
     };
     await Promise.all(Array.from({ length: CONCURRENCY }, worker));
@@ -412,26 +424,33 @@ export async function renderUpload(view, caps, onDone) {
     if (pausedOffline && entries.length) {
       if (doneArea?.isConnected) {
         setMode("done");
-        $("#doneMsg").innerHTML = `Paused — you're offline. <b>${done}</b> added; ${entries.length} will resume automatically when you're back online.`;
+        $("#doneMsg").innerHTML = `Paused — you're offline. <b>${done}</b> added${aiFailed ? `; ${aiFailed} need AI retry` : ""}; ${entries.length} will resume automatically when you're back online.`;
         $("#doneActions").innerHTML = "";
       }
       window.addEventListener("online", () => startUpload(entries.slice()), { once: true });
       return;
     }
-    finishUpload(done, failed, firstError, uploadedIds);
+    finishUpload({ added: done, failed, aiFailed, firstError, firstAiError, uploadedIds, aiFailedIds });
   }
 
-  function finishUpload(added, failed, firstError, uploadedIds = []) {
+  function finishUpload({ added, failed, aiFailed, firstError, firstAiError, uploadedIds = [], aiFailedIds = [] }) {
     if (!doneArea?.isConnected) return; // user navigated away mid-upload
     setMode("done");
     if (added) navigator.vibrate?.([12, 40, 12]); // affirmative "batch done" buzz
     const remaining = entries.length;
     $("#doneMsg").innerHTML =
-      `Added ${added}${failed ? ` · ${failed} failed` : ""}${remaining ? ` · ${remaining} remaining` : ""}.` +
-      (firstError ? `<div class="up-err">${esc(firstError)}</div>` : "");
+      `<div class="up-summary">
+        <span class="up-stat ok"><b>${added}</b><small>Added</small></span>
+        ${aiFailed ? `<span class="up-stat warn"><b>${aiFailed}</b><small>AI issue${aiFailed === 1 ? "" : "s"}</small></span>` : ""}
+        ${failed ? `<span class="up-stat bad"><b>${failed}</b><small>Upload failed</small></span>` : ""}
+        ${remaining ? `<span class="up-stat"><b>${remaining}</b><small>Remaining</small></span>` : ""}
+      </div>` +
+      (firstAiError ? `<div class="up-err">AI issue: ${esc(firstAiError)}</div>` : "") +
+      (firstError ? `<div class="up-err">Upload failed: ${esc(firstError)}</div>` : "");
     const acts = [];
     if (remaining > 0) acts.push(`<button class="primary up-go" data-d="retry">Upload remaining ${remaining}</button>`);
-    if (uploadedIds.length) acts.push(`<button class="primary up-go" data-d="batch">Review this batch</button>`);
+    if (aiFailedIds.length) acts.push(`<button class="primary up-go" data-d="ai">Review AI issues</button>`);
+    if (uploadedIds.length) acts.push(`<button class="${aiFailedIds.length ? "ghost" : "primary"} up-go" data-d="batch">Review this batch</button>`);
     acts.push(`<button class="ghost up-go" data-d="more">Add more photos</button>`);
     acts.push(`<button class="ghost up-go" data-d="gallery">View gallery</button>`);
     $("#doneActions").innerHTML = acts.join("");
@@ -440,7 +459,11 @@ export async function renderUpload(view, caps, onDone) {
       else if (b.dataset.d === "more") { setMode("compose"); renderPicked(); renderGrid(); refreshEnabled(); }
       else {
         entries.forEach((e) => URL.revokeObjectURL(e.url));
-        onDone?.({ view: b.dataset.d === "batch" ? "review" : "gallery", itemIds: uploadedIds });
+        onDone?.({
+          view: b.dataset.d === "batch" || b.dataset.d === "ai" ? "review" : "gallery",
+          itemIds: uploadedIds,
+          issue: b.dataset.d === "ai" ? "ai" : undefined,
+        });
       }
     }));
   }

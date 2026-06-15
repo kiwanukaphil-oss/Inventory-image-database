@@ -776,6 +776,13 @@ body { overflow:hidden; overscroll-behavior:none; }
 .up-bar #barFill { height:100%; width:0; background:var(--accent); transition:width .2s; }
 .up-stats { font-size:13px; color:var(--muted); margin-bottom:12px; }
 .up-done { font-size:15px; margin:8px 0 14px; }
+.up-summary { display:grid; grid-template-columns:repeat(auto-fit, minmax(96px, 1fr)); gap:8px; margin-bottom:10px; }
+.up-stat { min-width:0; padding:9px 10px; border:1px solid var(--line); border-radius:8px; background:var(--control); }
+.up-stat b { display:block; font-size:20px; line-height:1; }
+.up-stat small { display:block; margin-top:3px; color:var(--muted); font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.up-stat.ok { border-color:var(--ok-border); }
+.up-stat.warn { border-color:var(--review-border); color:var(--review-txt); }
+.up-stat.bad { border-color:var(--flag-border); color:var(--flag-txt); }
 .up-err { color:var(--flag-txt); font-size:12px; margin-top:6px; word-break:break-word; }
 .up-actions { display:flex; flex-direction:column; gap:8px; }
 .up-actions .up-go { margin-top:0; }

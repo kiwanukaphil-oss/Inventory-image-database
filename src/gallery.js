@@ -154,8 +154,8 @@ export function renderApp(mount, profile, onSignOut) {
       renderUpload(view, caps, (result = {}) => {
         if (result.view === "review" && result.itemIds?.length) {
           browseState.review.itemIds = result.itemIds;
-          browseState.review.issue = "work";
-          browseState.review.seg = "work";
+          browseState.review.issue = REVIEW_QUEUE.includes(result.issue) ? result.issue : "work";
+          browseState.review.seg = browseState.review.issue === "ready" ? "ready" : "work";
           setView("review");
         } else {
           browseState.gallery.itemIds = [];
