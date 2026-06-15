@@ -38,6 +38,77 @@ const json = (body: unknown, status = 200) =>
     headers: { ...cors, "content-type": "application/json" },
   });
 
+const TRANSIENT_ANTHROPIC_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504, 529]);
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function readAnthropicBody(resp: Response) {
+  const text = await resp.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+}
+
+function anthropicMessage(body: any) {
+  return body?.error?.message || body?.message || "";
+}
+
+function isRetryableAnthropic(status: number, body: any) {
+  const type = String(body?.error?.type || body?.type || "").toLowerCase();
+  const message = String(anthropicMessage(body)).toLowerCase();
+  return (
+    TRANSIENT_ANTHROPIC_STATUSES.has(status) ||
+    type.includes("overloaded") ||
+    type.includes("rate_limit") ||
+    type.includes("api_error") ||
+    message.includes("overloaded")
+  );
+}
+
+async function callAnthropic(payload: unknown) {
+  const maxAttempts = 3;
+  let last: any = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": Deno.env.get("ANTHROPIC_API_KEY")!,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const body = await readAnthropicBody(resp);
+      if (resp.ok) return { ok: true, data: body, attempts: attempt };
+
+      last = {
+        status: resp.status,
+        data: body,
+        retryable: isRetryableAnthropic(resp.status, body),
+        attempts: attempt,
+      };
+    } catch (e) {
+      last = {
+        status: 0,
+        data: { message: String(e?.message || e) },
+        retryable: true,
+        attempts: attempt,
+      };
+    }
+
+    if (!last.retryable || attempt === maxAttempts) break;
+    await sleep(700 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 350));
+  }
+
+  return { ok: false, ...last };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
@@ -145,32 +216,36 @@ Deno.serve(async (req) => {
       `- Treat stylised logos as lower confidence. Give per-field confidence High / Medium / Low. Call record_fields.`;
 
     // --- call Claude ---
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1024,
-        tools: [tool],
-        tool_choice: { type: "tool", name: "record_fields" },
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image", source: { type: "url", url: signed.signedUrl } },
-              { type: "text", text: prompt },
-            ],
-          },
-        ],
-      }),
+    const anthropic = await callAnthropic({
+      model: MODEL,
+      max_tokens: 1024,
+      tools: [tool],
+      tool_choice: { type: "tool", name: "record_fields" },
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image", source: { type: "url", url: signed.signedUrl } },
+            { type: "text", text: prompt },
+          ],
+        },
+      ],
     });
 
-    const data = await resp.json();
-    if (!resp.ok) return json({ error: "anthropic error", detail: data }, 502);
+    if (!anthropic.ok) {
+      return json(
+        {
+          error: "anthropic error",
+          detail: anthropic.data,
+          anthropic_status: anthropic.status,
+          attempts: anthropic.attempts,
+          retryable: anthropic.retryable,
+        },
+        anthropic.retryable ? 503 : 502,
+      );
+    }
+
+    const data = anthropic.data;
 
     const toolUse = (data.content || []).find((b: any) => b.type === "tool_use");
     const result = toolUse?.input ?? { values: {}, confidence: {} };

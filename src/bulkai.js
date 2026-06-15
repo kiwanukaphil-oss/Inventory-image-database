@@ -7,13 +7,40 @@ import { trapFocus, isTopOverlay } from "./ui.js";
 // Safe by default — only blank fields are written, existing values are never
 // overwritten; every change is audited and carries a confidence dot.
 
-const CONCURRENCY = 3; // a few at a time, to respect API rate limits
+const CONCURRENCY = 2; // keep Anthropic vision calls below overload-prone bursts
 const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
 
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
+}
+
+function edgeErrorMessage(body, fallback = "") {
+  if (!body || typeof body !== "object") return fallback;
+  const detail = body.detail;
+  const detailMessage =
+    detail?.error?.message ||
+    detail?.message ||
+    (typeof detail === "string" ? detail : "");
+  const status = body.anthropic_status ? ` (${body.anthropic_status})` : "";
+  const attempts = body.attempts && body.attempts > 1 ? ` after ${body.attempts} attempts` : "";
+  if (body.error && detailMessage) return `${body.error}${status}: ${detailMessage}${attempts}`;
+  return body.error || detailMessage || fallback;
+}
+
+async function invokeAiExtract(body) {
+  const { data, error } = await supabase.functions.invoke("ai-extract", { body });
+  if (error) {
+    let detail = error.message;
+    try {
+      const ctx = error.context?.clone ? error.context.clone() : error.context;
+      detail = edgeErrorMessage(await ctx.json(), detail);
+    } catch {}
+    throw new Error(detail);
+  }
+  if (data?.error) throw new Error(edgeErrorMessage(data, data.error));
+  return data;
 }
 
 /**
@@ -134,11 +161,7 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
           key: f.key, label: f.label, type: f.type, options: f.options, vocab: f.vocab,
         })),
       ];
-      const { data, error } = await supabase.functions.invoke("ai-extract", {
-        body: { item_id: it.id, category: categoryPath(it.category_id), fields: defs },
-      });
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
+      const data = await invokeAiExtract({ item_id: it.id, category: categoryPath(it.category_id), fields: defs });
 
       // Vocab map for normalization.
       const vocabByKey = { brand: "brand" };

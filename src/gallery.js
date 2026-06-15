@@ -359,7 +359,7 @@ const SORTS = [
 // dense list (built for skimming many uploads at once); Gallery to the grid.
 const browseState = {
   gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid" },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list", seg: "work" },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "list", seg: "work", issue: "work" },
 };
 
 // AI_BLIND_FIELDS (fit, …) is imported from data.js — fields the AI can never
@@ -372,17 +372,82 @@ const hasLowConf = (it) =>
 // Triage predicate: an item needs review while it's flagged or still unreviewed,
 // or while it's a draft the AI is unsure about. An APPROVED item is finished — a
 // human signed off, low-confidence fields and all — so it never returns here.
-const needsReviewItem = (it) =>
-  it.status === "flag" ||
-  it.status === "needs-review" ||
-  (it.status === "draft" && hasLowConf(it));
+function hasAiSignal(it) {
+  if (it.brand || it.name) return true;
+  if (Object.keys(it.attributes || {}).some((k) => {
+    const v = it.attributes?.[k];
+    return v !== null && v !== undefined && v !== "";
+  })) return true;
+  return Object.keys(it.confidence || {}).length > 0;
+}
+
+function missingCoreFields(it) {
+  const missing = [];
+  if (!it.image_path) missing.push("photo");
+  if (!it.brand && !it.name) missing.push("brand/name");
+  if (!Object.keys(it.attributes || {}).some((k) => {
+    const v = it.attributes?.[k];
+    return v !== null && v !== undefined && v !== "";
+  })) missing.push("details");
+  return missing;
+}
+
+function issueState(it) {
+  if (it.status === "approved") {
+    if (it.pos_sync_status === "error" || it.pos_dirty) return "sync";
+    return null;
+  }
+  if (it.status === "flag") return "flag";
+  if (it.pos_sync_status === "error") return "sync";
+  if (it.image_path && !hasAiSignal(it)) return "ai";
+  if (missingCoreFields(it).length) return "missing";
+  if (it.price == null) return "price";
+  if (hasLowConf(it)) return "doubt";
+  return "ready";
+}
+
+const ISSUE_META = {
+  work:    { label: "Needs work", short: "Work", empty: "work", cls: "iss-work" },
+  ai:      { label: "Needs AI fill", short: "AI", empty: "AI-fill", cls: "iss-ai" },
+  price:   { label: "No price", short: "Price", empty: "unpriced", cls: "iss-price" },
+  doubt:   { label: "AI doubts", short: "Check", empty: "AI-doubt", cls: "iss-doubt" },
+  missing: { label: "Missing details", short: "Missing", empty: "missing-detail", cls: "iss-missing" },
+  flag:    { label: "Flagged", short: "Flag", empty: "flagged", cls: "iss-flag" },
+  sync:    { label: "Shop errors", short: "Shop", empty: "shop-error", cls: "iss-sync" },
+  ready:   { label: "Ready", short: "Ready", cls: "iss-ready" },
+};
+
+const REVIEW_QUEUE = ["work", "ai", "price", "doubt", "missing", "flag", "sync", "ready"];
+
+function queueMatches(it, issue) {
+  const st = issueState(it);
+  if (issue === "work") return !!st && st !== "ready";
+  return st === issue;
+}
+
+const needsReviewItem = (it) => {
+  const st = issueState(it);
+  return !!st && st !== "ready";
+};
 // "Ready to approve": everything necessary is present — priced, no genuine AI
 // doubt, not flagged — so a human glance is all that stands before approval.
 // Clean priced drafts qualify too: complete is complete, whichever status the
 // upload happened to choose. Partitions the Review tab with needsReviewItem.
-const readyItem = (it) =>
-  (it.status === "needs-review" || it.status === "draft") &&
-  it.price != null && !hasLowConf(it);
+const readyItem = (it) => issueState(it) === "ready";
+
+function issueBadgesHtml(it, { compact = false } = {}) {
+  const st = issueState(it);
+  if (!st) return "";
+  const meta = ISSUE_META[st] || ISSUE_META.work;
+  let title = meta.label;
+  if (st === "missing") title = `Missing ${missingCoreFields(it).join(", ")}`;
+  else if (st === "sync") title = it.pos_sync_error || "Shop sync needs attention";
+  else if (st === "ai") title = "Photo has not been read by AI yet";
+  else if (st === "price") title = "Set a retail price before approval";
+  else if (st === "doubt") title = "AI returned at least one low-confidence value";
+  const label = compact ? meta.short : meta.label;
+  return `<span class="issue-pill ${meta.cls}" title="${esc(title)}">${esc(label)}</span>`;
+}
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 
 // Fade each thumbnail in over its shimmer once the image has loaded, so the
@@ -516,6 +581,7 @@ async function renderGallery(view, caps, opts = {}) {
   const valueOf = (it, key) => {
     if (key === "brand") return it.brand || "";
     if (key === "status") return it.status || "";
+    if (key === "issue") return ISSUE_META[issueState(it)]?.label || "Clean";
     if (key === "shop") return shopState(it);
     if (key === "top") return (categoryPath(it.category_id) || "").split(" › ")[0] || "";
     if (key === "category") return (categoryPath(it.category_id) || "").split(" › ").pop() || "";
@@ -531,6 +597,7 @@ async function renderGallery(view, caps, opts = {}) {
     { key: "category", label: "Category" },
     { key: "brand", label: "Brand" },
     { key: "status", label: "Status" },
+    { key: "issue", label: "Issue" },
     { key: "shop", label: "Shop" },
     ...attrKeys.map((k) => ({ key: k, label: fieldLabel(k) })),
   ]) {
@@ -542,7 +609,10 @@ async function renderGallery(view, caps, opts = {}) {
   // ---- view state (restored from the session, per surface) ----
   let q = state.q;
   let needsReview = review ? true : state.needsReview; // Review tab forces it on
-  let seg = review ? (state.seg === "ready" ? "ready" : "work") : null; // Review tab segment
+  let issue = review
+    ? (REVIEW_QUEUE.includes(state.issue) ? state.issue : (state.seg === "ready" ? "ready" : "work"))
+    : null;
+  let seg = issue === "ready" ? "ready" : "work";
   let density = state.density === "list" ? "list" : "grid";
   let sortBy = state.sortBy;
   let priceMin = state.priceMin, priceMax = state.priceMax, datePreset = state.datePreset;
@@ -566,9 +636,9 @@ async function renderGallery(view, caps, opts = {}) {
         <span class="spacer"></span>
         <button class="linkbtn" id="selAll">Select all</button>
       </div>
-      ${review ? `<div class="seg-row" id="segRow">
-        <button class="seg${seg === "work" ? " on" : ""}" data-seg="work">Needs work<span class="seg-n" id="segWorkN"></span></button>
-        <button class="seg${seg === "ready" ? " on" : ""}" data-seg="ready">Ready to approve<span class="seg-n" id="segReadyN"></span></button>
+      ${review ? `<div class="seg-row review-queues" id="segRow" aria-label="Review queues">
+        ${REVIEW_QUEUE.map((k) => `<button class="seg${issue === k ? " on" : ""} ${ISSUE_META[k].cls}" data-issue="${k}">
+          ${esc(ISSUE_META[k].label)}<span class="seg-n" id="segN-${k}"></span></button>`).join("")}
       </div>` : ""}
       <div class="active-pills" id="pills"></div>
       <div class="count" id="count"></div>
@@ -595,7 +665,7 @@ async function renderGallery(view, caps, opts = {}) {
     state.q = q; state.needsReview = needsReview; state.sortBy = sortBy;
     state.priceMin = priceMin; state.priceMax = priceMax; state.noPrice = noPrice;
     state.datePreset = datePreset; state.density = density;
-    if (review) state.seg = seg;
+    if (review) { state.issue = issue; state.seg = issue === "ready" ? "ready" : "work"; }
     state.active = {};
     for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
   };
@@ -664,6 +734,7 @@ async function renderGallery(view, caps, opts = {}) {
 
   // Free-text search across brand/name/sku/category + all attribute values.
   const textMatch = (it) => !q || [it.brand, it.name, it.sku, it.categories?.name,
+    ISSUE_META[issueState(it)]?.label, ISSUE_META[issueState(it)]?.short,
     ...Object.values(it.attributes || {})].join(" ").toLowerCase().includes(q);
 
   // Does an item pass all active filters? excludeKey lets a facet's own counts
@@ -673,7 +744,7 @@ async function renderGallery(view, caps, opts = {}) {
     if (review) {
       // The review queue partitions: Ready (complete — glance & approve) vs
       // Needs work (everything else in triage). No overlap, no gaps.
-      if (seg === "ready" ? !readyItem(it) : !(needsReviewItem(it) && !readyItem(it))) return false;
+      if (!queueMatches(it, issue)) return false;
     } else if (needsReview && !needsReviewItem(it)) return false;
     if (noPrice && it.price != null) return false;
     if (priceMin !== "" && (it.price == null || it.price < Number(priceMin))) return false;
@@ -733,6 +804,7 @@ async function renderGallery(view, caps, opts = {}) {
           <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
           <span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span>
         </div>
+        <div class="issue-line">${issueBadgesHtml(it)}</div>
         <div class="cbrand">${esc(brand)}</div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
         <div class="cmeta">
@@ -766,7 +838,7 @@ async function renderGallery(view, caps, opts = {}) {
       <div class="row-main">
         <div class="row-top">
           <span class="row-brand">${esc(brand)}</span>
-          <span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span>
+          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(it.status)}</span></span>
         </div>
         <div class="row-sub">
           ${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}${variant ? `<span class="row-attr">${variant}</span>` : ""}
@@ -789,7 +861,7 @@ async function renderGallery(view, caps, opts = {}) {
     // doorway: a tap on "N without a price" applies the no-price filter, and
     // once you're looking at the unpriced, "Set prices" is right there.
     const unpricedShown = rows.filter((it) => it.price == null).length;
-    const priceCta = noPrice
+    const priceCta = review && issue === "price" ? "" : noPrice
       ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Set prices ›</button>` : "")
       : unpricedShown
         ? ` · <button class="count-cta" data-cta="noprice">${unpricedShown} without a price</button>`
@@ -798,11 +870,25 @@ async function renderGallery(view, caps, opts = {}) {
     // right on the count line (same immediate-with-Undo semantics as bulk).
     const approveCta = review && seg === "ready" && canEdit && rows.length
       ? ` · <button class="count-cta" data-cta="approveall">Approve all ${rows.length} ›</button>` : "";
+    const issueCta = review && canEdit && rows.length
+      ? issue === "ai"
+        ? ` · <button class="count-cta" data-cta="aifill">AI-fill ${rows.length} ›</button>`
+        : issue === "price"
+          ? ` · <button class="count-cta" data-cta="setprices">Set prices ›</button>`
+          : issue === "sync"
+            ? ` · <button class="count-cta" data-cta="sync">Open shop sync ›</button>`
+            : ""
+      : "";
     // Keep the segment counts live (they partition `data`, not the filtered rows).
     if (review) {
       const wn = view.querySelector("#segWorkN"), rn = view.querySelector("#segReadyN");
       if (wn) wn.textContent = data.filter((it) => needsReviewItem(it) && !readyItem(it)).length;
       if (rn) rn.textContent = data.filter(readyItem).length;
+      for (const k of REVIEW_QUEUE) {
+        const n = data.filter((it) => queueMatches(it, k)).length;
+        const el = view.querySelector(`#segN-${k}`);
+        if (el) el.textContent = n ? n : "";
+      }
     }
 
     // Note when the load hit the row cap so a truncated set never looks complete.
@@ -811,8 +897,19 @@ async function renderGallery(view, caps, opts = {}) {
 
     // On Review, "N of <whole catalogue>" read as if N were a fraction of the
     // review queue — say what it is instead.
+    const reviewCountText = (n) => {
+      if (issue === "work") return `${n} need${n === 1 ? "s" : ""} work`;
+      if (issue === "ai") return `${n} need${n === 1 ? "s" : ""} AI fill`;
+      if (issue === "price") return `${n} without a price`;
+      if (issue === "doubt") return `${n} with AI doubts`;
+      if (issue === "missing") return `${n} missing details`;
+      if (issue === "flag") return `${n} flagged`;
+      if (issue === "sync") return `${n} shop error${n === 1 ? "" : "s"}`;
+      if (issue === "ready") return `${n} ready to approve`;
+      return `${n} review item${n === 1 ? "" : "s"}`;
+    };
     const countText = (n) => review
-      ? (seg === "ready" ? `${n} ready to approve` : `${n} need${n === 1 ? "s" : ""} work`)
+      ? reviewCountText(n)
       : `${n} of ${data.length} item${data.length === 1 ? "" : "s"}`;
 
     // Filters matched nothing → actionable empty state (not a blank grid).
@@ -822,7 +919,7 @@ async function renderGallery(view, caps, opts = {}) {
         <div>${review
           ? (seg === "ready"
             ? "Nothing is ready to approve yet — items land here once they're priced and the AI has no doubts."
-            : "Nothing needs work right now.")
+            : `No ${ISSUE_META[issue]?.empty || "review"} items right now.`)
           : "No items match your search or filters."}</div>
         ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
       grid._slides = [];
@@ -836,7 +933,7 @@ async function renderGallery(view, caps, opts = {}) {
     grid.innerHTML = density === "list"
       ? `<div class="scanlist">${rows.map((it) => rowHtml(it, slides)).join("")}</div>`
       : `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
-    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${approveCta}${freshnessNote()}`;
+    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${approveCta}${freshnessNote()}`;
     grid._slides = slides;
     fadeInImages(grid);
   }
@@ -975,17 +1072,23 @@ async function renderGallery(view, caps, opts = {}) {
     const cta = e.target.closest("[data-cta]");
     if (!cta) return;
     if (cta.dataset.cta === "noprice") { noPrice = true; priceMin = ""; priceMax = ""; draw(); pills(); }
-    else if (cta.dataset.cta === "setprices") openGuidedPricing(caps, refresh);
+    else if (cta.dataset.cta === "setprices") {
+      if (review) openPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
+      else openGuidedPricing(caps, refresh);
+    }
+    else if (cta.dataset.cta === "aifill") openBulkAi(filtered, caps, refresh);
+    else if (cta.dataset.cta === "sync") openSyncCenter(caps, refresh);
     else if (cta.dataset.cta === "approveall") approveItems(filtered.map((it) => it.id));
   });
 
   // Review-tab segment switch (Needs work ⇄ Ready to approve).
   const segRow = view.querySelector("#segRow");
   if (segRow) segRow.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-seg]");
-    if (!btn || btn.dataset.seg === seg) return;
-    seg = btn.dataset.seg;
-    segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.seg === seg));
+    const btn = e.target.closest("[data-issue]");
+    if (!btn || btn.dataset.issue === issue) return;
+    issue = btn.dataset.issue;
+    seg = issue === "ready" ? "ready" : "work";
+    segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.issue === issue));
     draw();
   });
 
@@ -1006,7 +1109,7 @@ async function renderGallery(view, caps, opts = {}) {
   // the grid behind it; the footer shows the live result count.
   function openFilters() {
     const matchCount = () => data.filter((it) => matches(it, null)).length;
-    const PRIMARY = ["shop", "category", "brand"]; // shown directly; the rest go under "More"
+    const PRIMARY = ["issue", "shop", "category", "brand"]; // shown directly; the rest go under "More"
     const moreFacets = facets.filter((f) => !PRIMARY.includes(f.key));
     const priceLabel = () => noPrice ? "No price yet"
       : (priceMin || priceMax)
