@@ -1079,7 +1079,7 @@ async function renderGallery(view, caps, opts = {}) {
       else toast("No failed AI jobs in this view.");
     }
     else if (cta.dataset.cta === "aifill") openBulkAi(filtered, caps, refresh);
-    else if (cta.dataset.cta === "sync") openSyncCenter(caps, refresh);
+    else if (cta.dataset.cta === "sync") openSyncCenter(caps, refresh, { focus: "errors" });
     else if (cta.dataset.cta === "approveall") approveItems(filtered.map((it) => it.id));
     else if (cta.dataset.cta === "openfirst" && filtered[0]) openEditor(filtered[0].id, caps, refresh);
   }

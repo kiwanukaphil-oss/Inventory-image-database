@@ -563,6 +563,10 @@ body { overflow:hidden; overscroll-behavior:none; }
 .sync-val.warn { color:var(--warn); font-weight:600; }
 .sync-val.muted { color:var(--muted); }
 .sync-problem { padding:7px 0; border-bottom:1px solid var(--line); font-size:13px; line-height:1.35; }
+.sync-problem-row { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; }
+.sync-problem-row > div { min-width:0; }
+.sync-open { flex:0 0 auto; min-height:32px; padding:0 10px; }
+.sync-focus-title { color:var(--flag-txt); }
 
 /* Every overlay's internal scroller contains its own overscroll — reaching the
    end of a sheet/screen list must never start scrolling whatever is beneath

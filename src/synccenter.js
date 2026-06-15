@@ -1,4 +1,5 @@
 import { supabase } from "./db.js";
+import { openEditor } from "./editor.js";
 import { openBottomSheet, toast } from "./ui.js";
 
 // The Sync Center (⋮ → Shop sync): the one place the Catalog↔POS integration
@@ -81,7 +82,7 @@ async function loadState() {
   return { push, mirror, reconcile, queued, sending, errors, dirty, errorItems };
 }
 
-export function openSyncCenter(caps, onChanged) {
+export function openSyncCenter(caps, onChanged, opts = {}) {
   const sh = openBottomSheet("Shop sync", `<div class="muted" style="padding:14px">Loading…</div>`);
 
   async function render() {
@@ -113,11 +114,16 @@ export function openSyncCenter(caps, onChanged) {
          ${findings.slice(0, 12).map((f) => `<div class="sync-problem"><b>${esc(f.sku || f.kind)}</b> — ${esc(f.note)}</div>`).join("")}`
       : "";
 
+    const focusProblems = opts.focus === "errors";
     const problemsHtml = s.errorItems.length
-      ? `<div class="sheet-sec">Problems</div>
-         ${s.errorItems.map((it) => `<div class="sync-problem"><b>${esc(it.brand || it.name || "—")} · ${esc(it.sku || "no SKU")}</b><br>
-           <span class="muted">${esc(it.pos_sync_error || "unknown error")}</span></div>`).join("")}
-         <div class="menu-sub" style="margin-top:4px">Errored items are retried automatically on every push run.</div>`
+      ? `<div class="sheet-sec${focusProblems ? " sync-focus-title" : ""}">Problems</div>
+         ${s.errorItems.map((it) => `<div class="sync-problem sync-problem-row">
+           <div><b>${esc(it.brand || it.name || "—")} · ${esc(it.sku || "no SKU")}</b><br>
+             <span class="muted">${esc(it.pos_sync_error || "unknown error")}</span></div>
+           <button class="ghost sync-open" data-open-item="${esc(it.id)}">Open</button>
+         </div>`).join("")}
+         <button class="ghost up-go" id="syncRetryErrors">Retry shop issues now</button>
+         <div class="menu-sub" style="margin-top:4px">Retry runs the shop push and keeps failures here until fixed.</div>`
       : "";
 
     sh.body.innerHTML = `
@@ -154,7 +160,16 @@ export function openSyncCenter(caps, onChanged) {
         render(); // counts and health just changed
       };
     };
+    sh.body.querySelectorAll("[data-open-item]").forEach((btn) => {
+      btn.onclick = () => {
+        const id = btn.dataset.openItem;
+        sh.close();
+        openEditor(id, caps, onChanged);
+      };
+    });
     runBtn("#syncPush", "pos-push", (r) =>
+      `Sent — ${r.created || 0} new, ${r.add_variant || 0} sizes, ${r.add_stock || 0} stock, ${r.dirty_updated || 0} updates${r.errored ? `, ${r.errored} errors` : ""}`);
+    runBtn("#syncRetryErrors", "pos-push", (r) =>
       `Sent — ${r.created || 0} new, ${r.add_variant || 0} sizes, ${r.add_stock || 0} stock, ${r.dirty_updated || 0} updates${r.errored ? `, ${r.errored} errors` : ""}`);
     runBtn("#syncMirror", "pos-mirror", (r) => `Shop numbers refreshed (${r.variants} products)`);
   }
