@@ -654,7 +654,7 @@ body { overflow:hidden; overscroll-behavior:none; }
 .ghdr .spacer { flex:1; }
 .iconbtn {
   position:relative; display:inline-flex; align-items:center; justify-content:center;
-  width:40px; height:40px; flex:0 0 auto; padding:0;
+  width:44px; height:44px; flex:0 0 auto; padding:0;
   border:1px solid var(--line); border-radius:10px; background:var(--control); color:var(--txt);
 }
 .iconbtn:active { transform:translateY(1px); }
@@ -1014,6 +1014,17 @@ body { overflow:hidden; overscroll-behavior:none; }
 .conf-pill.conf-high { color:var(--ok-txt); border-color:var(--ok-border); }
 .conf-pill.conf-medium { color:var(--review-txt); border-color:var(--review-border); }
 .conf-pill.conf-low { color:var(--flag-txt); border-color:var(--flag-border); }
+
+/* Tap-target ergonomics (V3 phase 0): keep the compact VISUAL size of these
+   controls but guarantee a >=44px TOUCH area via a centred, layout-neutral
+   ::before overlay. The overlay is transparent and absolutely positioned, so it
+   doesn't shift any surrounding flow — it only widens where a tap registers.
+   (.iconbtn is already position:relative.) */
+.status-pill, .conf-pill { position:relative; }
+.iconbtn::before, .status-pill::before, .conf-pill::before {
+  content:""; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:100%; height:100%; min-width:44px; min-height:44px;
+}
 
 .del-btn { width:100%; margin-top:18px; }
 .sku-line { margin-top:14px; font-size:13px; color:var(--txt); }
