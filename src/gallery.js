@@ -1757,13 +1757,17 @@ async function renderGallery(view, caps, opts = {}) {
     const prior = targetIds.map((id) => ({ id, value: byId[id]?.price ?? null }));
     const { error } = await supabase.from("items").update({ price: value }).in("id", targetIds);
     if (error) { toast("Couldn't set price: " + error.message); return; }
-    await logManyItemActivities(
+    // Optimistic: reflect locally + redraw at once (the write already
+    // succeeded); the activity log is fire-and-forget so it never delays the UI.
+    for (const id of targetIds) if (byId[id]) byId[id].price = value;
+    draw();
+    logManyItemActivities(
       targetIds,
       "pricing",
       "pricing",
       new Map(prior.map((p) => [p.id, [{ field_path: "price", before: p.value, after: value }]])),
       `Set price ${fmtPrice(value)}`
-    );
+    ).catch(() => {});
     toast(`Set price ${fmtPrice(value)} on ${targetIds.length} item${targetIds.length === 1 ? "" : "s"}`, {
       label: "Undo",
       onClick: async () => {
@@ -1774,18 +1778,18 @@ async function renderGallery(view, caps, opts = {}) {
           const { error: uErr } = await supabase.from("items").update({ price }).in("id", oldIds);
           if (uErr) { toast("Undo failed: " + uErr.message); return; }
         }
-        await logManyItemActivities(
+        for (const p of prior) if (byId[p.id]) byId[p.id].price = p.value;
+        draw();
+        logManyItemActivities(
           targetIds,
           "undo",
           "undo",
           new Map(prior.map((p) => [p.id, [{ field_path: "price", before: value, after: p.value }]])),
           "Undid price change"
-        );
+        ).catch(() => {});
         toast("Price change undone");
-        refresh();
       },
     });
-    refresh();
   }
 
   // One-tap bulk approve for the current selection. Approving is fully
@@ -1854,15 +1858,20 @@ async function renderGallery(view, caps, opts = {}) {
     const prior = approveIds.map((id) => ({ id, status: byId[id]?.status }));
     const { error } = await supabase.from("items").update({ status: "approved" }).in("id", approveIds);
     if (error) { toast("Approve failed: " + error.message); return; }
-    await logManyItemActivities(
+    // Optimistic: the write already succeeded, so reflect it locally and redraw
+    // at once (no full network re-fetch). The activity log is fire-and-forget so
+    // it never sits on the critical path between the tap and the UI updating.
+    for (const id of approveIds) if (byId[id]) byId[id].status = "approved";
+    navigator.vibrate?.([12, 40, 12]);
+    if (selectionMode) exitSelection();
+    draw();
+    logManyItemActivities(
       approveIds,
       "approval",
       "approval",
       new Map(prior.map((p) => [p.id, [{ field_path: "status", before: p.status, after: "approved" }]])),
       "Approved from Review"
-    );
-    navigator.vibrate?.([12, 40, 12]);
-    if (selectionMode) exitSelection();
+    ).catch(() => {});
     const msg = blockedN
       ? `Approved ${approveIds.length}; ${blockedN} left in Review`
       : `Approved ${approveIds.length} item${approveIds.length === 1 ? "" : "s"}`;
@@ -1874,20 +1883,21 @@ async function renderGallery(view, caps, opts = {}) {
         const byStatus = {};
         for (const p of prior) if (p.status) (byStatus[p.status] ||= []).push(p.id);
         for (const [st, sids] of Object.entries(byStatus)) {
-          await supabase.from("items").update({ status: st }).in("id", sids);
+          const { error: uErr } = await supabase.from("items").update({ status: st }).in("id", sids);
+          if (uErr) { toast("Undo failed: " + uErr.message); return; }
         }
-        await logManyItemActivities(
+        for (const p of prior) if (byId[p.id]) byId[p.id].status = p.status;
+        draw();
+        logManyItemActivities(
           approveIds,
           "undo",
           "undo",
           new Map(prior.map((p) => [p.id, [{ field_path: "status", before: "approved", after: p.status }]])),
           "Undid approval"
-        );
+        ).catch(() => {});
         toast("Approval undone");
-        refresh();
       },
     });
-    refresh();
   }
 
   // ---- wiring: selection header + action bar ----
