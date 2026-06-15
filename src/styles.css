@@ -339,34 +339,12 @@ body { overflow:hidden; overscroll-behavior:none; }
 .sk-line.w45 { width:45%; }
 .cap-note { color:var(--muted); }
 
-/* REMOVAL CANDIDATE: .selbar was the old floating selection bar, replaced by
-   the .actionbar that swaps in for the bottom nav — nothing renders it now. */
-.selbar {
-  position:fixed; left:0; right:0; bottom:calc(60px + var(--safe-bottom)); z-index:28;
-  display:flex; align-items:center; gap:6px; padding:8px 10px;
-  background:var(--panel); border-top:1px solid var(--line); flex-wrap:wrap;
-}
-.selbar #selCount { font-size:13px; color:var(--muted); white-space:nowrap; }
-.selbar button, .selbar select { padding:8px 10px; font-size:13px; }
-.selbar #selDone { margin-left:auto; }
 .card .thumb img { width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity .3s; }
 .card .thumb.loaded img { opacity:1; }
 .card .body { padding:8px 10px; }
 
 /* ---------------- search input ---------------- */
 .fb-search { width:100%; }
-/* REMOVAL CANDIDATE: the rest of the old pre-convergence .filterbar toolbar —
-   no element carries these classes since the Gallery/Find merge (only
-   .fb-search above survived). Note: its desktop @media rule that set
-   `.fb-search{flex:1 1 240px}` was deleted outright rather than flagged — it
-   still matched the live pricing filter input and, inside that column flex
-   container, flex-basis became HEIGHT (a ~240px-tall input on desktop). */
-.filterbar { display:flex; flex-direction:column; gap:8px; margin-bottom:8px; }
-.fb-controls { display:flex; gap:8px; flex-wrap:wrap; }
-.fb-controls select { flex:1 1 130px; min-width:0; }
-.fb-controls button { flex:0 0 auto; }
-.filterbar .aifill { white-space:nowrap; border-color:var(--ai-border); color:var(--ai-txt); }
-.filterbar .aifill:hover { border-color:var(--accent); }
 
 /* ---------------- bulk AI modal ---------------- */
 .bulkai { position:fixed; inset:0; z-index:65; background:var(--scrim); display:flex;
@@ -665,9 +643,6 @@ body { overflow:hidden; overscroll-behavior:none; }
   border:1px solid var(--line); border-radius:10px; background:var(--control); color:var(--txt);
 }
 .iconbtn:active { transform:translateY(1px); }
-/* REMOVAL CANDIDATE: .fdot was the filter button's "active" dot, replaced by
-   the .fcount number badge — nothing renders it. */
-.fdot { position:absolute; top:6px; right:6px; width:8px; height:8px; border-radius:50%; background:var(--accent); }
 .selcount { font-weight:650; }
 .linkbtn { background:none; border:none; color:var(--accent); font-weight:600; padding:8px 4px; }
 .active-pills { display:flex; gap:6px; flex-wrap:wrap; }
@@ -710,12 +685,6 @@ body { overflow:hidden; overscroll-behavior:none; }
 .msheet-body input, .msheet-body select { width:100%; }
 .be-note { font-size:12px; }
 .sheet-sec { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; margin-top:6px; }
-/* REMOVAL CANDIDATE: leftovers of the old status-filter sheet (pre drill-down) —
-   .chips/.schip/.sheet-clear have no renderers since Step 4. */
-.msheet-body .chips { display:flex; flex-wrap:wrap; gap:8px; }
-.schip { font-size:13px; padding:8px 12px; border-radius:16px; border:1px solid var(--line); background:var(--control); color:var(--txt); }
-.schip.on { border-color:var(--accent); background:var(--accent-soft); color:var(--accent-soft-txt); }
-.sheet-clear { margin-top:14px; }
 .menu-item { width:100%; text-align:left; padding:13px 12px; border:1px solid var(--line);
   border-radius:10px; background:var(--control); color:var(--txt); }
 .menu-item.danger { color:var(--flag-txt); border-color:var(--flag-border); }
@@ -872,32 +841,7 @@ body { overflow:hidden; overscroll-behavior:none; }
 .act-copy b { font-size:13px; line-height:1.3; font-weight:600; overflow-wrap:anywhere; }
 .act-copy span { color:var(--muted); font-size:11.5px; }
 
-/* ---------------- legacy Find-tab styles ----------------
-   REMOVAL CANDIDATE: the Find tab retired in the Gallery convergence (Step 4).
-   Only .facet-filter (filter-sheet facet search) and .chip/.chip.on
-   (categories admin buttons) are still rendered — keep those. */
-.find { display:flex; flex-direction:column; gap:8px; }
-.find-row { display:flex; gap:8px; align-items:center; }
-.find-row #groupBy { flex:1 1 auto; min-width:0; }
-.find-ranges { display:flex; gap:8px; }
-.find-ranges .rng { flex:1 1 0; min-width:0; }
-.find-ranges select { flex:1 1 0; min-width:0; }
-.saved-views { display:flex; gap:6px; flex-wrap:wrap; }
-.sview { display:inline-flex; align-items:center; gap:6px; font-size:12px;
-  border:1px solid var(--line); border-radius:14px; padding:4px 8px; color:var(--txt); cursor:pointer; background:var(--panel); }
-.sview .sx { color:var(--muted); }
-.active-chips { display:flex; gap:6px; flex-wrap:wrap; }
-.achip { font-size:12px; padding:4px 9px; border-radius:14px; border:1px solid var(--accent); color:var(--accent-soft-txt); background:var(--accent-soft); }
-.achip.clear { border-color:var(--line); color:var(--muted); background:transparent; }
-.facets { display:flex; flex-direction:column; gap:6px; }
-.facet > summary { cursor:pointer; list-style:none; padding:8px 10px; border:1px solid var(--line);
-  border-radius:8px; background:var(--panel); font-size:14px; display:flex; align-items:center; gap:8px; }
-.facet > summary::-webkit-details-marker { display:none; }
-.facet > summary::before { content:"▸"; color:var(--muted); transition:transform .15s; }
-.facet[open] > summary::before { transform:rotate(90deg); }
-.facet .chips { display:flex; flex-wrap:wrap; gap:6px; padding:8px 2px; max-height:240px; overflow-y:auto; }
-.find-results { margin-top:4px; }
-/* (end legacy Find block) — the rules below are still in use. */
+/* filter-sheet facet search + categories-admin chips (still in use) */
 .facet-filter { width:100%; margin:8px 0 2px; padding:7px 9px; font-size:13px; }
 .chip { font-size:13px; padding:6px 10px; border-radius:16px; border:1px solid var(--line);
   background:var(--control); color:var(--txt); display:inline-flex; gap:6px; align-items:center; }
@@ -953,27 +897,6 @@ body { overflow:hidden; overscroll-behavior:none; }
 .navbadge { position:absolute; top:4px; left:50%; margin-left:4px; min-width:16px; height:16px;
   padding:0 4px; border-radius:8px; background:var(--warn); color:var(--warn-ink); font-size:10px; font-weight:700;
   display:flex; align-items:center; justify-content:center; }
-
-/* ---------------- grouping view ----------------
-   REMOVAL CANDIDATE: results-grouping was cut in the filter-sheet redesign
-   (Step 4); nothing renders .grp/.grouplbl any more. */
-.grouplbl { font-size:13px; color:var(--muted); align-self:center; }
-.grp { margin-bottom:8px; }
-.grp > summary {
-  cursor:pointer; list-style:none; padding:9px 11px; border:1px solid var(--line);
-  border-radius:8px; background:var(--panel); font-weight:600;
-  display:flex; align-items:center; gap:8px;
-}
-.grp > summary::-webkit-details-marker { display:none; }
-.grp > summary::before { content:"▸"; color:var(--muted); transition:transform .15s; }
-.grp[open] > summary::before { transform:rotate(90deg); }
-.grp .gcount { color:var(--muted); font-weight:400; font-size:12px;
-  border:1px solid var(--line); border-radius:10px; padding:0 7px; }
-.grp1 > summary { font-size:15px; }
-.grp1 { border-left:2px solid var(--accent); padding-left:8px; border-radius:8px; }
-.grp2 { margin:8px 0 8px 6px; }
-.grp2 > summary { font-size:13px; font-weight:500; }
-.grp .grid { padding:10px 2px 4px; }
 
 /* ---------------- edit sheet ---------------- */
 .sheet { position:fixed; inset:0; z-index:55; background:var(--scrim); display:flex;

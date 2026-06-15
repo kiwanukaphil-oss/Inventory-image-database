@@ -1034,33 +1034,4 @@ async function openActivity(itemId) {
      ${!eventRows && !auditRows && !audit.error ? '<div class="muted">No history yet.</div>' : ""}`);
 }
 
-// REMOVAL CANDIDATE: openHistory is no longer wired anywhere — the editor's
-// "View full activity" (#historyBtn) calls openActivity, which already shows
-// the audit log under a "Field history" section. Kept flagged (not deleted)
-// per the flag-then-delete convention; safe to remove on confirmation.
-// Per-item change history from the audit log, shown in a bottom sheet.
-async function openHistory(itemId) {
-  const { data, error } = await supabase
-    .from("audit_log")
-    .select("created_at, change_type, field, before, after, notes")
-    .eq("item_id", itemId)
-    .order("created_at", { ascending: false })
-    .limit(200);
-
-  const rows = (data || []).map((r) => {
-    const when = new Date(r.created_at).toLocaleString();
-    let desc;
-    if (r.change_type === "create") desc = "Created";
-    else if (r.change_type === "delete") desc = "Deleted";
-    else desc = `${esc(r.field || "")}: ${esc(r.before ?? "∅")} → ${esc(r.after ?? "∅")}`;
-    return `<div class="hist-row"><div class="hist-when">${esc(when)}</div><div>${desc}</div>${
-      r.notes ? `<div class="muted">${esc(r.notes)}</div>` : ""
-    }</div>`;
-  }).join("");
-
-  // Reuse the shared sheet so it inherits focus-trap, role=dialog and Esc-to-close.
-  openBottomSheet("Change history",
-    error ? esc(error.message) : rows || '<div class="muted">No history yet.</div>');
-}
-
 // (toast now lives in ui.js — imported above.)
