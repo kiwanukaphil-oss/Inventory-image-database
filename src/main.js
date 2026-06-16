@@ -15,6 +15,7 @@ import "./install.js"; // capture beforeinstallprompt early (side-effect import)
 import { onAuthChange, getMyProfile, signOut } from "./auth.js";
 import { renderLogin } from "./login.js";
 import { renderApp } from "./gallery.js";
+import { installGlobalErrorHandlers, reportError } from "./errorlog.js";
 
 const mount = document.getElementById("app");
 
@@ -31,6 +32,9 @@ if (!isConfigured) {
     </p>
   </div></div>`;
 } else {
+  // Capture uncaught errors / rejections to the durable error sink (P4).
+  installGlobalErrorHandlers();
+
   // Show a spinner until the first auth event resolves (avoids a black screen
   // during session restore).
   mount.innerHTML = `<div class="spinner"></div>`;
@@ -56,6 +60,7 @@ if (!isConfigured) {
   }
 
   function renderError(err) {
+    reportError("main.route", err); // durable record of the top-level failure (P4)
     renderedUid = undefined; // allow a retry to re-render
     mount.innerHTML = `<div class="auth"><div class="card">
       <h1>Something went wrong</h1>
