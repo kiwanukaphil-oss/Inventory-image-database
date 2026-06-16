@@ -63,12 +63,12 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?*
 | P4 | No error tracking / monitoring | Ops | 🟠 | 1 | Yes | IN REVIEW (0029 client_errors + src/errorlog.js + main.js hook; validated) |
 | P7 | Backups/PITR unverified | Ops | 🟠 | 1 | Yes | TODO |
 | S8 | Audit log not tamper-resistant; actor spoofable | Security/RLS | 🟠 | 0 | Yes | IN REVIEW (pulled into 0027) |
-| S9 | `profiles.active` not enforced in RLS | Security/RLS | 🟠 | 2 | Cond. | TODO |
+| S9 | `profiles.active` not enforced in RLS | Security/RLS | 🟠 | 2 | Cond. | IN REVIEW (0030, validated) |
 | S10 | `pos-push` unbounded `limit` | Security/Edge | 🟡 | 0 | No | IN REVIEW (clamped in pos-push) |
-| S11 | Raw downstream error strings to client | Security/Edge | 🟡 | 2 | No | TODO |
-| S12 | Role-vs-capability dual model | Security/RLS | 🟡 | 2 | No | TODO |
-| S13 | Storage has no per-path ownership | Security/RLS | 🟡 | 2 | No | TODO |
-| S14 | POS-mirror text upserted unsanitized | Security/Edge | 🟡 | 2 | No | TODO |
+| S11 | Raw downstream error strings to client | Security/Edge | 🟡 | 2 | No | IN REVIEW (generic errors, detail server-side) |
+| S12 | Role-vs-capability dual model | Security/RLS | 🟡 | 2 | No | IN REVIEW (0030: calibration+item_jobs→caps) |
+| S13 | Storage has no per-path ownership | Security/RLS | 🟡 | 2 | No | OWNER DECISION (uid-folder scoping vs accept UUID-key safety) |
+| S14 | POS-mirror text upserted unsanitized | Security/Edge | 🟡 | 2 | No | IN REVIEW (clampText in pos-mirror) |
 | R2 | Bulk attribute edit N+1 aborts mid-batch | Robustness | 🟠 | 3 | No | TODO |
 | R3 | Burst-undo delete best-effort → orphan | Robustness | 🟠 | 3 | No | TODO |
 | R4 | Pricing float/rounding precision | Robustness | 🟡 | 3 | No | TODO |
@@ -269,6 +269,7 @@ Gallery is paginated; `renderGallery` no longer reloads the full dataset per edi
 
 > Append newest entries at the top. Mirror the changelog style of `V3_ROADMAP.md` §10.
 
+- **2026-06-17 — Phase 1 closed; Phase 2 nearly done.** Owner cleared P1 (staging admin works — upload persisted, confirming the promote-SQL) and P7 (prod managed backups present; a one-off test-restore still recommended). Phase 2: `0030_active_enforcement.sql` — S9 (`auth_is_active()` + `active` baked into all capability helpers + added to broad read policies) and S12 (calibration/item_jobs → capability helpers); Docker-validated (inactive account reads 0 + denied write; 0027 suite still green; commit `5ce9158`). Edge: S11 (generic error responses, detail kept in run row + logs) + S14 (clampText sanitizes POS-mirror text); commit `9440d66`. **S13 (storage per-path ownership) left as an OWNER DECISION** — current keys are random UUIDs with no upsert (clobber risk ≈ nil), so per-user-folder scoping needs an upload-path convention change for marginal gain; decide before closing Phase 2.
 - **2026-06-16 — Phase 1 underway (commit-per-item).** P4 committed (`c37ed20`). T1: Vitest added (`npm test`, gated in CI); pure logic extracted to `src/lib/price.js` (parsePrice/costFromRetail/marginPercent — the suite caught a `Number(null)===0` bug) and `src/lib/readiness-core.js` (dependency-injected; `readiness.js` now a thin wrapper preserving every export). 24 tests green; build green; commits `a83a4a9`, `c12723c`. P2: deploy.yml gains a `test` job that blocks build+deploy (`78…`→pending commit). **POS-SKU JS unit tests deferred with rationale:** the grouping logic lives in the Deno `pos-push` function (and is duplicated in the connector); SKU derivation is already covered by the SQL harness (`derive_item_sku`), and extracting a third shared copy is best done when pos-push/connector are reconciled (folded into Phase 5). Remaining Phase 1 solo: P3 runbook. Owner: P1 staging admin + dev boot; P7 backups.
 - **2026-06-16 — Staging stood up; hardening migrations verified on REAL Supabase (P1 nearly done).** Created `klinemen-catalog-staging` (ref `euvngvbqsikhewtyftxw`, distinct from prod `rlqtnmahyryvuitaytah`). Local `.env` now points at staging; prod values backed up to gitignored `.env.prod.local`. Probed staging via REST with the publishable key: `items`/`categories`/`item_events` → `200 []` (RLS denying anon, correct); `ai_usage`/`pos_sync_locks` → `401 42501 permission denied` (exist + service-role-only REVOKE active) vs a control missing table → `404 PGRST205`. So **all migrations incl. 0027/0028 are applied to staging and the hardening behaves correctly on real Supabase**, not just the Docker stub. P6 also closed (`.gitignore` += `supabase/.temp/`, `.env.*.local`). NOTE: 0027/0028 were applied to staging from the working tree before commit — must still be committed; confirm they are NOT yet applied to prod (prod waits for review). Remaining P1: create a staging admin (sign-up + promote SQL) and confirm `npm run dev` boots against staging.
 - **2026-06-16 — Phase 0 code complete (IN REVIEW), all SQL behaviorally validated.** Two migrations + edge-function hardening, branch `hardening/production-readiness`:
