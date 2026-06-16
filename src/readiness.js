@@ -17,7 +17,7 @@ export const STATUS_OPTIONS = ["draft", "needs-review", "approved", "flag"];
 
 export const ISSUE_META = {
   work:    { label: "Needs work", short: "Work", empty: "work", cls: "iss-work", action: "Review" },
-  ai:      { label: "Needs AI", short: "AI", empty: "AI", cls: "iss-ai", action: "Run AI fill" },
+  ai:      { label: "Needs AI fill", short: "AI fill", empty: "AI-fill", cls: "iss-ai", action: "Run AI fill" },
   price:   { label: "Missing price", short: "Price", empty: "missing-price", cls: "iss-price", action: "Set price" },
   doubt:   { label: "Check AI", short: "Check", empty: "AI-check", cls: "iss-doubt", action: "Review AI fields" },
   missing: { label: "Missing details", short: "Missing", empty: "missing-detail", cls: "iss-missing", action: "Complete details" },

@@ -243,7 +243,7 @@ export function renderApp(mount, profile, onSignOut) {
       { id: "add", label: "Add photos", sub: "Capture or upload a new batch", icon: ICON.navAdd, show: !!caps.can_upload },
       { id: "review-work", label: "Review needs work", sub: "Open all blocked items", icon: ICON.navReview, show: true },
       { id: "review-edited", label: "Recently edited", sub: "Return to items you touched", icon: ICON.pencil, show: true },
-      { id: "review-ai", label: "Needs AI", sub: "Find photos that need AI fill or retry", icon: ICON.sparkle, show: true },
+      { id: "review-ai", label: "Needs AI fill", sub: "Find photos that need AI fill or retry", icon: ICON.sparkle, show: true },
       { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
       { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
       { id: "pricing", label: "Set prices", sub: "Open guided pricing", icon: ICON.pencil, show: !!caps.can_edit },
