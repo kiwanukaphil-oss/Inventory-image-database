@@ -1,0 +1,26 @@
+# Supabase project config — version-controls the per-function JWT posture so it
+# can no longer drift silently between deploys (audit S4).
+#
+# project_id is the (non-secret) project ref, already documented in SETUP.md.
+project_id = "rlqtnmahyryvuitaytah"
+
+# ai-extract & manage-users are called by the PWA with the user's session JWT, so
+# let the gateway verify the token before the function even runs (defence in
+# depth — the functions still identify the user and check capabilities).
+[functions.ai-extract]
+verify_jwt = true
+
+[functions.manage-users]
+verify_jwt = true
+
+# The POS sync functions are invoked by cron with MIRROR_INVOKE_KEY (not a JWT)
+# and by admins with a JWT; they authorize themselves (supabase/functions/
+# _shared/auth.ts), so the gateway JWT check must stay OFF.
+[functions.pos-push]
+verify_jwt = false
+
+[functions.pos-mirror]
+verify_jwt = false
+
+[functions.pos-reconcile]
+verify_jwt = false

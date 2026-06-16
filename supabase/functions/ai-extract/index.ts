@@ -20,23 +20,17 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { corsHeaders, makeJson } from "../_shared/http.ts";
 
 // Default to Opus for the most reliable reads of small/stylised product text.
 // Override with the ANTHROPIC_MODEL secret to economise at volume
 // (claude-sonnet-4-6 ~half the cost; claude-haiku-4-5 cheapest).
 const MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-opus-4-8";
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), {
-    status,
-    headers: { ...cors, "content-type": "application/json" },
-  });
+// Abuse / cost caps for this paid endpoint (audit S6). Override via secrets.
+const AI_RATE_PER_HOUR = Number(Deno.env.get("AI_RATE_PER_HOUR") || 60);
+const AI_RATE_PER_DAY = Number(Deno.env.get("AI_RATE_PER_DAY") || 500);
+const MAX_FIELDS = 60;
 
 const TRANSIENT_ANTHROPIC_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504, 529]);
 
@@ -110,6 +104,8 @@ async function callAnthropic(payload: unknown) {
 }
 
 Deno.serve(async (req) => {
+  const cors = corsHeaders(req);
+  const json = makeJson(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
@@ -131,14 +127,27 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
     const { data: profile } = await admin
-      .from("profiles").select("role").eq("id", user.id).single();
+      .from("profiles").select("role").eq("id", user.id).maybeSingle();
     if (!profile || !["editor", "admin"].includes(profile.role)) {
       return json({ error: "forbidden" }, 403);
     }
 
+    // --- rate / cost limiting (audit S6): per-user hourly + global daily caps ---
+    const hourAgo = new Date(Date.now() - 3600_000).toISOString();
+    const dayAgo = new Date(Date.now() - 86400_000).toISOString();
+    const [{ count: hourCount }, { count: dayCount }] = await Promise.all([
+      admin.from("ai_usage").select("*", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", hourAgo),
+      admin.from("ai_usage").select("*", { count: "exact", head: true }).gte("created_at", dayAgo),
+    ]);
+    if ((hourCount ?? 0) >= AI_RATE_PER_HOUR) return json({ error: "Too many AI requests this hour. Try again later." }, 429);
+    if ((dayCount ?? 0) >= AI_RATE_PER_DAY) return json({ error: "Daily AI limit reached. Try again tomorrow." }, 429);
+    // Count this attempt up-front so the cap bounds attempts, not just successes.
+    await admin.from("ai_usage").insert({ user_id: user.id });
+
     // --- inputs ---
     const { item_id, category, fields } = await req.json();
     if (!item_id || !Array.isArray(fields)) return json({ error: "bad request" }, 400);
+    if (fields.length > MAX_FIELDS) return json({ error: "too many fields" }, 400);
 
     const { data: item } = await admin
       .from("items").select("image_path").eq("id", item_id).single();
@@ -233,10 +242,12 @@ Deno.serve(async (req) => {
     });
 
     if (!anthropic.ok) {
+      // Don't forward the upstream provider's error body to the client (audit
+      // S11) — log it server-side, return a generic shape the PWA can act on.
+      console.error("anthropic error", anthropic.status, JSON.stringify(anthropic.data));
       return json(
         {
-          error: "anthropic error",
-          detail: anthropic.data,
+          error: "AI service error",
           anthropic_status: anthropic.status,
           attempts: anthropic.attempts,
           retryable: anthropic.retryable,

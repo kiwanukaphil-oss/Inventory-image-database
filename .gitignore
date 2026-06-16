@@ -5,6 +5,8 @@ dist/
 # Local environment (Supabase keys live here; never commit)
 .env
 .env.local
+.env.*.local
+supabase/.temp/
 
 # OS / editor cruft
 .DS_Store

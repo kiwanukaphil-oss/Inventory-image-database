@@ -25,14 +25,8 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
+import { corsHeaders, makeJson } from "../_shared/http.ts";
+import { authorizePosCaller } from "../_shared/auth.ts";
 
 /** Log in to the POS as catalog_sync and return a Bearer token. */
 async function posLogin(baseUrl: string) {
@@ -103,6 +97,8 @@ function shopMidnightIso() {
 }
 
 Deno.serve(async (req) => {
+  const cors = corsHeaders(req);
+  const json = makeJson(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
@@ -111,31 +107,11 @@ Deno.serve(async (req) => {
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const POS_BASE_URL = (Deno.env.get("POS_BASE_URL") || "").replace(/\/$/, "");
 
-  // --- authorize: the cron/service caller, or an admin/user-manager user ---
-  // Deployed with --no-verify-jwt (the project uses new-style sb_secret_ keys,
-  // which the gateway's JWT check doesn't understand), so THIS block is the
-  // only gate. Accepted callers:
-  //   1. the exact service-role/secret key value
-  //   2. the dedicated MIRROR_INVOKE_KEY secret (what the cron job sends)
-  //   3. a signed-in admin / user-manager (the future "Sync now" button)
-  // Never trust a decoded JWT role claim here because the gateway is not
-  // verifying the token for this function.
-  const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-  const INVOKE_KEY = Deno.env.get("MIRROR_INVOKE_KEY") || "";
-  const isService =
-    (bearer && bearer === SERVICE_KEY) ||
-    (INVOKE_KEY && bearer === INVOKE_KEY);
-  if (!isService) {
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${bearer}` } },
-    });
-    const { data: userData } = await userClient.auth.getUser();
-    if (!userData?.user) return json({ error: "unauthorized" }, 401);
-    const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
-    const { data: me } = await adminCheck
-      .from("profiles").select("role, can_manage_users").eq("id", userData.user.id).single();
-    if (!me || !(me.can_manage_users || me.role === "admin")) return json({ error: "forbidden" }, 403);
-  }
+  // Authorize the cron/service caller (constant-time secret or MIRROR_INVOKE_KEY)
+  // or a signed-in admin/user-manager. Deployed --no-verify-jwt, so this is the
+  // only gate — see supabase/functions/_shared/auth.ts (audit S4).
+  const authz = await authorizePosCaller(req, { SUPABASE_URL, SERVICE_KEY, ANON_KEY });
+  if (!authz.ok) return json({ error: authz.error }, authz.status);
 
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const startedAt = new Date().toISOString();
