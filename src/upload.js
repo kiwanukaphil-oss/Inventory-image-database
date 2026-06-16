@@ -3,6 +3,7 @@ import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeVa
 import { compressImage } from "./imageCompress.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { diffItemValues, logItemActivity } from "./activity.js";
+import { dHash, hammingHex } from "./imagehash.js";
 import { toast, trapFocus, ICON } from "./ui.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
@@ -394,7 +395,7 @@ export async function renderUpload(view, caps, onDone) {
       const phase = s.state === "uploading" ? "Saving" : s.state === "reading" ? "Reading…" : "";
       return `<div class="bt bt-${s.state}">
         <img src="${s.url}" alt="${esc(s.label || "captured unit")}">
-        ${overlay}${dot}${phase ? `<span class="bt-phase">${phase}</span>` : ""}</div>`;
+        ${overlay}${dot}${s.dup ? `<span class="bt-dup" title="Possible repeat of the previous shot">≈</span>` : ""}${phase ? `<span class="bt-phase">${phase}</span>` : ""}</div>`;
     }
 
     function paintBurst() {
@@ -410,14 +411,22 @@ export async function renderUpload(view, caps, onDone) {
       const c = document.createElement("canvas");
       c.width = vid.videoWidth; c.height = vid.videoHeight;
       c.getContext("2d").drawImage(vid, 0, 0);
+      // Near-duplicate guard: flag ONLY a recent, near-identical frame. A
+      // deliberate next identical unit is shot after a pause to swap the item, so
+      // this catches an accidental double-tap without nagging on legitimately
+      // identical stock (one photo = one unit).
+      const hash = dHash(c);
+      const last = session[session.length - 1];
+      const looksDup = !!(last && last.hash && (Date.now() - last.t) < 4000 && hammingHex(last.hash, hash) <= 6);
       const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.92));
       if (!blob) return;
       const file = new File([blob], `capture-${session.length}-${blob.size}.jpg`, { type: "image/jpeg" });
-      const s = { url: URL.createObjectURL(blob), state: "uploading", label: "", conf: "", id: null, path: null };
+      const s = { url: URL.createObjectURL(blob), state: "uploading", label: "", conf: "", id: null, path: null, hash, t: Date.now(), dup: looksDup };
       session.push(s);
       paintBurst();
-      navigator.vibrate?.(15);
+      navigator.vibrate?.(looksDup ? [10, 40, 10] : 15);
       flashEl.classList.remove("on"); void flashEl.offsetWidth; flashEl.classList.add("on");
+      if (looksDup) toast("Looks like the unit you just shot — Undo if it's a repeat.", { label: "Undo", onClick: undoLast });
       try {
         const res = await uploadOne({ file }, burstCommon, () => { s.state = "reading"; paintBurst(); });
         s.id = res.id; s.path = res.path; s.state = "done";
