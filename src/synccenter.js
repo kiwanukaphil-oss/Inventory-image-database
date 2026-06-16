@@ -1,5 +1,6 @@
 import { supabase } from "./db.js";
 import { openEditor } from "./editor.js";
+import { loadSyncCounts } from "./syncstate.js";
 import { openBottomSheet, toast } from "./ui.js";
 
 // The Sync Center (⋮ → Shop sync): the one place the Catalog↔POS integration
@@ -58,20 +59,13 @@ async function loadState() {
       .limit(1);
     return (data || [])[0] || null;
   };
-  const countWhere = async (build) => {
-    let q = supabase.from("items").select("id", { count: "exact", head: true });
-    q = build(q);
-    const { count } = await q;
-    return count || 0;
-  };
-  const [push, mirror, reconcile, queued, sending, errors, dirty, errorItems] = await Promise.all([
+  const [push, mirror, reconcile, counts, errorItems] = await Promise.all([
     lastRunOf("push"),
     lastRunOf("mirror"),
     lastRunOf("reconcile"),
-    countWhere((q) => q.eq("status", "approved").is("pos_sync_status", null)),
-    countWhere((q) => q.in("pos_sync_status", ["pending", "awaiting_approval"])),
-    countWhere((q) => q.eq("pos_sync_status", "error")),
-    countWhere((q) => q.eq("pos_sync_status", "synced").eq("pos_dirty", true)),
+    // Counts come from the shared single source (syncstate.js) — same predicates
+    // the Shop strip uses, so the two surfaces never disagree.
+    loadSyncCounts(["queued", "sending", "errors", "dirty"]),
     supabase
       .from("items")
       .select("id, sku, brand, name, pos_sync_error")
@@ -79,7 +73,7 @@ async function loadState() {
       .limit(20)
       .then((r) => r.data || []),
   ]);
-  return { push, mirror, reconcile, queued, sending, errors, dirty, errorItems };
+  return { push, mirror, reconcile, ...counts, errorItems };
 }
 
 export function openSyncCenter(caps, onChanged, opts = {}) {

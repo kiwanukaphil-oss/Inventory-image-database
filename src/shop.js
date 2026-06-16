@@ -2,6 +2,7 @@ import { supabase } from "./db.js";
 import { loadRefData, loadPosMirror, getSetting, categoryPath } from "./data.js";
 import { openEditor } from "./editor.js";
 import { openSyncCenter } from "./synccenter.js";
+import { syncCountsFromItems } from "./syncstate.js";
 import { ICON } from "./ui.js";
 
 // The Shop tab — answers, not analytics. Each card is a question floor staff
@@ -47,17 +48,14 @@ export async function renderShop(view, caps, onChanged) {
   // One representative catalog item per POS variant (oldest with a photo) —
   // duplicate-SKU photos collapse here; the report counts products, not photos.
   const repByVariant = new Map();
-  let queued = 0, errors = 0, sending = 0, dirty = 0, inShop = 0;
   for (const it of items || []) {
-    if (it.status === "approved" && !it.pos_sync_status) queued++;
-    if (it.pos_sync_status === "error") errors++;
-    if (it.pos_sync_status === "awaiting_approval" || it.pos_sync_status === "pending") sending++;
-    if (it.pos_dirty) dirty++;
-    if (it.pos_sync_status === "synced") inShop++;
     if (!it.pos_variant_id) continue;
     const cur = repByVariant.get(it.pos_variant_id);
     if (!cur || (!cur.image_path && it.image_path)) repByVariant.set(it.pos_variant_id, it);
   }
+  // Sync bucket counts come from the shared single source (syncstate.js) so the
+  // Shop strip and the Sync Center can never disagree.
+  const { queued, errors, sending, dirty, inShop } = syncCountsFromItems(items || []);
 
   // The variant universe, dressed for filtering: top-level category + brand.
   const all = [...posMirror.byVariant.values()]
