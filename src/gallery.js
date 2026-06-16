@@ -1762,17 +1762,25 @@ async function renderGallery(view, caps, opts = {}) {
             .upsert(ids.map((id) => ({ item_id: id, cost_price: costVal })), { onConflict: "item_id" });
           if (error) throw error;
         }
+        // jsonb attributes merge per item, so they can't be one atomic update
+        // like the columns. Collect per-item failures instead of aborting
+        // mid-batch (R2) — a blip on item N would otherwise leave a silent
+        // partial write the all-or-nothing Undo can't honestly describe.
+        const attrFailed = [];
         if (Object.keys(attrChanges).length) {
-          // jsonb attributes must merge per item (each has its own existing values).
           for (const it of items) {
             const merged = { ...(it.attributes || {}), ...attrChanges };
             const { error } = await supabase.from("items").update({ attributes: merged }).eq("id", it.id);
-            if (error) throw error;
+            if (error) { console.error("bulk attr update failed", it.id, error); attrFailed.push(it.id); }
           }
         }
         await logManyItemActivities(ids, "bulk_edit", "bulk", changesByItem, "Bulk edited selected items");
         navigator.vibrate?.([12, 40, 12]);
-        toast(`Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
+        const okCount = ids.length - attrFailed.length;
+        const doneMsg = attrFailed.length
+          ? `Updated ${okCount} of ${ids.length} — ${attrFailed.length} attribute update${attrFailed.length === 1 ? "" : "s"} failed, retry`
+          : `Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`;
+        toast(doneMsg, {
           label: "Undo",
           onClick: async () => {
             try {
