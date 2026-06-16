@@ -225,14 +225,31 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     </div>`;
   }
 
+  // A grounded price anchor from the shop's OWN catalogue (deliberately not an
+  // LLM guess of local retail — that's unreliable in the shop's currency): the
+  // median + range of already-priced items sharing this pile's category or brand.
+  function priceSuggestion() {
+    const pileCats = new Set(pile.map((it) => it.category_id).filter(Boolean));
+    const pileBrands = new Set(pile.map((it) => (it.brand || "").trim().toLowerCase()).filter(Boolean));
+    const pileIds = new Set(pile.map((it) => it.id));
+    const ref = allItems
+      .filter((it) => it.price != null && !pileIds.has(it.id) &&
+        (pileCats.has(it.category_id) || pileBrands.has((it.brand || "").trim().toLowerCase())))
+      .map((it) => Number(it.price)).filter(Number.isFinite).sort((a, b) => a - b);
+    if (ref.length < 3) return null; // too little signal to anchor on
+    return { min: ref[0], max: ref[ref.length - 1], median: ref[Math.floor(ref.length / 2)], n: ref.length };
+  }
+
   function stepBase() {
     const already = pile.filter((it) => it.price != null).length;
+    const sug = priceSuggestion();
     return `${pileStrip()}
       <div class="pgd-lead">Everyone pays this — unless an exception says otherwise.</div>
       <div class="pg-input pgd-baseinput">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
         <input id="pgdBase" type="number" inputmode="decimal" placeholder="Standard price — or leave empty" value="${esc(basePrice)}">
       </div>
+      ${sug ? `<button class="ghost pgd-suggest" id="pgdSuggest" type="button">Use ${esc(fmt(sug.median))}<span class="muted"> · similar in your catalogue ${esc(fmt(sug.min))}–${esc(fmt(sug.max))} (${sug.n})</span></button>` : ""}
       <div class="pgd-hint muted">Leave it empty to only price the exceptions you add next
         (everything else stays as it is).</div>
       ${already ? `<label class="pg-toggle pgd-keep"><input type="checkbox" id="pgdKeep"${keepPriced ? " checked" : ""}>
@@ -339,6 +356,13 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     } else if (step === 2) {
       bodyEl.querySelector("#pgdBase").addEventListener("input", (e) => { basePrice = e.target.value.trim(); });
       bodyEl.querySelector("#pgdKeep")?.addEventListener("change", (e) => { keepPriced = e.target.checked; });
+      bodyEl.querySelector("#pgdSuggest")?.addEventListener("click", () => {
+        const s = priceSuggestion();
+        if (!s) return;
+        basePrice = String(s.median);
+        const input = bodyEl.querySelector("#pgdBase");
+        if (input) input.value = basePrice;
+      });
       requestAnimationFrame(() => bodyEl.querySelector("#pgdBase")?.focus());
     } else if (step === 3) {
       bodyEl.querySelector("#pgdAddEx").onclick = openExceptionSheet;

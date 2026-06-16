@@ -600,6 +600,8 @@ body { overflow:hidden; overscroll-behavior:none; }
 .pgd-baseinput input { font-size:var(--text-xl); }
 .pgd-hint { font-size:var(--text-sm); margin-top:8px; line-height:1.4; }
 .pgd-keep { margin-top:12px; }
+.pgd-suggest { display:block; width:100%; margin-top:10px; text-align:center; font-weight:600; }
+.pgd-suggest .muted { font-weight:400; font-size:var(--text-xs); }
 .pgd-sentence { padding:7px 14px; font-size:var(--text-sm); color:var(--accent-soft-txt);
   border-bottom:1px solid var(--line); background:var(--panel);
   white-space:nowrap; overflow-x:auto; }
