@@ -850,19 +850,20 @@ async function renderGallery(view, caps, opts = {}) {
   }
 
   // One product card.
-  function cardHtml(it, slides) {
+  function cardHtml(it) {
     const url = signed[it.image_path];
     const cat = it.categories?.name || "";
     const variant = summarizeItem(it); // category-driven summary line
     const brand = it.brand || it.name || "—";
-    let slideIdx = -1;
-    if (url) { slideIdx = slides.length; slides.push({ url, caption: esc([brand, variant].filter(Boolean).join(" · ")) }); }
     const inner = url
       ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
       : `<span style="color:var(--muted);font-size:12px">no image</span>`;
-    const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
+    // data-img marks an image-bearing thumb; the lightbox builds its slide list
+    // from the current filtered rows on click (see the tap handler below), so the
+    // cached card HTML never holds a stale positional slide index.
+    const thumb = `<div class="thumb"${url ? " data-img" : ""}>
       ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check" data-tip="Has an AI field to check"></span>' : ""}</div>`;
-    return `<div class="card${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
+    return `<div class="card" data-id="${it.id}">
       ${thumb}
       <div class="body">
         <div class="cardtop">
@@ -886,19 +887,17 @@ async function renderGallery(view, caps, opts = {}) {
   // for skimming many uploads to judge AI quality without opening each one. It
   // reuses the `.card[data-id]` contract so all the selection/tap/lightbox
   // interactions below work unchanged.
-  function rowHtml(it, slides) {
+  function rowHtml(it) {
     const url = signed[it.image_path];
     const cat = it.categories?.name || "";
     const brand = it.brand || it.name || "—";
     const variant = summarizeItemRich(it);
-    let slideIdx = -1;
-    if (url) { slideIdx = slides.length; slides.push({ url, caption: esc([brand, cat].filter(Boolean).join(" · ")) }); }
     const inner = url
       ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
       : `<span class="row-noimg">—</span>`;
-    const thumb = `<div class="thumb"${url ? ` data-slide="${slideIdx}"` : ""}>
+    const thumb = `<div class="thumb"${url ? " data-img" : ""}>
       ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check" data-tip="Has an AI field to check"></span>' : ""}</div>`;
-    return `<div class="card card-row${selected.has(it.id) ? " selected" : ""}" data-id="${it.id}">
+    return `<div class="card card-row" data-id="${it.id}">
       ${thumb}
       <div class="row-main">
         <div class="row-top">
@@ -915,6 +914,57 @@ async function renderGallery(view, caps, opts = {}) {
         </div>
       </div>
     </div>`;
+  }
+
+  // ---- incremental grid render (C1) -------------------------------------
+  // The gallery used to rebuild grid.innerHTML — a full string build + reparse
+  // of up to 1,000 cards — on every keystroke/filter/sort. We now keep a cache
+  // of card nodes keyed by id and reconcile: build only new/changed cards,
+  // reorder existing nodes in place, and drop removed ones. Selection state is
+  // applied to the node AFTER placement (not baked into the cached HTML), so a
+  // sweep or shift-range never invalidates the cache. content-visibility already
+  // defers off-screen layout, so typing now stays smooth at full catalogue.
+  let gridInner = null;        // the live .grid / .scanlist container
+  let cacheDensity = null;     // density the current nodes were built for
+  const cardCache = new Map(); // id -> { el, html }
+
+  function elFromHtml(html) {
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html.trim();
+    return tpl.content.firstElementChild;
+  }
+
+  function reconcileGrid(rows) {
+    // A density switch (grid <-> scan-list) or first paint needs a fresh
+    // container — the card markup itself differs between the two layouts.
+    if (!gridInner || cacheDensity !== density || gridInner.parentNode !== grid) {
+      cardCache.clear();
+      grid.innerHTML = density === "list" ? `<div class="scanlist"></div>` : `<div class="grid"></div>`;
+      gridInner = grid.firstElementChild;
+      cacheDensity = density;
+    }
+    const seen = new Set();
+    let prev = null;
+    for (const it of rows) {
+      const html = density === "list" ? rowHtml(it) : cardHtml(it);
+      let entry = cardCache.get(it.id);
+      if (!entry || entry.html !== html) {           // new card, or its content changed
+        const el = elFromHtml(html);
+        if (entry && entry.el.parentNode) entry.el.remove();
+        entry = { el, html };
+        cardCache.set(it.id, entry);
+      }
+      const el = entry.el;
+      const target = prev ? prev.nextSibling : gridInner.firstChild;
+      if (el !== target) gridInner.insertBefore(el, target); // move into the right slot (no-op if already there)
+      el.classList.toggle("selected", selected.has(it.id));
+      prev = el;
+      seen.add(it.id);
+    }
+    for (const child of [...gridInner.children]) {    // drop cards no longer in the filtered set
+      if (!seen.has(child.dataset.id)) { cardCache.delete(child.dataset.id); child.remove(); }
+    }
+    fadeInImages(gridInner);
   }
 
   function draw() {
@@ -991,20 +1041,14 @@ async function renderGallery(view, caps, opts = {}) {
             : `No ${ISSUE_META[issue]?.empty || "review"} items right now.`)
           : "No items match your search or filters."}</div>
         ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
-      grid._slides = [];
+      gridInner = null; cardCache.clear();   // next non-empty draw rebuilds the container
       const cf = grid.querySelector("#clearFiltersBtn");
       if (cf) cf.onclick = clearAllFilters;
       return;
     }
 
-    // Slides for the lightbox follow the currently filtered, ordered rows.
-    const slides = [];
-    grid.innerHTML = density === "list"
-      ? `<div class="scanlist">${rows.map((it) => rowHtml(it, slides)).join("")}</div>`
-      : `<div class="grid">${rows.map((it) => cardHtml(it, slides)).join("")}</div>`;
+    reconcileGrid(rows);
     countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${approveCta}${freshnessNote()}`;
-    grid._slides = slides;
-    fadeInImages(grid);
   }
 
   // ---- selection interactions: tap, shift-click range, drag/slide sweep ----
@@ -1085,8 +1129,20 @@ async function renderGallery(view, caps, opts = {}) {
     // reveals its detail in a toast instead of opening the editor/lightbox.
     const tip = e.target.closest("[data-tip]");
     if (tip) { toast(tip.dataset.tip); return; }
-    const thumb = e.target.closest(".thumb[data-slide]");
-    if (thumb) { openLightbox(grid._slides, Number(thumb.dataset.slide)); return; }
+    const thumb = e.target.closest(".thumb[data-img]");
+    if (thumb) {
+      // Build the lightbox slide list from the current filtered rows on demand,
+      // so it always matches what's on screen regardless of render caching.
+      const id = thumb.closest(".card[data-id]")?.dataset.id;
+      const imgRows = filtered.filter((it) => signed[it.image_path]);
+      const slides = imgRows.map((it) => {
+        const brand = it.brand || it.name || "—";
+        const sub = density === "list" ? (it.categories?.name || "") : summarizeItem(it);
+        return { url: signed[it.image_path], caption: esc([brand, sub].filter(Boolean).join(" · ")) };
+      });
+      openLightbox(slides, Math.max(0, imgRows.findIndex((it) => it.id === id)));
+      return;
+    }
     if (card) openItemEditor(card.dataset.id);
   });
 
