@@ -183,11 +183,13 @@ Deno.serve(async (req) => {
     });
     return json({ ok: true, drift: findings.length, ...summary });
   } catch (err) {
+    // Detail stays in the manager-readable run row + logs; caller gets generic (S11).
+    console.error("pos-reconcile error", String(err?.stack || err));
     await db.from("pos_sync_runs").insert({
       kind: "reconcile", started_at: startedAt, finished_at: new Date().toISOString(),
       ok: false, ok_count: 0, error_count: 1, error: String(err?.message || err),
       summary: { findings },
     });
-    return json({ ok: false, error: String(err?.message || err) }, 500);
+    return json({ ok: false, error: "internal error" }, 500);
   }
 });

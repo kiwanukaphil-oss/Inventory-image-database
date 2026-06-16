@@ -274,6 +274,7 @@ Deno.serve(async (req) => {
     }
     return json({ values: cleanValues, confidence: result.confidence || {}, usage: data.usage });
   } catch (e) {
-    return json({ error: String(e?.message || e) }, 500);
+    console.error("ai-extract error", String(e?.stack || e)); // detail server-side only (S11)
+    return json({ error: "internal error" }, 500);
   }
 });

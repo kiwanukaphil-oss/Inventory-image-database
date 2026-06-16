@@ -100,6 +100,7 @@ Deno.serve(async (req) => {
 
     return json({ error: "unknown action" }, 400);
   } catch (e) {
-    return json({ error: String(e?.message || e) }, 500);
+    console.error("manage-users error", String(e?.stack || e)); // detail server-side only (S11)
+    return json({ error: "internal error" }, 500);
   }
 });

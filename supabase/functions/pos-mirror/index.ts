@@ -28,6 +28,19 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, makeJson } from "../_shared/http.ts";
 import { authorizePosCaller } from "../_shared/auth.ts";
 
+// Defensive clamp on POS-supplied text before it lands in our DB + the PWA UI
+// (audit S14): cap length and strip control characters. The PWA escapes these
+// on render, but never trust an upstream system to send sane strings.
+const clampText = (v, max = 200) => {
+  if (v == null) return null;
+  let out = "";
+  for (const ch of String(v)) {
+    const c = ch.charCodeAt(0);
+    if (c >= 32 && c !== 127) out += ch; // drop ASCII control chars
+  }
+  return out.slice(0, max);
+};
+
 /** Log in to the POS as catalog_sync and return a Bearer token. */
 async function posLogin(baseUrl: string) {
   const res = await fetch(`${baseUrl}/auth/login`, {
@@ -140,9 +153,9 @@ Deno.serve(async (req) => {
     const nowIso = new Date().toISOString();
     const rows = variants.map((v) => ({
       pos_variant_id: v.id,
-      pos_sku: (v.sku || "").toUpperCase(),
-      product_name: v.product_name || null,
-      brand_name: v.brand_name || null,
+      pos_sku: clampText((v.sku || "").toUpperCase(), 64),
+      product_name: clampText(v.product_name, 200),
+      brand_name: clampText(v.brand_name, 120),
       price: v.price ?? null,
       stock_quantity: Number(v.quantity_in_stock) || 0,
       reorder_level: v.reorder_level ?? null,
@@ -183,10 +196,13 @@ Deno.serve(async (req) => {
     });
     return json({ ok: true, ...summary });
   } catch (err) {
+    // Keep the detail in the manager-readable run row + server logs; return a
+    // generic message to the caller (audit S11).
+    console.error("pos-mirror error", String(err?.stack || err));
     await db.from("pos_sync_runs").insert({
       kind: "mirror", started_at: startedAt, finished_at: new Date().toISOString(),
       ok: false, ok_count: 0, error_count: 1, error: String(err?.message || err),
     });
-    return json({ ok: false, error: String(err?.message || err) }, 500);
+    return json({ ok: false, error: "internal error" }, 500);
   }
 });

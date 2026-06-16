@@ -541,11 +541,13 @@ Deno.serve(async (req) => {
     });
     return json({ ok: true, ...summary });
   } catch (err) {
+    // Detail stays in the manager-readable run row + logs; caller gets generic (S11).
+    console.error("pos-push error", String(err?.stack || err));
     await db.from("pos_sync_runs").insert({
       kind: "push", started_at: startedAt, finished_at: new Date().toISOString(),
       ok: false, ok_count: 0, error_count: 1, error: String(err?.message || err), summary,
     });
-    return json({ ok: false, error: String(err?.message || err), ...summary }, 500);
+    return json({ ok: false, error: "internal error", ...summary }, 500);
   } finally {
     // Always release the single-flight lock, even on error.
     await db.rpc("release_sync_lock", { p_name: LOCK_NAME }).catch(() => {});
