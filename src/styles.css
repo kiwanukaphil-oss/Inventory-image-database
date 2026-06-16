@@ -715,6 +715,46 @@ body { overflow:hidden; overscroll-behavior:none; }
 .act-copy span { color:var(--muted); font-size:var(--text-xs); line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .act-time { flex:0 0 auto; color:var(--muted); font-size:var(--text-2xs); font-variant-numeric:tabular-nums; }
 
+/* Swipe-review deck: full-screen, one card at a time. Drag right=approve,
+   left=flag, up=fix; the action buttons do the same for non-gesture users. */
+.swipe { position:fixed; inset:0; z-index:86; background:var(--bg); display:flex; flex-direction:column;
+  padding-top:var(--safe-top); padding-bottom:var(--safe-bottom); }
+.sw-top { display:flex; align-items:center; gap:var(--space-lg); padding:10px 14px; }
+.sw-progress { flex:1; text-align:center; color:var(--muted); font-size:var(--text-sm); font-variant-numeric:tabular-nums; }
+.sw-undo { min-height:36px; padding:0 12px; background:var(--control); border:1px solid var(--line); border-radius:var(--radius-md); color:var(--txt); }
+.sw-undo:disabled { opacity:.4; }
+.sw-stage { flex:1; position:relative; display:flex; align-items:center; justify-content:center; padding:0 16px; min-height:0; }
+.sw-card { position:relative; width:100%; max-width:420px; max-height:100%; background:var(--panel);
+  border:1px solid var(--line); border-radius:var(--radius-xl); box-shadow:var(--shadow-pop);
+  overflow:hidden; display:flex; flex-direction:column; touch-action:none; cursor:grab; will-change:transform; }
+.sw-card:active { cursor:grabbing; }
+.sw-photo { flex:1 1 auto; min-height:0; background:var(--thumb-bg); display:flex; align-items:center; justify-content:center; }
+.sw-photo img { width:100%; height:100%; object-fit:contain; }
+.sw-noimg { color:var(--muted); }
+.sw-info { flex:0 0 auto; padding:14px 16px; display:flex; flex-direction:column; gap:var(--space-sm); }
+.sw-name { font-size:var(--text-xl); font-weight:650; letter-spacing:-.01em; }
+.sw-sub { color:var(--muted); font-size:var(--text-sm); }
+.sw-issue { font-size:var(--text-sm); padding:8px 10px; border:1px solid var(--line); border-radius:var(--radius-md); }
+.sw-issue.iss-ready { color:var(--ok-txt); border-color:var(--ok-border); }
+.sw-issue.iss-price, .sw-issue.iss-missing, .sw-issue.iss-doubt { color:var(--warn); border-color:var(--warn); }
+.sw-issue.iss-flag, .sw-issue.iss-sync { color:var(--flag-txt); border-color:var(--flag-border); }
+.sw-issue.iss-ai { color:var(--ai-txt); border-color:var(--ai-border); }
+.sw-stamp { position:absolute; top:18px; padding:4px 12px; font-weight:800; font-size:var(--text-xl);
+  border:3px solid; border-radius:var(--radius-md); opacity:0; pointer-events:none; z-index:2; }
+.sw-stamp-approve { right:18px; transform:rotate(12deg); color:var(--ok-txt); border-color:var(--ok-txt); }
+.sw-stamp-flag { left:18px; transform:rotate(-12deg); color:var(--flag-txt); border-color:var(--flag-txt); }
+.sw-stamp-fix { left:50%; margin-left:-28px; color:var(--accent); border-color:var(--accent); }
+.sw-actions { flex:0 0 auto; display:flex; justify-content:center; gap:18px; padding:14px; }
+.sw-btn { display:flex; flex-direction:column; align-items:center; gap:3px; min-width:84px; min-height:60px;
+  border-radius:var(--radius-lg); border:1px solid var(--line); background:var(--control); color:var(--txt); font-size:var(--text-xs); }
+.sw-btn:active { transform:scale(.96); }
+.sw-flag { color:var(--flag-txt); border-color:var(--flag-border); }
+.sw-approve { color:var(--ok-txt); border-color:var(--ok-border); }
+.sw-fix { color:var(--accent); border-color:var(--accent); }
+.sw-done { text-align:center; display:flex; flex-direction:column; align-items:center; gap:14px; }
+.sw-done .big { font-size:48px; color:var(--ok-txt); }
+.sw-done-msg { font-size:var(--text-lg); }
+
 .audit-summary { display:flex; flex-direction:column; gap:var(--space-md); }
 .audit-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:var(--space-lg);
   padding:10px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--control); }

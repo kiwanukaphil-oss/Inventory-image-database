@@ -20,6 +20,7 @@ import {
 import { openCalibration } from "./calibration.js";
 import { openGuidedPricing } from "./pricing_guided.js";
 import { openActivityFeed } from "./activityfeed.js";
+import { openSwipeReview } from "./swipereview.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -990,6 +991,9 @@ async function renderGallery(view, caps, opts = {}) {
     // right on the count line (same immediate-with-Undo semantics as bulk).
     const approveCta = review && seg === "ready" && canEdit && rows.length
       ? ` · <button class="count-cta" data-cta="approveall">Approve all ${rows.length} ›</button>` : "";
+    // Swipe-review the current pile: full-screen one-card-at-a-time triage.
+    const swipeCta = review && canEdit && rows.length > 1
+      ? ` · <button class="count-cta" data-cta="swipe">Swipe ${rows.length} ›</button>` : "";
     const issueCta = review && canEdit && rows.length
       ? issue === "ai"
         ? failedAiShown
@@ -1052,7 +1056,7 @@ async function renderGallery(view, caps, opts = {}) {
     }
 
     reconcileGrid(rows);
-    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${approveCta}${freshnessNote()}`;
+    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${approveCta}${swipeCta}${freshnessNote()}`;
   }
 
   // ---- selection interactions: tap, shift-click range, drag/slide sweep ----
@@ -1226,6 +1230,7 @@ async function renderGallery(view, caps, opts = {}) {
       if (review) openGuidedPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
       else openGuidedPricing(caps, refresh);
     }
+    else if (cta.dataset.cta === "swipe") openSwipeReview(filtered, caps, { onChanged: refresh });
     else if (cta.dataset.cta === "retryai") {
       const failed = filtered.filter((it) => it.latest_ai_job?.status === "failed");
       if (failed.length) openBulkAi(failed, caps, refresh);
