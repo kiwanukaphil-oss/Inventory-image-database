@@ -699,11 +699,18 @@ export async function openPricing(caps, onClose, opts = {}) {
   }
 
   // Single commit path: preview when risky, then write. Used by select-mode bulk
-  // set + per-group/band sets.
+  // set + per-group/band sets. An in-flight guard ignores a double-tap so the
+  // same price isn't written (and Undo-toasted) twice (R7).
+  let committing = false;
   async function commitPrice(ids, value) {
-    if (!ids.length) return;
-    if (needsPreview(ids) && !(await previewConfirm(ids, value))) return;
-    await applyPrice(ids, value);
+    if (!ids.length || committing) return;
+    committing = true;
+    try {
+      if (needsPreview(ids) && !(await previewConfirm(ids, value))) return;
+      await applyPrice(ids, value);
+    } finally {
+      committing = false;
+    }
   }
 
   // Apply one price/cost to every item in the selected groups — the deliberate

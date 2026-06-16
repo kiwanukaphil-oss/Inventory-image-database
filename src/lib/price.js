@@ -1,6 +1,11 @@
 // Pure pricing math — shared by the pricing tools and the editor, and unit-tested
 // in test/price.test.js. NO DOM / NO Supabase imports: keep this module pure so
 // it is trivially testable and reusable.
+//
+// Currency precision (R4): prices are treated as WHOLE units — the shop uses a
+// no-decimal currency (e.g. UGX), so costFromRetail rounds to an integer. If a
+// decimal currency is ever configured, move this module to integer-cents
+// arithmetic (and add tests for the rounding) rather than floating-point.
 
 // Parse a user-entered price/cost into a non-negative finite number, or null if
 // blank/invalid/negative (audit R1). Blank means "unset", not zero.
