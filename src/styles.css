@@ -985,6 +985,8 @@ body { overflow:hidden; overscroll-behavior:none; }
 .navbadge { position:absolute; top:4px; left:50%; margin-left:4px; min-width:16px; height:16px;
   padding:0 4px; border-radius:var(--radius-sm); background:var(--warn); color:var(--warn-ink); font-size:10px; font-weight:700;
   display:flex; align-items:center; justify-content:center; }
+/* Shop badge = a sync PROBLEM (errors / pending updates), so it reads red. */
+.navbadge.alert { background:var(--danger); color:#fff; }
 
 /* ---------------- edit sheet ---------------- */
 .sheet { position:fixed; inset:0; z-index:55; background:var(--scrim); display:flex;

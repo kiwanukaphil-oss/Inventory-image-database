@@ -21,6 +21,7 @@ import { openCalibration } from "./calibration.js";
 import { openGuidedPricing } from "./pricing_guided.js";
 import { openActivityFeed } from "./activityfeed.js";
 import { openSwipeReview } from "./swipereview.js";
+import { loadSyncCounts } from "./syncstate.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -102,19 +103,19 @@ const NAV = [
   { id: "gallery", label: "Gallery", ico: "navGallery" },
   { id: "add", label: "Add", ico: "navAdd" },
   { id: "review", label: "Review", ico: "navReview", badge: true },
-  { id: "shop", label: "Shop", ico: "navShop" },
+  { id: "shop", label: "Shop", ico: "navShop", badge: true },
 ];
 
-// Update the Review tab's count badge (needs-review + low-confidence items).
-function setReviewBadge(count) {
-  const b = document.getElementById("reviewBadge");
+// Update a bottom-nav count badge. `animate` count-ups give the Review badge a
+// premium "numbers move" feel; the Shop attention badge stays steady.
+function setNavBadge(id, count, animate = false) {
+  const b = document.getElementById(id);
   if (!b) return;
   b.hidden = !count;
   if (count > 99) { b.textContent = "99+"; return; }
   const from = parseInt(b.textContent, 10) || 0;
   const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-  if (reduce || from === count) { b.textContent = String(count); return; }
-  // Quick count-up so the badge visibly ticks to its new value (premium feel).
+  if (!animate || reduce || from === count) { b.textContent = String(count); return; }
   const steps = Math.min(12, Math.abs(count - from));
   let i = 0;
   const tick = () => {
@@ -124,6 +125,10 @@ function setReviewBadge(count) {
   };
   requestAnimationFrame(tick);
 }
+// Review badge = items needing attention; Shop badge = sync problems surfaced on
+// every screen so a manager knows without opening the Shop tab.
+const setReviewBadge = (count) => setNavBadge("reviewBadge", count, true);
+const setShopBadge = (count) => setNavBadge("shopBadge", count, false);
 
 /**
  * Render the full app shell for a signed-in user.
@@ -161,7 +166,7 @@ export function renderApp(mount, profile, onSignOut) {
   // Build bottom nav buttons.
   nav.innerHTML = NAV.map(
     (n) => `<button data-view="${n.id}"><span class="ico">${ICON[n.ico] || ""}</span>${n.label}${
-      n.badge ? `<span class="navbadge" id="reviewBadge" hidden></span>` : ""
+      n.badge ? `<span class="navbadge${n.id === "shop" ? " alert" : ""}" id="${n.id}Badge" hidden></span>` : ""
     }</button>`
   ).join("");
 
@@ -571,10 +576,13 @@ async function renderGallery(view, caps, opts = {}) {
   // Keep the Review tab's badge in sync on every load (any surface refreshes
   // it). Both segments count — ready-to-approve items await action too.
   const itemIdsForMeta = (data || []).map((it) => it.id);
-  const [failedAiJobs, activitySummaries, costPresence] = await Promise.all([
+  const [failedAiJobs, activitySummaries, costPresence, syncCounts] = await Promise.all([
     loadLatestFailedJobs(itemIdsForMeta, "ai_fill"),
     loadItemActivitySummaries(itemIdsForMeta),
     loadCostPresence(itemIdsForMeta, { canViewCost: !!caps.can_view_cost }),
+    // Surface POS sync problems on the Shop tab badge from every screen, so a
+    // manager sees them without opening Shop. Same single source as the strip.
+    loadSyncCounts(["errors", "dirty"]).catch(() => ({ errors: 0, dirty: 0 })),
   ]);
   for (const it of data || []) {
     const job = failedAiJobs.get(it.id);
@@ -585,6 +593,7 @@ async function renderGallery(view, caps, opts = {}) {
   }
 
   setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
+  setShopBadge((syncCounts.errors || 0) + (syncCounts.dirty || 0));
 
   if (!data || data.length === 0) {
     // First-run: a coached empty state showing the whole value loop at a glance,
