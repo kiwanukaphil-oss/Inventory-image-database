@@ -60,7 +60,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?*
 | T1 | Zero automated tests | Testing | 🔴 | 1 | Yes | TODO |
 | P2 | CI has no test/lint gate before deploy | Ops/CI | 🟠 | 1 | Yes | TODO |
 | P3 | Manual migrations, no rollback story | Ops | 🟠 | 1 | Yes | TODO |
-| P4 | No error tracking / monitoring | Ops | 🟠 | 1 | Yes | TODO |
+| P4 | No error tracking / monitoring | Ops | 🟠 | 1 | Yes | IN REVIEW (0029 client_errors + src/errorlog.js + main.js hook; validated) |
 | P7 | Backups/PITR unverified | Ops | 🟠 | 1 | Yes | TODO |
 | S8 | Audit log not tamper-resistant; actor spoofable | Security/RLS | 🟠 | 0 | Yes | IN REVIEW (pulled into 0027) |
 | S9 | `profiles.active` not enforced in RLS | Security/RLS | 🟠 | 2 | Cond. | TODO |
