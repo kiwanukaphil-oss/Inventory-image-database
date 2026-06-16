@@ -53,6 +53,29 @@ function clearUploadDefaults() {
   try { localStorage.removeItem(UPLOAD_DEFAULTS_KEY); } catch {}
 }
 
+// Pick up any photos shared into the app via the PWA share target (stashed in a
+// Cache by public/sw-share.js), hand them to the Add flow, then clear the cache
+// so a later visit doesn't re-import them. Safe no-op when nothing was shared.
+async function consumeSharedMedia(addFiles) {
+  try {
+    if (!self.caches) return;
+    const cache = await caches.open("shared-media");
+    const idx = await cache.match("/shared-media/index.json");
+    if (!idx) return;
+    const names = await idx.json();
+    const files = [];
+    for (const name of names) {
+      const res = await cache.match(`/shared-media/${name}`);
+      if (!res) continue;
+      const blob = await res.blob();
+      files.push(new File([blob], name.replace(/^shared-\d+-/, "") || "shared.jpg", { type: blob.type || "image/jpeg" }));
+    }
+    const keys = await cache.keys();
+    await Promise.all(keys.map((k) => cache.delete(k)));
+    if (files.length) addFiles(files);
+  } catch { /* caches API unavailable / blocked — ignore */ }
+}
+
 // Run the vision extractor on a freshly-uploaded item and fill any fields that
 // are still empty (never overrides the batch-common values the user set).
 async function aiFillItem(id, common) {
@@ -665,4 +688,5 @@ export async function renderUpload(view, caps, onDone) {
   uploadBtn.addEventListener("click", () => startUpload(entries.slice()));
 
   setMode("compose");
+  consumeSharedMedia(addFiles); // import any photos shared into the app (PWA share target)
 }

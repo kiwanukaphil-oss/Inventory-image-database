@@ -397,7 +397,14 @@ export function renderApp(mount, profile, onSignOut) {
   fab.onclick = () => view.scrollTo({ top: 0, behavior: "smooth" });
   onScroll();
 
-  setView("gallery");
+  // Honour PWA shortcuts / share-target deep links on first paint, then clean the
+  // URL so a later refresh doesn't re-trigger them.
+  const params = new URLSearchParams(location.search);
+  const validView = new Set(["gallery", "add", "review", "shop"]);
+  const wantView = params.get("view");
+  const initialView = params.get("share") === "1" ? "add" : (validView.has(wantView) ? wantView : "gallery");
+  if (params.has("view") || params.has("share")) history.replaceState(null, "", location.pathname);
+  setView(initialView);
 }
 
 // Appearance options shown in the account menu's "Appearance" picker. "system"
