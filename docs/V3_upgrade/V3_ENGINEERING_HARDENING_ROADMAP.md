@@ -67,7 +67,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?*
 | S10 | `pos-push` unbounded `limit` | Security/Edge | 🟡 | 0 | No | IN REVIEW (clamped in pos-push) |
 | S11 | Raw downstream error strings to client | Security/Edge | 🟡 | 2 | No | IN REVIEW (generic errors, detail server-side) |
 | S12 | Role-vs-capability dual model | Security/RLS | 🟡 | 2 | No | IN REVIEW (0030: calibration+item_jobs→caps) |
-| S13 | Storage has no per-path ownership | Security/RLS | 🟡 | 2 | No | OWNER DECISION (uid-folder scoping vs accept UUID-key safety) |
+| S13 | Storage has no per-path ownership | Security/RLS | 🟡 | 2 | No | WON'T FIX (accepted: random-UUID keys + no upsert ⇒ no clobber; revisit at upload refactor) |
 | S14 | POS-mirror text upserted unsanitized | Security/Edge | 🟡 | 2 | No | IN REVIEW (clampText in pos-mirror) |
 | R2 | Bulk attribute edit N+1 aborts mid-batch | Robustness | 🟠 | 3 | No | TODO |
 | R3 | Burst-undo delete best-effort → orphan | Robustness | 🟠 | 3 | No | TODO |
