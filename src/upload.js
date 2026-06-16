@@ -115,6 +115,8 @@ async function aiFillItem(id, common) {
     );
   }
   await clearItemJobFailures(id, "ai_fill");
+  // Return what the AI read so live surfaces (burst filmstrip) can show it.
+  return { brand, name, filled, confidence };
 }
 
 // Leaf categories (no children) are where items actually go.
@@ -290,20 +292,32 @@ export async function renderUpload(view, caps, onDone) {
 
   // Burst capture: a full-screen, stay-open camera built for the core workflow
   // (one photo = one unit, many per session). Tap the big shutter to snap each
-  // unit — the camera stays live, each frame drops into the same batch, and a
-  // filmstrip + count give feedback. Needs a secure context (HTTPS/localhost);
-  // on the plain-http LAN URL it falls back to a toast (use "Take photo").
+  // unit — the camera stays live, each frame uploads immediately and the AI reads
+  // it in the background, so its filmstrip tile self-identifies (brand · name +
+  // confidence) while you keep shooting. Needs a secure context (HTTPS/localhost)
+  // and a connection; otherwise it falls back to the queued "Take photo" path.
   view.querySelector("#webcamBtn").onclick = () => openBurstCapture();
 
   async function openBurstCapture() {
+    // Live burst reads each photo as you shoot, so it needs the category up front
+    // (this also fixes "category only choosable after the session") and a live
+    // connection. Without either, fall back to the queued "Take photo" path.
+    const common = gatherCommon();
+    if (!common) { toast("Pick a category first — burst reads each photo as you shoot."); catSel?.focus(); return; }
     if (!navigator.mediaDevices?.getUserMedia) { toast("Camera not available here — use “Take photo”."); return; }
+    if (!navigator.onLine) { toast("You're offline — live burst needs a connection. Use “Take photo” to queue units."); return; }
+    const burstCommon = { ...common, ai: true }; // self-ID is the whole point of burst
     let stream;
     try {
       // Prefer the rear camera at a high resolution; compressImage downscales later.
       stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } },
       });
-    } catch (e) { toast("Couldn't access the camera: " + (e?.message || e)); return; }
+    } catch (e) {
+      console.error("camera open failed", e);
+      toast("Couldn't open the camera — check the permission in your browser, or use “Take photo”.");
+      return;
+    }
 
     const ov = document.createElement("div");
     ov.className = "burst";
@@ -315,8 +329,8 @@ export async function renderUpload(view, caps, onDone) {
       <video id="bcVid" autoplay playsinline muted></video>
       <div class="burst-flash" id="bcFlash"></div>
       <div class="burst-top">
-        <button class="burst-x" id="bcClose" aria-label="Close camera">${ICON.x}</button>
-        <span class="burst-count" id="bcCount" aria-live="polite">0 captured</span>
+        <button class="burst-x" id="bcClose" aria-label="Close camera (Esc)">${ICON.x}</button>
+        <span class="burst-count" id="bcCount" aria-live="polite">Tap the shutter to start</span>
       </div>
       <div class="burst-bottom">
         <div class="burst-strip" id="bcStrip"></div>
@@ -331,49 +345,91 @@ export async function renderUpload(view, caps, onDone) {
     const vid = ov.querySelector("#bcVid");
     vid.srcObject = stream;
 
-    const snappedKeys = []; // keys of frames added this session, for Undo-last
+    // One entry per snapped unit, uploaded + AI-read immediately. Each tile in the
+    // filmstrip reflects its phase: uploading -> reading -> the brand/name the AI
+    // recognised (with a confidence dot), or an error to re-shoot.
+    const session = [];
     const countEl = ov.querySelector("#bcCount");
     const stripEl = ov.querySelector("#bcStrip");
     const undoBtn = ov.querySelector("#bcUndo");
     const flashEl = ov.querySelector("#bcFlash");
 
-    // Reflect this session's captures: count, Undo state, and a filmstrip of the
-    // most recent thumbnails (newest first, capped so the strip stays light).
-    function paintBurst() {
-      const n = snappedKeys.length;
-      countEl.textContent = `${n} captured`;
-      undoBtn.disabled = n === 0;
-      const recent = snappedKeys.slice(-6).reverse()
-        .map((k) => entries.find((e) => e.key === k)).filter(Boolean);
-      stripEl.innerHTML = recent.map((e) => `<img src="${e.url}" alt="">`).join("");
+    // Worst per-field confidence drives the tile's dot colour (amber/red = check).
+    const worstConf = (confidence) => {
+      const vals = Object.values(confidence || {});
+      if (vals.some((v) => v === "Low")) return "low";
+      if (vals.some((v) => v === "Medium")) return "medium";
+      return vals.length ? "high" : "";
+    };
+
+    function tileHtml(s) {
+      const busy = s.state === "uploading" || s.state === "reading";
+      const overlay = busy ? `<span class="bt-spin" aria-hidden="true"></span>`
+        : s.state === "err" ? `<span class="bt-err" title="Couldn't save — re-shoot">!</span>`
+        : s.label ? `<span class="bt-label">${esc(s.label)}</span>` : "";
+      const dot = (s.state === "done" && s.conf) ? `<span class="bt-dot bt-${s.conf}"></span>` : "";
+      const phase = s.state === "uploading" ? "Saving" : s.state === "reading" ? "Reading…" : "";
+      return `<div class="bt bt-${s.state}">
+        <img src="${s.url}" alt="${esc(s.label || "captured unit")}">
+        ${overlay}${dot}${phase ? `<span class="bt-phase">${phase}</span>` : ""}</div>`;
     }
 
-    const snap = () => {
-      if (!vid.videoWidth) return; // stream not ready yet
+    function paintBurst() {
+      const n = session.length;
+      const reading = session.filter((s) => s.state === "uploading" || s.state === "reading").length;
+      countEl.textContent = n ? `${n} captured${reading ? ` · ${reading} reading…` : ""}` : "Tap the shutter to start";
+      undoBtn.disabled = n === 0;
+      stripEl.innerHTML = session.slice(-6).reverse().map(tileHtml).join("");
+    }
+
+    async function snap() {
+      if (!vid.videoWidth) { toast("Camera still focusing — try again."); return; }
       const c = document.createElement("canvas");
       c.width = vid.videoWidth; c.height = vid.videoHeight;
       c.getContext("2d").drawImage(vid, 0, 0);
-      c.toBlob((blob) => {
-        if (!blob) return;
-        const file = new File([blob], `capture-${snappedKeys.length}-${blob.size}.jpg`, { type: "image/jpeg" });
-        addFiles([file]);
-        snappedKeys.push(keyOf(file));
-        paintBurst();
-        navigator.vibrate?.(15);
-        flashEl.classList.remove("on"); void flashEl.offsetWidth; flashEl.classList.add("on");
-      }, "image/jpeg", 0.92);
-    };
-    const undoLast = () => {
-      const k = snappedKeys.pop();
-      if (k) removeFile(k);
+      const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.92));
+      if (!blob) return;
+      const file = new File([blob], `capture-${session.length}-${blob.size}.jpg`, { type: "image/jpeg" });
+      const s = { url: URL.createObjectURL(blob), state: "uploading", label: "", conf: "", id: null, path: null };
+      session.push(s);
       paintBurst();
-    };
+      navigator.vibrate?.(15);
+      flashEl.classList.remove("on"); void flashEl.offsetWidth; flashEl.classList.add("on");
+      try {
+        const res = await uploadOne({ file }, burstCommon, () => { s.state = "reading"; paintBurst(); });
+        s.id = res.id; s.path = res.path; s.state = "done";
+        if (res.ai) { s.label = [res.ai.brand, res.ai.name].filter(Boolean).join(" · "); s.conf = worstConf(res.ai.confidence); }
+      } catch (e) {
+        s.state = "err";
+        console.error("burst upload failed", e);
+        toast("Couldn't save that photo — check your connection and re-shoot.");
+      }
+      paintBurst();
+    }
+
+    // Undo removes the last unit — including deleting it server-side if it already
+    // uploaded — so the captured count never overstates real stock.
+    async function undoLast() {
+      const s = session.pop();
+      paintBurst();
+      navigator.vibrate?.(8);
+      if (s?.url) URL.revokeObjectURL(s.url);
+      if (s?.id) {
+        try {
+          await supabase.from("items").delete().eq("id", s.id);
+          if (s.path) await supabase.storage.from("product-images").remove([s.path]);
+        } catch (e) { console.error("burst undo delete failed", e); }
+      }
+    }
+
     const close = () => {
       releaseFocus();
       stream.getTracks().forEach((t) => t.stop());
+      session.forEach((s) => s.url && URL.revokeObjectURL(s.url));
       ov.remove();
-      // Land the user on the batch form they just filled (category etc.).
-      if (snappedKeys.length) catSel?.focus();
+      // Units are already uploaded + queued for Review (AI promotes them there).
+      const ids = session.filter((s) => s.id).map((s) => s.id);
+      if (ids.length) onDone?.({ view: "review", itemIds: ids });
     };
 
     ov.querySelector("#bcShutter").onclick = snap;
@@ -452,7 +508,10 @@ export async function renderUpload(view, caps, onDone) {
     };
   }
 
-  async function uploadOne(entry, common) {
+  // Upload one photo and create its item. onUploaded(id) fires after the row
+  // exists but before AI runs, so the burst filmstrip can flip to "reading…".
+  // Returns the new id/path plus the AI result (for live self-ID surfaces).
+  async function uploadOne(entry, common, onUploaded) {
     const { blob, ext } = await compressImage(entry.file);
     const id = uuid();
     const path = `${common.slug}/${id}.${ext}`;
@@ -469,18 +528,20 @@ export async function renderUpload(view, caps, onDone) {
     });
     if (ins.error) throw ins.error;
     await logItemActivity(id, "upload", "upload", [], "Uploaded product photo");
+    onUploaded?.(id);
     // Opt-in: read the photo and fill any still-empty fields. Soft-fails — the
     // photo is already saved, so an AI hiccup never fails the upload.
     if (common.ai) {
       try {
-        await aiFillItem(id, common);
+        const ai = await aiFillItem(id, common);
+        return { id, path, aiFailed: false, aiError: "", ai };
       } catch (e) {
         await recordItemJobFailure(id, "ai_fill", e);
         console.error("ai-fill failed", e);
-        return { id, aiFailed: true, aiError: e?.message || String(e) };
+        return { id, path, aiFailed: true, aiError: e?.message || String(e), ai: null };
       }
     }
-    return { id, aiFailed: false, aiError: "" };
+    return { id, path, aiFailed: false, aiError: "", ai: null };
   }
 
   const barFill = $("#barFill");
