@@ -18,7 +18,6 @@ import {
   statusLabel,
 } from "./readiness.js";
 import { openCalibration } from "./calibration.js";
-import { openPricing } from "./pricing.js";
 import { openGuidedPricing } from "./pricing_guided.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
@@ -1216,8 +1215,10 @@ async function renderGallery(view, caps, opts = {}) {
     if (!cta) return;
     if (cta.dataset.cta === "noprice") { noPrice = true; priceMin = ""; priceMax = ""; draw(); pills(); }
     else if (cta.dataset.cta === "setprices") {
-      if (review && (issue === "price" || noPrice)) quickPriceItems(filtered.map((it) => it.id));
-      else if (review) openPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
+      // One model everywhere: guided pricing. In Review it opens scoped to the
+      // items on screen (selection mode); elsewhere it starts at the category
+      // picker. The pivot tool stays reachable as "Advanced" inside guided.
+      if (review) openGuidedPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
       else openGuidedPricing(caps, refresh);
     }
     else if (cta.dataset.cta === "retryai") {
@@ -1758,6 +1759,9 @@ async function renderGallery(view, caps, opts = {}) {
     };
   }
 
+  // REMOVAL CANDIDATE (v3.1): superseded by guided pricing's selection mode,
+  // which now handles "price these specific items" with a preview. Left in place
+  // per the flag-don't-delete rule; remove once the guided path is confirmed.
   async function quickPriceItems(ids) {
     const targetIds = ids.filter((id) => byId[id]?.price == null);
     if (!targetIds.length) { toast("Those items already have prices."); return; }
@@ -1869,7 +1873,7 @@ async function renderGallery(view, caps, opts = {}) {
         readiness.blockers.some((b) => b.issue === "price")
       );
       const action = hasPriceBlocker
-        ? { label: "Set prices", onClick: () => { if (selectionMode) exitSelection(); openPricing(caps, refresh, { itemIds: ids }); } }
+        ? { label: "Set prices", onClick: () => { if (selectionMode) exitSelection(); openGuidedPricing(caps, refresh, { itemIds: ids }); } }
         : null;
       toast(`Can't approve: ${reasons}.`, action);
       return;
@@ -1969,7 +1973,7 @@ async function renderGallery(view, caps, opts = {}) {
           const ids = [...selected];
           sh.close();
           exitSelection();
-          openPricing(caps, refresh, { itemIds: ids });
+          openGuidedPricing(caps, refresh, { itemIds: ids });
           return;
         }
         if (e.target.closest("[data-clearsel]")) { sh.close(); clearSel(); return; }

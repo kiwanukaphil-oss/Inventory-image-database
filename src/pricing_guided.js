@@ -30,7 +30,7 @@ function esc(v) {
 // Attribute keys that can carry a "size-like" number (band exceptions).
 const isNumericish = (v) => v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v));
 
-export async function openGuidedPricing(caps, onClose) {
+export async function openGuidedPricing(caps, onClose, opts = {}) {
   // Show the overlay immediately with a spinner so "Set prices" feels responsive
   // while the catalogue (up to 5000 rows) loads; real content replaces it below.
   const el = document.createElement("div");
@@ -55,6 +55,11 @@ export async function openGuidedPricing(caps, onClose) {
   const allItems = rows || [];
   const priceable = (it) => !it.pos_sync_status || it.pos_sync_status === "error";
   const items = allItems.filter(priceable);
+  // Selection mode: when the caller hands us specific items (a gallery selection
+  // or the review price queue), we price exactly those — skipping the category
+  // picker — so "Set prices" is one model everywhere. Pivot stays via Advanced.
+  const selIds = Array.isArray(opts.itemIds) ? new Set(opts.itemIds) : null;
+  const selectionMode = !!(selIds && selIds.size);
 
   const cur = getSetting("currency", "");
   const fmt = (n) => (cur ? `${cur} ` : "") + Number(n).toLocaleString();
@@ -89,6 +94,14 @@ export async function openGuidedPricing(caps, onClose) {
   // by default — untick it deliberately to reprice.
   let keepPriced = true;
   const exceptions = []; // { key, label, mode:'values'|'band', values?, dir?, threshold?, price }
+
+  // Seed the pile straight from the selection and jump to the base-price step.
+  let droppedInShop = 0;
+  if (selectionMode) {
+    pile = items.filter((it) => selIds.has(it.id));
+    droppedInShop = selIds.size - pile.length; // selected items already in the POS (price owned there)
+    step = 2;
+  }
 
   // Signed thumbnails for everything, one batch up front — the tree rows, the
   // pile strip and the preview grid all draw from the same pool.
@@ -158,6 +171,8 @@ export async function openGuidedPricing(caps, onClose) {
     if (step === 1) {
       if (drillId != null) { drillId = catById[drillId]?.parent_id || null; render(); }
       else close();
+    } else if (selectionMode && step === 2) {
+      close(); // no category step to fall back to in selection mode
     } else { step -= 1; render(); }
   }
 
@@ -192,9 +207,12 @@ export async function openGuidedPricing(caps, onClose) {
 
   function pileStrip() {
     const withImg = pile.filter((it) => it.image_path && signed[it.image_path]).slice(0, 14);
-    const inShop = inShopUnder(pickedId);
+    const inShop = selectionMode ? droppedInShop : inShopUnder(pickedId);
+    const head = selectionMode
+      ? `${pile.length} selected item${pile.length === 1 ? "" : "s"}`
+      : `${pile.length} item${pile.length === 1 ? "" : "s"} · ${esc(categoryPath(pickedId))}`;
     return `<div class="pgd-pile">
-      <div class="pgd-pilehead">${pile.length} item${pile.length === 1 ? "" : "s"} · ${esc(categoryPath(pickedId))}</div>
+      <div class="pgd-pilehead">${head}</div>
       <div class="pgd-strip">${withImg.map((it) => `<span class="pgd-stripthumb">${thumbOf(it)}</span>`).join("")}</div>
       ${inShop ? `<div class="pgd-hint muted">${inShop} more ${inShop === 1 ? "is" : "are"} already in the shop and not shown — once pushed, prices change in the POS, not here.</div>` : ""}
     </div>`;
@@ -287,16 +305,16 @@ export async function openGuidedPricing(caps, onClose) {
       <div class="calib-head">
         <button class="iconbtn" id="pgdX" aria-label="Close">${ICON.x}</button>
         <span>${esc(TITLES[step])}</span>
-        <span></span>
+        <span>${selectionMode ? `<button class="linkbtn" id="pgdAdv">Advanced</button>` : ""}</span>
       </div>
-      ${step >= 2 && sentence() ? `<div class="pgd-sentence">${esc(categoryPath(pickedId)?.split(" › ").pop() || "")}: ${esc(sentence())}</div>` : ""}
+      ${step >= 2 && sentence() ? `<div class="pgd-sentence">${esc(selectionMode ? "Selected" : (categoryPath(pickedId)?.split(" › ").pop() || ""))}: ${esc(sentence())}</div>` : ""}
       <div class="calib-body" id="pgdBody">${body}</div>
       <div class="calib-foot pgd-foot">${footHtml()}</div>
     </div>`;
 
     el.querySelector("#pgdX").onclick = close;
     el.querySelector("#pgdBack")?.addEventListener("click", back);
-    el.querySelector("#pgdAdv")?.addEventListener("click", () => { close(); openPricing(caps, onClose); });
+    el.querySelector("#pgdAdv")?.addEventListener("click", () => { close(); openPricing(caps, onClose, selectionMode ? { itemIds: [...selIds] } : undefined); });
     el.querySelector("#pgdNext")?.addEventListener("click", next);
 
     const bodyEl = el.querySelector("#pgdBody");
