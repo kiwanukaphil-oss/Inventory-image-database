@@ -59,7 +59,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?*
 | P1 | No dev/prod environment separation | Ops | 🔴 | 1 | Yes | IN PROGRESS (staging `klinemen-catalog-staging` live; `.env`→staging; migs 0001–0028 applied+verified; pending: admin user + dev boot) |
 | T1 | Zero automated tests | Testing | 🔴 | 1 | Yes | IN PROGRESS (Vitest: price + readiness + imagehash, 24 tests; lib/ extraction. POS-SKU JS units deferred — see note) |
 | P2 | CI has no test/lint gate before deploy | Ops/CI | 🟠 | 1 | Yes | IN REVIEW (test job gates build+deploy) |
-| P3 | Manual migrations, no rollback story | Ops | 🟠 | 1 | Yes | TODO |
+| P3 | Manual migrations, no rollback story | Ops | 🟠 | 1 | Yes | IN REVIEW (docs/V3_upgrade/MIGRATIONS.md + per-migration ROLLBACK blocks) |
 | P4 | No error tracking / monitoring | Ops | 🟠 | 1 | Yes | IN REVIEW (0029 client_errors + src/errorlog.js + main.js hook; validated) |
 | P7 | Backups/PITR unverified | Ops | 🟠 | 1 | Yes | TODO |
 | S8 | Audit log not tamper-resistant; actor spoofable | Security/RLS | 🟠 | 0 | Yes | IN REVIEW (pulled into 0027) |
