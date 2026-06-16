@@ -783,7 +783,9 @@ function activityRowHtml(row, fields = []) {
   const label = activitySourceLabel(row.source);
   const field = activityFieldLabel(row.field_path, fields);
   const detail = row.field_path
-    ? `${field}: ${activityValue(row.before_value)} -> ${activityValue(row.after_value)}`
+    ? (fieldKeyFromPath(row.field_path) === "cost_price"
+        ? "Cost updated" // admin-only value — never render the numbers
+        : `${field}: ${activityValue(row.before_value)} -> ${activityValue(row.after_value)}`)
     : (row.summary || label);
   return `<div class="act-row">
     <span class="source-pill src-${esc(activitySourceClass(row.source))}">${esc(label)}</span>

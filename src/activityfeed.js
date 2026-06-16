@@ -41,9 +41,11 @@ function rowHtml(e, items) {
   const it = items.get(e.item_id);
   const name = it ? ([it.brand, it.name].filter(Boolean).join(" · ") || "Untitled item") : "Item";
   const field = e.field_path ? fieldKeyFromPath(e.field_path) : "";
-  const detail = field
-    ? `${esc(field)}: ${esc(fmtVal(e.before_value))} → ${esc(fmtVal(e.after_value))}`
-    : esc(e.summary || activitySourceLabel(e.source));
+  const detail = field === "cost_price"
+    ? "Cost updated" // admin-only value — never render the numbers
+    : field
+      ? `${esc(field)}: ${esc(fmtVal(e.before_value))} → ${esc(fmtVal(e.after_value))}`
+      : esc(e.summary || activitySourceLabel(e.source));
   return `<button class="menu-item act-row" data-open="${esc(e.item_id)}">
     <span class="source-pill src-${esc(activitySourceClass(e.source))}">${esc(activitySourceLabel(e.source))}</span>
     <span class="act-copy"><b>${esc(name)}</b><span>${detail}</span></span>

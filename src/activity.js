@@ -47,6 +47,14 @@ function jsonValue(v) {
   return v === undefined ? null : v;
 }
 
+// Fields whose VALUES must never be written to item_events: that table is
+// readable by every editor (auth_can_edit RLS), but these are admin-only
+// (can_view_cost). We still record THAT the field changed (field_path + summary)
+// — just never the numbers. Single chokepoint so no caller can leak cost.
+const VALUE_REDACTED = new Set(["cost_price"]);
+const redactBefore = (c) => (VALUE_REDACTED.has(c.field_path) ? null : jsonValue(c.before));
+const redactAfter = (c) => (VALUE_REDACTED.has(c.field_path) ? null : jsonValue(c.after));
+
 function chunks(values, size = QUERY_CHUNK) {
   const out = [];
   for (let i = 0; i < values.length; i += size) out.push(values.slice(i, i + size));
@@ -89,8 +97,8 @@ export async function logItemActivity(itemId, eventType, source, changes = [], s
         event_type: eventType,
         source,
         field_path: c.field_path,
-        before_value: jsonValue(c.before),
-        after_value: jsonValue(c.after),
+        before_value: redactBefore(c),
+        after_value: redactAfter(c),
         summary,
       }))
     : [{ item_id: itemId, event_type: eventType, source, summary }];
@@ -114,8 +122,8 @@ export async function logManyItemActivities(itemIds, eventType, source, changesB
           event_type: eventType,
           source,
           field_path: c.field_path,
-          before_value: jsonValue(c.before),
-          after_value: jsonValue(c.after),
+          before_value: redactBefore(c),
+          after_value: redactAfter(c),
           summary,
         });
       }
