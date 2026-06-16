@@ -19,6 +19,7 @@ import {
 } from "./readiness.js";
 import { openCalibration } from "./calibration.js";
 import { openGuidedPricing } from "./pricing_guided.js";
+import { openActivityFeed } from "./activityfeed.js";
 import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
@@ -211,6 +212,7 @@ export function renderApp(mount, profile, onSignOut) {
       ? `<button class="menu-item" data-s="currency">Currency<span class="menu-val">${esc(getSetting("currency", "") || "not set")}</span></button>`
       : "";
     const dataTools = [
+      `<button class="menu-item" data-s="activity">Recent activity</button>`,
       `<button class="menu-item" data-s="export">Export CSV</button>`,
       caps.can_edit ? `<button class="menu-item" data-s="calib">Calibration check</button>` : "",
       caps.can_edit ? `<button class="menu-item" data-s="audit">AI consistency audit</button>` : "",
@@ -234,6 +236,7 @@ export function renderApp(mount, profile, onSignOut) {
       else if (s === "currency") { sh.close(); openCurrencyEditor(); }
       else if (s === "install") { sh.close(); installApp(); }
       else if (s === "export") { sh.close(); setView("export"); }
+      else if (s === "activity") { sh.close(); openActivityFeed(caps); }
       else if (s === "calib") { sh.close(); openCalibration(caps, () => setView(currentViewId)); }
       else if (s === "audit") { sh.close(); openConsistencyAudit(caps, openReviewQueue); }
       else if (s === "users") { sh.close(); openUsers(caps); }
@@ -254,6 +257,7 @@ export function renderApp(mount, profile, onSignOut) {
       { id: "audit", label: "AI consistency audit", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
       { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
       { id: "shop", label: "Shop dashboard", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
+      { id: "activity", label: "Recent activity", sub: "Who changed what, lately", icon: ICON.refresh, show: true },
       { id: "export", label: "Export CSV", sub: "Download catalog data", icon: ICON.navExport, show: true },
     ].filter((a) => a.show);
     const sh = openBottomSheet("Quick actions", `
@@ -279,6 +283,7 @@ export function renderApp(mount, profile, onSignOut) {
       else if (cmd === "audit") openConsistencyAudit(caps, openReviewQueue);
       else if (cmd === "sync") openSyncCenter(caps, refreshCurrent);
       else if (cmd === "shop") setView("shop");
+      else if (cmd === "activity") openActivityFeed(caps);
       else if (cmd === "export") setView("export");
     });
   }

@@ -706,6 +706,15 @@ body { overflow:hidden; overscroll-behavior:none; }
 .cmd-copy b { font-size:var(--text-base); line-height:1.2; }
 .cmd-copy span { color:var(--muted); font-size:var(--text-xs); line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
+/* Recent-activity feed rows: source pill · item + change · relative time. */
+.act-day { margin-top:14px; }
+.act-row { display:flex; align-items:center; gap:var(--space-lg); }
+.act-row .source-pill { flex:0 0 auto; }
+.act-copy { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px; }
+.act-copy b { font-size:var(--text-sm); line-height:1.2; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.act-copy span { color:var(--muted); font-size:var(--text-xs); line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.act-time { flex:0 0 auto; color:var(--muted); font-size:var(--text-2xs); font-variant-numeric:tabular-nums; }
+
 .audit-summary { display:flex; flex-direction:column; gap:var(--space-md); }
 .audit-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:var(--space-lg);
   padding:10px 12px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--control); }

@@ -177,6 +177,25 @@ export function hasRecentEdit(item) {
   return !!item?.activity?.recent_edit;
 }
 
+// Global recent-activity feed data: the latest events across all items plus a
+// lookup of the items they touched (for names). Powers the "Recent activity"
+// surface — the audit trail made visible as a trust feature.
+export async function loadRecentActivity(limit = 120) {
+  const { data: events, error } = await supabase
+    .from("item_events")
+    .select("id,item_id,event_type,source,field_path,before_value,after_value,summary,actor,created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error || !events?.length) return { events: [], items: new Map() };
+  const ids = [...new Set(events.map((e) => e.item_id).filter(Boolean))];
+  const items = new Map();
+  for (const ch of chunks(ids)) {
+    const { data } = await supabase.from("items").select("id, brand, name, image_path, status").in("id", ch);
+    for (const it of data || []) items.set(it.id, it);
+  }
+  return { events, items };
+}
+
 function summarizeRows(rows) {
   const map = new Map();
   const now = Date.now();
