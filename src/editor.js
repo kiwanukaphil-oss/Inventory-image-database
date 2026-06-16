@@ -538,11 +538,15 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       if (AI_PLACEHOLDER.has(String(raw).trim().toLowerCase())) continue;
       const el = sheet.querySelector(`[data-key="${key}"]`);
       if (!el) continue;
+      // Booleans (checkboxes) are left to the user — AI fills text/number/select
+      // fields only. A checkbox has no "empty" state, and its saved value is read
+      // from .checked (not the .value this loop assigns), so AI-suggesting one
+      // would only add a misleading "changed" mark without changing anything.
+      if (el.type === "checkbox") continue;
       // Fill empty fields only — never silently overwrite a value already in the
-      // form. This matches the upload + bulk-AI paths (only-empty) and the intent
-      // stated above; to re-suggest a field, clear it first then run AI again.
-      // (Checkboxes have no "empty" state, so they're left to the AI as before.)
-      if (el.type !== "checkbox" && String(el.value).trim() !== "") continue;
+      // form. This matches the upload + bulk-AI paths (only-empty); to re-suggest
+      // a field, clear it first then run AI again.
+      if (String(el.value).trim() !== "") continue;
       let val = String(raw);
       if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
       val = normalizeAttributeValue(item.category_id, key, val);

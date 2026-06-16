@@ -50,7 +50,7 @@ export async function openUsers(currentCaps) {
       <div class="user-add">
         <div class="user-add-row">
           <input id="newEmail" type="email" placeholder="email@example.com" autocomplete="off">
-          <input id="newPass" type="text" placeholder="temporary password" autocomplete="off">
+          <input id="newPass" type="password" placeholder="temporary password" autocomplete="off">
           <select id="newRole">
             <option value="viewer">viewer</option>
             <option value="editor">editor</option>

@@ -9,13 +9,18 @@ let cache = null;
 
 export async function loadRefData(force = false) {
   if (cache && !force) return cache;
+  // Explicit cap so ref-data never silently truncates at PostgREST's 1,000-row
+  // default — a shop with >1,000 categories/fields/vocab would otherwise load
+  // incomplete data with no warning.
+  const REF_DATA_LIMIT = 10000;
   const [cats, fields, vocab, settings] = await Promise.all([
-    supabase.from("categories").select("id, slug, name, parent_id, sort, sku_token"),
+    supabase.from("categories").select("id, slug, name, parent_id, sort, sku_token").limit(REF_DATA_LIMIT),
     supabase
       .from("category_fields")
-      .select("category_id, key, label, type, options, vocab, required, inherit, sort"),
-    supabase.from("vocabularies").select("field, canonical, aliases, active"),
-    supabase.from("app_settings").select("key, value"),
+      .select("category_id, key, label, type, options, vocab, required, inherit, sort")
+      .limit(REF_DATA_LIMIT),
+    supabase.from("vocabularies").select("field, canonical, aliases, active").limit(REF_DATA_LIMIT),
+    supabase.from("app_settings").select("key, value").limit(REF_DATA_LIMIT),
   ]);
 
   const categories = cats.data || [];

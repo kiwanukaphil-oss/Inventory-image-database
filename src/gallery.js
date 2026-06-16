@@ -76,9 +76,14 @@ function summarizeItemRich(it) {
     }
     const lvl = conf[f.key];
     const doubt = (lvl === "Low" || lvl === "Medium") && !AI_BLIND_FIELDS.has(f.key);
-    parts.push(doubt
-      ? `<span class="lc lc-${lvl.toLowerCase()}" title="${esc(f.label)}: ${lvl} confidence — verify">${esc(text)}</span>`
-      : esc(text));
+    // Touch has no hover, so mirror the title into data-tip — the gallery tap
+    // handler reveals [data-tip] text in a toast (matches the POS/source chips).
+    if (doubt) {
+      const tip = `${esc(f.label)}: ${lvl} confidence — verify`;
+      parts.push(`<span class="lc lc-${lvl.toLowerCase()}" title="${tip}" data-tip="${tip}">${esc(text)}</span>`);
+    } else {
+      parts.push(esc(text));
+    }
   }
   return parts.join(" · ");
 }

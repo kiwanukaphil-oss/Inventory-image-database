@@ -186,7 +186,10 @@ export async function openCalibration(caps, onClose) {
       toast(`Mark all ${fields.length} fields first (${unmarked.length} left)`);
       return;
     }
-    await saveItemMarks(it, fields, verdicts);
+    // Gate the advance on a successful save — if the write fails we keep the user
+    // on this item so a retry re-saves, rather than losing the verdicts silently.
+    const ok = await saveItemMarks(it, fields, verdicts);
+    if (!ok) return;
     if (idx === items.length - 1) renderSummary();
     else { idx++; renderItem(); }
   }
@@ -205,7 +208,8 @@ export async function openCalibration(caps, onClose) {
     const { error } = await supabase
       .from("calibration_marks")
       .upsert(payload, { onConflict: "item_id,field" });
-    if (error) toast("Couldn't save marks: " + error.message);
+    if (error) { toast("Couldn't save marks — check connection and tap Next again."); return false; }
+    return true;
   }
 
   // ---- summary screen -----------------------------------------------------
