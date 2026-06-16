@@ -46,6 +46,15 @@ function esc(v) {
  * @param {Function} onClose called after the overlay closes (e.g. to refresh)
  */
 export async function openCalibration(caps, onClose) {
+  // Show the overlay + spinner immediately so tapping "Calibration check" feels
+  // responsive while the AI-extracted items load (previously it sat blank).
+  const el = document.createElement("div");
+  el.className = "calib";
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Calibration</span></div>
+    <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add("open"));
+
   await loadRefData(); // category tree + field labels drive the field list
 
   // Load every AI-extracted item (confidence present) plus any existing marks
@@ -55,15 +64,17 @@ export async function openCalibration(caps, onClose) {
     .select("id, brand, name, attributes, confidence, category_id, image_path, status, price")
     .not("confidence", "is", null)
     .order("created_at", { ascending: true });
-  if (error) { toast("Couldn't load items: " + error.message); return; }
+  if (error) {
+    el.querySelector(".calib-body").innerHTML = `<div class="empty"><div class="big">⚠️</div>
+      <div>Couldn't load items — check your connection.</div>
+      <button class="ghost" id="cRetry" style="margin-top:10px">Try again</button></div>`;
+    el.querySelector("#cRetry").onclick = () => { el.remove(); openCalibration(caps, onClose); };
+    return;
+  }
 
   // Keep only items that actually have a judgable field.
   const items = (rows || []).map((it) => ({ it, fields: aiFields(it) })).filter((x) => x.fields.length);
 
-  const el = document.createElement("div");
-  el.className = "calib";
-  document.body.appendChild(el);
-  requestAnimationFrame(() => el.classList.add("open"));
   const release = trapFocus(el);
   const close = () => {
     document.removeEventListener("keydown", onKey);

@@ -47,7 +47,14 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     .from("items")
     .select("id, brand, attributes, category_id, price, image_path, pos_sync_status")
     .limit(5000);
-  if (error) { toast("Couldn't load items: " + error.message); el.remove(); return; }
+  if (error) {
+    // Keep the overlay open with a retry instead of vanishing on a network blip.
+    el.querySelector(".calib-body").innerHTML = `<div class="empty"><div class="big">⚠️</div>
+      <div>Couldn't load items — check your connection.</div>
+      <button class="ghost" id="pgdRetry" style="margin-top:10px">Try again</button></div>`;
+    el.querySelector("#pgdRetry").onclick = () => { el.remove(); openGuidedPricing(caps, onClose, opts); };
+    return;
+  }
   // Once an item is in the POS, the POS owns its price (catalog price changes
   // deliberately do NOT propagate) — so this surface only offers items whose
   // price will actually take effect: never pushed, or errored (the price goes

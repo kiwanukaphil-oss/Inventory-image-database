@@ -109,8 +109,20 @@ const NAV = [
 function setReviewBadge(count) {
   const b = document.getElementById("reviewBadge");
   if (!b) return;
-  b.textContent = count > 99 ? "99+" : String(count);
   b.hidden = !count;
+  if (count > 99) { b.textContent = "99+"; return; }
+  const from = parseInt(b.textContent, 10) || 0;
+  const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  if (reduce || from === count) { b.textContent = String(count); return; }
+  // Quick count-up so the badge visibly ticks to its new value (premium feel).
+  const steps = Math.min(12, Math.abs(count - from));
+  let i = 0;
+  const tick = () => {
+    i++;
+    b.textContent = String(Math.round(from + (count - from) * (i / steps)));
+    if (i < steps) requestAnimationFrame(tick); else b.textContent = String(count);
+  };
+  requestAnimationFrame(tick);
 }
 
 /**
@@ -1588,12 +1600,13 @@ async function renderGallery(view, caps, opts = {}) {
   }
 
   // ---- wiring: top bar ----
-  // Debounced: draw() rebuilds the whole grid (up to 1000 cards), so doing it on
-  // every keystroke janks on mobile. 150ms is below the threshold anyone notices.
+  // Debounced lightly: the incremental reconciler (reconcileGrid) makes a redraw
+  // cheap now, so a short 80ms debounce just coalesces fast keystrokes without a
+  // perceptible lag — search feels near-instant.
   let qTimer;
   qEl.addEventListener("input", () => {
     clearTimeout(qTimer);
-    qTimer = setTimeout(() => { q = qEl.value.trim().toLowerCase(); draw(); }, 150);
+    qTimer = setTimeout(() => { q = qEl.value.trim().toLowerCase(); draw(); }, 80);
   });
   view.querySelector("#filterBtn").onclick = openFilters;
   const selectBtn = view.querySelector("#selectBtn");

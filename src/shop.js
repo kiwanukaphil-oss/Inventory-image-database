@@ -29,7 +29,9 @@ const SECTION_CAP = 6;   // rows shown per section before "Show all"
 const state = { q: "", top: "", brand: "", bestWindow: "7d", expanded: new Set() };
 
 export async function renderShop(view, caps, onChanged) {
-  view.innerHTML = `<div class="shop-wrap"><div class="muted" style="padding:20px">Loading shop data…</div></div>`;
+  view.innerHTML = `<div class="shop-wrap"><div class="shop-skel">${
+    Array.from({ length: 5 }, () => `<div class="shop-card"><div class="sk-line w45"></div><div class="sk-line w70"></div></div>`).join("")
+  }</div></div>`;
   await loadRefData();
 
   const [{ data: items, error }, posMirror] = await Promise.all([

@@ -69,7 +69,14 @@ export async function openPricing(caps, onClose, opts = {}) {
     .from("items")
     .select("id, brand, attributes, category_id, price")
     .limit(5000);
-  if (error) { toast("Couldn't load items: " + error.message); el.remove(); return; }
+  if (error) {
+    // Keep the overlay open with a retry instead of vanishing on a network blip.
+    el.querySelector(".calib-body").innerHTML = `<div class="empty"><div class="big">⚠️</div>
+      <div>Couldn't load items — check your connection.</div>
+      <button class="ghost" id="pgRetry" style="margin-top:10px">Try again</button></div>`;
+    el.querySelector("#pgRetry").onclick = () => { el.remove(); openPricing(caps, onClose, opts); };
+    return;
+  }
   // When launched from a gallery selection, price only those items.
   const idset = opts.itemIds?.length ? new Set(opts.itemIds) : null;
   const items = (rows || []).filter((it) => !idset || idset.has(it.id));
