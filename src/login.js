@@ -13,7 +13,7 @@ export function renderLogin(mount, onSuccess) {
     <div class="auth">
       <form class="card" id="loginForm" autocomplete="on">
         <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
-        <p class="sub">Sign in to view and edit the catalogue.</p>
+        <p class="sub">Photograph stock, let AI read each item, then price it for your shop — one photo, one unit.</p>
         <label for="email">Email</label>
         <input id="email" type="email" inputmode="email" autocomplete="username" required />
         <label for="password">Password</label>

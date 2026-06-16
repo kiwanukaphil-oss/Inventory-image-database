@@ -580,13 +580,25 @@ async function renderGallery(view, caps, opts = {}) {
   setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
 
   if (!data || data.length === 0) {
-    view.innerHTML = `<div class="empty"><div class="big">📭</div>
+    // First-run: a coached empty state showing the whole value loop at a glance,
+    // instead of a dead-end emoji. (Review's empty state stays terse.)
+    if (!review && caps.can_upload) {
+      view.innerHTML = `<div class="empty onboard">
+        <div class="big">📸</div>
+        <div class="onboard-title">Add your first unit</div>
+        <div class="onboard-steps">
+          <div class="onboard-step"><span class="onboard-num">1</span><span>Snap each item — the camera stays open for a whole rack</span></div>
+          <div class="onboard-step"><span class="onboard-num">2</span><span>AI reads the photo and fills the brand, name &amp; details</span></div>
+          <div class="onboard-step"><span class="onboard-num">3</span><span>Price it and push it to your shop</span></div>
+        </div>
+        <button class="primary" id="emptyAdd">Add your first photos</button></div>`;
+      // Route through the real nav button so the tab highlight + render stay in sync.
+      view.querySelector("#emptyAdd").onclick = () => document.querySelector('.bottomnav button[data-view="add"]')?.click();
+      return;
+    }
+    view.innerHTML = `<div class="empty"><div class="big">${review ? "✓" : "📭"}</div>
       <div>${review ? "Nothing to review." : "No items yet."}</div>
-      <div style="color:var(--muted);font-size:13px">${review ? "New uploads needing attention will appear here." : "Add your first product photos to start the catalogue."}</div>
-      ${!review && caps.can_upload ? `<button class="primary" id="emptyAdd" style="margin-top:6px">Add photos</button>` : ""}</div>`;
-    // Route through the real nav button so the tab highlight + render stay in sync.
-    const ea = view.querySelector("#emptyAdd");
-    if (ea) ea.onclick = () => document.querySelector('.bottomnav button[data-view="add"]')?.click();
+      <div style="color:var(--muted);font-size:13px">${review ? "New uploads needing attention will appear here." : "Items appear here once added."}</div></div>`;
     return;
   }
 
