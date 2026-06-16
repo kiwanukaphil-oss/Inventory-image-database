@@ -3,6 +3,7 @@ import { loadRefData, categoryPath, fieldLabel, resolveFields, getSetting } from
 import { toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
 import { openPricing } from "./pricing.js";
 import { logManyItemActivities } from "./activity.js";
+import { costFromRetail } from "./lib/price.js";
 
 // ============================================================================
 //  Guided pricing — "price like you'd say it".
@@ -153,12 +154,11 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   // Whether cost-setting is active (admin + a mode chosen) and the cost for a
   // given retail price under the current cost rule (rounded), or null.
   const costOn = () => caps.can_view_cost && costEnabled;
+  // Delegates the arithmetic to the shared, unit-tested helper (src/lib/price.js)
+  // so the guided and advanced pricing tools compute cost identically.
   const costOf = (retail) => {
     if (!costOn() || retail == null) return null;
-    if (costMode === "fixed") { const c = Number(costFixed); return Number.isFinite(c) && c >= 0 ? c : null; }
-    const pct = Number(costPct);
-    if (!Number.isFinite(pct) || pct < 0) return null;
-    return Math.round((retail * pct) / 100);
+    return costFromRetail(retail, { mode: costMode, value: costMode === "fixed" ? costFixed : costPct });
   };
 
   const exText = (ex) => {
