@@ -100,6 +100,13 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   // Overwriting an existing price is the destructive case, so protection is ON
   // by default — untick it deliberately to reprice.
   let keepPriced = true;
+  // Optional cost price (admins only) applied alongside retail, so a pricing pass
+  // also clears the cost approval-blocker. "pct" = a percentage of each item's
+  // retail (e.g. 50% margin); "fixed" = one cost for everything priced.
+  let costEnabled = false;
+  let costMode = "pct";  // "pct" | "fixed"
+  let costPct = "50";
+  let costFixed = "";
   const exceptions = []; // { key, label, mode:'values'|'band', values?, dir?, threshold?, price }
 
   // Seed the pile straight from the selection and jump to the base-price step.
@@ -143,6 +150,17 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   };
 
   // Human sentence for one exception line ("Material is Linen → 120,000").
+  // Whether cost-setting is active (admin + a mode chosen) and the cost for a
+  // given retail price under the current cost rule (rounded), or null.
+  const costOn = () => caps.can_view_cost && costEnabled;
+  const costOf = (retail) => {
+    if (!costOn() || retail == null) return null;
+    if (costMode === "fixed") { const c = Number(costFixed); return Number.isFinite(c) && c >= 0 ? c : null; }
+    const pct = Number(costPct);
+    if (!Number.isFinite(pct) || pct < 0) return null;
+    return Math.round((retail * pct) / 100);
+  };
+
   const exText = (ex) => {
     const what = ex.mode === "band"
       ? `${ex.label} ${ex.dir === "le" ? "up to" : "above"} ${ex.threshold}`
@@ -253,7 +271,28 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
       <div class="pgd-hint muted">Leave it empty to only price the exceptions you add next
         (everything else stays as it is).</div>
       ${already ? `<label class="pg-toggle pgd-keep"><input type="checkbox" id="pgdKeep"${keepPriced ? " checked" : ""}>
-        Don't change the ${already} item${already === 1 ? "" : "s"} that already ${already === 1 ? "has" : "have"} a price</label>` : ""}`;
+        Don't change the ${already} item${already === 1 ? "" : "s"} that already ${already === 1 ? "has" : "have"} a price</label>` : ""}
+      ${caps.can_view_cost ? `
+      <div class="pgd-cost">
+        <label class="pg-toggle"><input type="checkbox" id="pgdCostOn"${costEnabled ? " checked" : ""}>
+          Also set a cost price <span class="muted">(needed before approval)</span></label>
+        <div class="pgd-cost-body" id="pgdCostBody"${costEnabled ? "" : " hidden"}>
+          <div class="pg-modeseg pgd-costmode">
+            <button class="pg-modebtn${costMode !== "fixed" ? " on" : ""}" data-cm="pct" type="button">% of price</button>
+            <button class="pg-modebtn${costMode === "fixed" ? " on" : ""}" data-cm="fixed" type="button">Fixed amount</button>
+          </div>
+          <div class="pg-input pgd-costinput">
+            ${costMode === "fixed" && cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
+            <input id="pgdCostVal" type="number" inputmode="decimal"
+              placeholder="${costMode === "fixed" ? "Cost amount" : "e.g. 50"}"
+              value="${esc(costMode === "fixed" ? costFixed : costPct)}">
+            ${costMode !== "fixed" ? `<span class="pg-cur">%</span>` : ""}
+          </div>
+          <div class="pgd-hint muted">${costMode === "fixed"
+            ? "Every item you price gets this cost."
+            : "Each item's cost = this % of its retail price."}</div>
+        </div>
+      </div>` : ""}`;
   }
 
   function stepExceptions() {
@@ -298,10 +337,15 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
             ${it.price != null && it.price !== p ? `<div class="pgd-was">was ${esc(fmt(it.price))}</div>` : ""}
           </div>`).join("")}</div>
       </div>`).join("");
+    const willCost = costOn() ? pile.filter((it) => { const p = finalPriceOf(it); return p != null && costOf(p) != null; }).length : 0;
+    const costLabel = costMode === "fixed" ? esc(fmt(Number(costFixed) || 0)) : `${esc(costPct)}% of each price`;
     return `
       <div class="pgd-lead">${total
         ? `Check the tags — <b>${total}</b> item${total === 1 ? "" : "s"} will be priced (${news} new · ${overwrites} changed${unchanged ? ` · ${unchanged} untouched` : ""}).`
-        : `Nothing to write — every item is either untouched or already at this price.`}</div>
+        : willCost
+          ? `No retail change, but cost will be set on <b>${willCost}</b> item${willCost === 1 ? "" : "s"}.`
+          : `Nothing to write — every item is either untouched or already at this price.`}</div>
+      ${costOn() && willCost ? `<div class="pgd-costnote">Cost: ${costLabel} · applied to ${willCost} item${willCost === 1 ? "" : "s"}.</div>` : ""}
       ${sections || ""}`;
   }
 
@@ -315,7 +359,9 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
       : `<button class="ghost" id="pgdAdv">Advanced</button>`}<span class="pgd-dots">${dots()}</span><span></span>`;
     const nextLabel = step === 2 ? "Exceptions ›" : step === 3 ? "Preview ›" : "Apply";
     const nextDisabled = step === 4 && !pile.some((it) => {
-      const p = finalPriceOf(it); return p != null && it.price !== p;
+      const p = finalPriceOf(it);
+      if (p == null) return false;
+      return it.price !== p || (costOn() && costOf(p) != null); // a retail change OR a cost to write
     });
     return `<button class="ghost" id="pgdBack">‹ Back</button>
       <span class="pgd-dots">${dots()}</span>
@@ -362,6 +408,21 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
         basePrice = String(s.median);
         const input = bodyEl.querySelector("#pgdBase");
         if (input) input.value = basePrice;
+      });
+      // Cost controls (admins): toggle visibility in place; mode switch re-renders
+      // so the input's adornment (% vs currency) and placeholder update.
+      bodyEl.querySelector("#pgdCostOn")?.addEventListener("change", (e) => {
+        costEnabled = e.target.checked;
+        const body = bodyEl.querySelector("#pgdCostBody");
+        if (body) body.hidden = !costEnabled;
+      });
+      bodyEl.querySelector(".pgd-costmode")?.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-cm]");
+        if (btn) { costMode = btn.dataset.cm; render(); }
+      });
+      bodyEl.querySelector("#pgdCostVal")?.addEventListener("input", (e) => {
+        const v = e.target.value.trim();
+        if (costMode === "fixed") costFixed = v; else costPct = v;
       });
       requestAnimationFrame(() => bodyEl.querySelector("#pgdBase")?.focus());
     } else if (step === 3) {
@@ -551,22 +612,58 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
       writes.get(p).push(it.id);
       prior.push({ id: it.id, value: it.price ?? null });
     }
-    if (!prior.length) { toast("Nothing to write."); return; }
+
+    // Cost targets: every item with an effective retail under this sentence, when
+    // cost-setting is on — so a pricing pass also clears the cost approval-blocker.
+    const costTargets = costOn()
+      ? pile.map((it) => ({ id: it.id, cost: costOf(finalPriceOf(it)) })).filter((x) => x.cost != null)
+      : [];
+
+    if (!prior.length && !costTargets.length) { toast("Nothing to write."); return; }
+
+    // --- retail ---
     for (const [value, ids] of writes) {
       const { error: wErr } = await supabase.from("items").update({ price: value }).in("id", ids);
       if (wErr) { toast("Couldn't set prices: " + wErr.message); return; }
     }
     const priceById = new Map([...writes.entries()].flatMap(([v, ids]) => ids.map((id) => [id, v])));
-    await logManyItemActivities(
-      prior.map((p) => p.id),
-      "pricing",
-      "pricing",
-      new Map(prior.map((p) => [p.id, [{ field_path: "price", before: p.value, after: priceById.get(p.id) }]])),
-      "Applied guided pricing"
-    );
+
+    // --- cost (admin-gated item_costs upsert), snapshotting prior cost for Undo ---
+    let priorCostById = new Map();
+    if (costTargets.length) {
+      const ids = costTargets.map((x) => x.id);
+      try {
+        const { data } = await supabase.from("item_costs").select("item_id, cost_price").in("item_id", ids);
+        priorCostById = new Map((data || []).map((r) => [r.item_id, r.cost_price ?? null]));
+      } catch { /* best-effort snapshot — Undo restores what we could read */ }
+      for (const id of ids) if (!priorCostById.has(id)) priorCostById.set(id, null);
+      const { error: cErr } = await supabase.from("item_costs")
+        .upsert(costTargets.map((x) => ({ item_id: x.id, cost_price: x.cost })), { onConflict: "item_id" });
+      if (cErr) { toast("Prices set, but cost failed: " + cErr.message); }
+    }
+
+    if (prior.length) {
+      await logManyItemActivities(
+        prior.map((p) => p.id), "pricing", "pricing",
+        new Map(prior.map((p) => [p.id, [{ field_path: "price", before: p.value, after: priceById.get(p.id) }]])),
+        "Applied guided pricing"
+      );
+    }
+    if (costTargets.length) {
+      await logManyItemActivities(
+        costTargets.map((x) => x.id), "pricing", "pricing",
+        // Value-less by design — the logger redacts cost_price regardless.
+        new Map(costTargets.map((x) => [x.id, [{ field_path: "cost_price", before: null, after: null }]])),
+        "Set cost via guided pricing"
+      );
+    }
     for (const it of pile) if (priceById.has(it.id)) it.price = priceById.get(it.id);
     navigator.vibrate?.([12, 40, 12]);
-    toast(`Priced ${prior.length} item${prior.length === 1 ? "" : "s"}`, {
+
+    const pricedMsg = prior.length
+      ? `Priced ${prior.length} item${prior.length === 1 ? "" : "s"}${costTargets.length ? ` · cost on ${costTargets.length}` : ""}`
+      : `Cost set on ${costTargets.length} item${costTargets.length === 1 ? "" : "s"}`;
+    toast(pricedMsg, {
       label: "Undo",
       onClick: async () => {
         const byVal = new Map();
@@ -575,21 +672,26 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           const { error: uErr } = await supabase.from("items").update({ price: v }).in("id", pids);
           if (uErr) { toast("Undo failed: " + uErr.message); return; }
         }
+        if (priorCostById.size) {
+          const rows = [...priorCostById.entries()].map(([item_id, cost_price]) => ({ item_id, cost_price }));
+          const { error: cuErr } = await supabase.from("item_costs").upsert(rows, { onConflict: "item_id" });
+          if (cuErr) { toast("Undo (cost) failed: " + cuErr.message); return; }
+        }
         const priorById = new Map(prior.map((p) => [p.id, p.value]));
         for (const it of items) if (priorById.has(it.id)) it.price = priorById.get(it.id);
         await logManyItemActivities(
-          prior.map((p) => p.id),
-          "undo",
-          "undo",
-          new Map(prior.map((p) => [p.id, [{ field_path: "price", before: priceById.get(p.id), after: p.value }]])),
-          "Undid guided pricing"
+          [...new Set([...prior.map((p) => p.id), ...costTargets.map((x) => x.id)])],
+          "undo", "undo", new Map(), "Undid guided pricing"
         );
-        toast("Price change undone");
+        toast("Pricing change undone");
       },
     });
-    // Sentence applied — reset for the next one (scenarios usually come in runs).
+
+    // Selection mode is a one-shot on the picked items; category mode resets for
+    // the next sentence (scenarios usually come in runs).
+    if (selectionMode) { close(); return; }
     step = 1; drillId = null; pickedId = null; pile = [];
-    basePrice = ""; keepPriced = false; exceptions.length = 0;
+    basePrice = ""; keepPriced = false; exceptions.length = 0; costEnabled = false;
     render();
   }
 

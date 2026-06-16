@@ -602,6 +602,10 @@ body { overflow:hidden; overscroll-behavior:none; }
 .pgd-keep { margin-top:12px; }
 .pgd-suggest { display:block; width:100%; margin-top:10px; text-align:center; font-weight:600; }
 .pgd-suggest .muted { font-weight:400; font-size:var(--text-xs); }
+/* Optional cost-price section in the guided base step (admins only). */
+.pgd-cost { margin-top:14px; padding-top:14px; border-top:1px solid var(--line); }
+.pgd-cost-body { margin-top:10px; display:flex; flex-direction:column; gap:var(--space-md); }
+.pgd-costnote { margin:8px 0 4px; font-size:var(--text-sm); color:var(--accent-soft-txt); font-weight:600; }
 
 /* First-run coached empty state — the whole value loop in three steps. */
 .onboard { max-width:340px; margin:0 auto; }
