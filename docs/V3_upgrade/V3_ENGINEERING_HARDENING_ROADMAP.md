@@ -81,8 +81,8 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?*
 | Q5 | Comment/naming nits vs CLAUDE.md | Code quality | 🟢 | 4 | No | WON'T FIX (optional; comment coverage already strong, renames = churn) |
 | S15 | Data migrations interleaved with schema DDL | Ops | 🟢 | 4 | No | DONE (documented in MIGRATIONS.md; existing ones guarded) |
 | P6 | Root `.gitignore` missing `supabase/.temp/` | Ops | 🟢 | 4 | No | DONE (added `supabase/.temp/` + `.env.*.local`) |
-| Q1 | `gallery.js` god-module / full re-render | Architecture | 🟠 | 5 | No | TODO |
-| P5 | No pagination; gallery 1000-cap; Shop unbounded | Scalability | 🟠 | 5 | No | TODO |
+| Q1 | `gallery.js` god-module / full re-render | Architecture | 🟠 | 5 | No | IN PROGRESS (sort→lib/itemsort.js extracted+tested; faceting/selection/bulk = review-gated, see §10 plan) |
+| P5 | No pagination; gallery 1000-cap; Shop unbounded | Scalability | 🟠 | 5 | No | DONE for query caps (Shop/export); gallery infinite-scroll folded into Q1 |
 
 ---
 
@@ -238,8 +238,21 @@ All Phase-4 rows `DONE`; build still green; owner sign-off.
 - **P5 — Pagination & query caps.** Range-based pagination / infinite scroll for the gallery; move filtering server-side (Supabase `.range()` + indexed filters) instead of fetch-all-then-filter; add a hard `.limit()` to the Shop query; warn (don't silently truncate) when export hits its cap.
 - **Q1 — Decompose `gallery.js`.** Extract `facets.js`, `selection.js`, `filterSheet.js`, `bulkActions.js` from the 2096-line module; hold item state in one object; add a render-token/sequence guard to kill the stale-render race; make `refresh()` patch only changed rows instead of re-fetching the world after each edit. **This is the single biggest refactor; do it incrementally behind tests, one extracted module at a time.**
 
+### Q1 decomposition — execution plan (review-gated, one PR per step)
+Status so far: **P5 query caps done**; **sort extracted** to `src/lib/itemsort.js` (tested). The rest of `renderGallery` is a ~1530-line closure whose helpers (`valueOf`, `facets`, `matches`, the filter sheet, selection, bulk actions) close over mutable render state (`q`, `active`, `sortBy`, `priceMin`, `posMirror`, …), so they can't be lifted blindly. Recommended order, each its own commit + tests + manual verify, lowest-risk first:
+
+1. **`lib/facets.js` (pure).** Extract `valueOf(it, key, ctx)` + facet-list building + `matchesFilters(it, criteria)` as PURE functions that take the render state as an explicit `ctx`/`criteria` argument (resolvers for category/shop/issue passed in, like readiness-core). gallery keeps thin wrappers binding the closure state. Unit-test the matcher (search, AND-across/OR-within facets, price/date/no-price). Highest value (the hardest logic) + safest (pure).
+2. **`lib/itemsort.js`** — ✅ done.
+3. **`selection.js`** — the multi-select model (selected set, range, select-all, selection-bar wiring) as a small controller with explicit callbacks. DOM-coupled → behind a manual verify.
+4. **`filterSheet.js`** — the filter/sort bottom-sheet builder (takes facets + current criteria, returns the sheet + change events).
+5. **`bulkActions.js`** — approve/AI-fill/status/delete/bulk-edit handlers as a module taking the selection + a refresh callback.
+6. **Render token + targeted refresh.** Add a monotonic render id so a stale async `renderGallery` bails (kills the stale-render race), and make `refresh()` patch the in-memory `byId` from returned changes instead of cold-reloading items+mirror+jobs+activity on every edit.
+7. **Gallery pagination** (P5 remainder) — once filtering is server-expressible, switch to `.range()` paging / infinite scroll; until then the honest 1,000 cap note stays.
+
+Also in scope: **POS-SKU lib reconcile** — lift the grouping logic (`getGroupKey`/`resolveProductName`/`buildVariantAttributes`/`normalizeGender`) from `pos-push` into a shared `_shared/sku.ts` imported by both the edge function and a Vitest suite (removes the connector/edge duplication; the SQL `derive_item_sku` stays harness-tested).
+
 ### Phase 5 exit criteria
-Gallery is paginated; `renderGallery` no longer reloads the full dataset per edit; the god-module is split with tests around the extracted pure logic; owner sign-off.
+Gallery filtering is server-paged; `renderGallery` no longer reloads the full dataset per edit; the god-module is split into the modules above with tests around the extracted pure logic; POS-SKU logic deduped + unit-tested; owner sign-off.
 
 ---
 
@@ -269,6 +282,7 @@ Gallery is paginated; `renderGallery` no longer reloads the full dataset per edi
 
 > Append newest entries at the top. Mirror the changelog style of `V3_ROADMAP.md` §10.
 
+- **2026-06-17 — Phase 5 started.** P5 query caps done: explicit cap + truncation note on the Shop report (was silently relying on PostgREST's 1000 default) and on CSV exports (`1d7407b`). Q1 began with the safe slice — pure sort lifted to `src/lib/itemsort.js` + 6 tests (`740d2af`, 30 tests total). The remainder of Q1 (faceting/selection/filter-sheet/bulk + render-token + gallery pagination + POS-SKU dedup) is closure-bound and **review-gated** — a per-step execution plan is in §10. Recommended as a dedicated effort, ideally after the prod rollout of Phases 0–4.
 - **2026-06-17 — Phase 4 (code-quality hygiene) complete.** Q4 removed dead `quickPriceItems` (`fceaaae`); Q2 collapsed 14 byte-identical `esc()` copies to the single `ui.js` export (`138a010`); Q3 added warnings on load-bearing silent failures in `data.js`/`costs.js` (`85e1dec`); S15 documented the data-vs-schema migration rule in MIGRATIONS.md (existing data migrations are replay-guarded); Q5 accepted as WON'T FIX (optional nit, strong existing coverage). Build + 24 tests green. **Only Phase 5 (scale: P5 pagination, Q1 gallery decomposition, POS-SKU lib) remains — a dedicated effort.**
 - **2026-06-17 — Phase 2 closed; Phase 3 (robustness) complete.** S13 accepted (won't-fix, documented). Phase 3 all committed: R1 editor parsePrice guard (`feecb0c`); R6 oversize-upload reject + R3 honest burst-undo (`9fcdcaf`); R2 bulk-edit partial-failure reporting (`da70aa1`); R7 double-tap guards + R5 safe cost-undo + R4 whole-number precision note (`1fb713c`). Build + 24 tests green throughout. Next: Phase 4 (code-quality: Q2 esc dedup, Q3 catches, Q4 dead code, Q5 nits, S15) then Phase 5 (scale).
 - **2026-06-17 — Phase 1 closed; Phase 2 nearly done.** Owner cleared P1 (staging admin works — upload persisted, confirming the promote-SQL) and P7 (prod managed backups present; a one-off test-restore still recommended). Phase 2: `0030_active_enforcement.sql` — S9 (`auth_is_active()` + `active` baked into all capability helpers + added to broad read policies) and S12 (calibration/item_jobs → capability helpers); Docker-validated (inactive account reads 0 + denied write; 0027 suite still green; commit `5ce9158`). Edge: S11 (generic error responses, detail kept in run row + logs) + S14 (clampText sanitizes POS-mirror text); commit `9440d66`. **S13 (storage per-path ownership) left as an OWNER DECISION** — current keys are random UUIDs with no upsert (clobber risk ≈ nil), so per-user-folder scoping needs an upload-path convention change for marginal gain; decide before closing Phase 2.
