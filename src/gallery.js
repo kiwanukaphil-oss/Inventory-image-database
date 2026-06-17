@@ -756,10 +756,58 @@ async function renderGallery(view, caps, opts = {}) {
   };
 
   // Re-render after an edit/bulk action without losing the user's scroll place.
-  const refresh = () => {
+  // Pass changedIds to patch ONLY those rows in place (Q1 step 6b) instead of
+  // cold-reloading the whole catalogue; no args = full reload (bulk/delete).
+  const refresh = (changedIds) => {
     const y = view.scrollTop;
+    if (Array.isArray(changedIds) && changedIds.length) {
+      return patchItems(changedIds).then(() => view.scrollTo(0, y));
+    }
     return renderGallery(view, caps, opts).then(() => view.scrollTo(0, y));
   };
+
+  // Targeted refresh: re-fetch only the changed rows + their meta and patch the
+  // in-memory model (byId/data/signed), then redraw — the reconciler updates just
+  // the affected cards and draw() recomputes the segment counts. Re-fetching the
+  // authoritative rows avoids local drift; any error falls back to a full reload.
+  async function patchItems(ids) {
+    const { data: fresh, error } = await supabase
+      .from("items")
+      .select("id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_dirty, categories(name)")
+      .in("id", ids);
+    if (error) return renderGallery(view, caps, opts);
+    const [jobs, acts, costs] = await Promise.all([
+      loadLatestFailedJobs(ids, "ai_fill"),
+      loadItemActivitySummaries(ids),
+      loadCostPresence(ids, { canViewCost: !!caps.can_view_cost }),
+    ]);
+    const newPaths = (fresh || []).map((r) => r.image_path).filter((p) => p && !signed[p]);
+    if (newPaths.length) {
+      const { data: urls } = await supabase.storage.from("product-images").createSignedUrls(newPaths, 3600);
+      (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
+    }
+    const returned = new Set();
+    for (const row of fresh || []) {
+      returned.add(row.id);
+      const job = jobs.get(row.id); if (job) row.latest_ai_job = job;
+      const activity = acts.get(row.id); if (activity) row.activity = activity;
+      if (costs.has(row.id)) row.has_cost_price = costs.get(row.id);
+      const idx = data.findIndex((d) => d.id === row.id);
+      if (idx >= 0) data[idx] = row; else data.unshift(row);
+      byId[row.id] = row;
+    }
+    for (const id of ids) { // requested but not returned = deleted
+      if (returned.has(id)) continue;
+      delete byId[id];
+      const idx = data.findIndex((d) => d.id === id);
+      if (idx >= 0) data.splice(idx, 1);
+    }
+    draw();
+    // draw() keeps the in-surface seg counts live; the two nav badges are set
+    // once per full render, so refresh them here too.
+    setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
+    loadSyncCounts(["errors", "dirty"]).then((sc) => setShopBadge((sc.errors || 0) + (sc.dirty || 0))).catch(() => {});
+  }
 
   // ---- selection mode (phone-gallery style multi-select) ----
   const byId = Object.fromEntries(data.map((d) => [d.id, d]));
@@ -1058,7 +1106,7 @@ async function renderGallery(view, caps, opts = {}) {
   const openItemEditor = (id, focusIssue) => openEditor(
     id,
     caps,
-    refresh,
+    () => refresh([id]), // targeted refresh: re-fetch only the edited item (Q1 step 6b)
     review ? { focusIssue: focusIssue || reviewFocusIssue(byId[id]) } : {}
   );
 
