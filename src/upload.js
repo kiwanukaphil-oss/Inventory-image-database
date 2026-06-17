@@ -4,7 +4,7 @@ import { compressImage } from "./imageCompress.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { diffItemValues, logItemActivity } from "./activity.js";
 import { dHash, hammingHex } from "./imagehash.js";
-import { toast, trapFocus, ICON } from "./ui.js";
+import { esc, toast, trapFocus, ICON } from "./ui.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
 // grid you can prune), set fields common to the whole batch once, then upload
@@ -27,11 +27,6 @@ function uuid() {
   return `${h.slice(0, 4).join("")}-${h.slice(4, 6).join("")}-${h.slice(6, 8).join("")}-${h.slice(8, 10).join("")}-${h.slice(10, 16).join("")}`;
 }
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 function loadUploadDefaults() {
   try { return JSON.parse(localStorage.getItem(UPLOAD_DEFAULTS_KEY) || "null") || {}; }

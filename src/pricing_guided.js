@@ -1,6 +1,6 @@
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, resolveFields, getSetting } from "./data.js";
-import { toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
+import { esc, toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
 import { openPricing } from "./pricing.js";
 import { logManyItemActivities } from "./activity.js";
 import { costFromRetail } from "./lib/price.js";
@@ -23,10 +23,6 @@ import { costFromRetail } from "./lib/price.js";
 //  cost lives in Advanced where it is capability-gated.
 // ============================================================================
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
 
 // Attribute keys that can carry a "size-like" number (band exceptions).
 const isNumericish = (v) => v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v));

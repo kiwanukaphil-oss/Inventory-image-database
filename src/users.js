@@ -1,5 +1,5 @@
 import { supabase } from "./db.js";
-import { toast, confirmSheet, trapFocus, isTopOverlay } from "./ui.js";
+import { esc, toast, confirmSheet, trapFocus, isTopOverlay } from "./ui.js";
 
 // Users admin screen — for people with can_manage_users. Create login accounts,
 // set role/capabilities, and deactivate/reactivate accounts. Account create and
@@ -19,11 +19,6 @@ const CAPS = [
   { k: "can_manage_users", label: "Manage users" },
 ];
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 // Which preset (if any) the current capability set matches.
 function presetOf(p) {

@@ -2,7 +2,7 @@ import { supabase } from "./db.js";
 import { resolveFields, normalizeValue, normalizeAttributeValue, categoryPath } from "./data.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { diffItemValues, logItemActivity } from "./activity.js";
-import { trapFocus, isTopOverlay } from "./ui.js";
+import { esc, trapFocus, isTopOverlay } from "./ui.js";
 
 // Bulk AI fill: run the ai-extract Edge Function across a set of items (the
 // gallery's currently-filtered rows), filling empty fields with AI suggestions.
@@ -12,11 +12,6 @@ import { trapFocus, isTopOverlay } from "./ui.js";
 const CONCURRENCY = 2; // keep Anthropic vision calls below overload-prone bursts
 const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 function edgeErrorMessage(body, fallback = "") {
   if (!body || typeof body !== "object") return fallback;

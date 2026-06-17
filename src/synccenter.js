@@ -1,7 +1,7 @@
 import { supabase } from "./db.js";
 import { openEditor } from "./editor.js";
 import { loadSyncCounts } from "./syncstate.js";
-import { openBottomSheet, toast } from "./ui.js";
+import { esc, openBottomSheet, toast } from "./ui.js";
 
 // The Sync Center (⋮ → Shop sync): the one place the Catalog↔POS integration
 // is visible as a system. Deliberately NOT a tab — staff shouldn't think about
@@ -15,11 +15,6 @@ import { openBottomSheet, toast } from "./ui.js";
 // "Sync now" buttons invoke the edge functions directly with the signed-in
 // admin's JWT (the functions authorize admins/user-managers themselves).
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 const FUNCTIONS_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
 

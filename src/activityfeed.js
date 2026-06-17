@@ -1,4 +1,4 @@
-import { openBottomSheet } from "./ui.js";
+import { esc, openBottomSheet } from "./ui.js";
 import { openEditor } from "./editor.js";
 import { loadRecentActivity, activitySourceLabel, activitySourceClass, fieldKeyFromPath } from "./activity.js";
 
@@ -6,10 +6,6 @@ import { loadRecentActivity, activitySourceLabel, activitySourceClass, fieldKeyF
 // changed what, when) into a visible, tappable trust surface. Opened from Quick
 // actions and Settings → Data tools. Each row deep-links into the item's editor.
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
 
 // "just now" / "5m ago" / "3h ago" / "2d ago".
 function relTime(iso) {

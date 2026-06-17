@@ -3,7 +3,7 @@ import { loadRefData, loadPosMirror, getSetting, categoryPath } from "./data.js"
 import { openEditor } from "./editor.js";
 import { openSyncCenter } from "./synccenter.js";
 import { syncCountsFromItems } from "./syncstate.js";
-import { ICON } from "./ui.js";
+import { esc, ICON } from "./ui.js";
 
 // The Shop tab — answers, not analytics. Each card is a question floor staff
 // actually ask, answered with photos and plain words over the read-only POS
@@ -14,11 +14,6 @@ import { ICON } from "./ui.js";
 // actual reorder signal: sell-rate and weeks of cover. Money stays out of v1
 // beyond the selling price already on the tag.
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 const DAY_MS = 86_400_000;
 const SLEEPER_DAYS = 60; // in shop this long with zero sales = markdown candidate
