@@ -31,17 +31,58 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+// Self-contained for direct Supabase-dashboard deploy (no CLI bundling of _shared).
+// Origin-allowlisted CORS (S5) + constant-time, fail-closed POS-caller auth (S4).
+// These two helpers are duplicated across the 3 pos-* functions — keep them in sync.
+const DEFAULT_ALLOWED = "https://klinemen-catalog.com";
+function corsHeaders(req) {
+  const allowed = (Deno.env.get("ALLOWED_ORIGINS") || DEFAULT_ALLOWED).split(",").map((s) => s.trim()).filter(Boolean);
+  const origin = req.headers.get("Origin") || "";
+  const headers = {
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+  if (allowed.includes("*")) headers["Access-Control-Allow-Origin"] = "*";
+  else if (origin && allowed.includes(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
+const makeJson = (cors) => (body, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
+
+async function timingSafeEqual(a, b) {
+  const enc = new TextEncoder();
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const va = new Uint8Array(ha), vb = new Uint8Array(hb);
+  let diff = 0;
+  for (let i = 0; i < va.length; i++) diff |= va[i] ^ vb[i];
+  return diff === 0;
+}
+async function authorizePosCaller(req, env) {
+  const { SUPABASE_URL, SERVICE_KEY, ANON_KEY } = env;
+  if (!SERVICE_KEY || SERVICE_KEY.length < 20) return { ok: false, status: 500, error: "server auth not configured" };
+  const invokeKey = Deno.env.get("MIRROR_INVOKE_KEY") || "";
+  if (invokeKey && invokeKey.length < 32) console.warn("MIRROR_INVOKE_KEY shorter than 32 chars — rotate to a stronger value.");
+  const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (bearer) {
+    if (await timingSafeEqual(bearer, SERVICE_KEY)) return { ok: true };
+    if (invokeKey && (await timingSafeEqual(bearer, invokeKey))) return { ok: true };
+  }
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
+  const { data: userData } = await userClient.auth.getUser();
+  if (!userData?.user) return { ok: false, status: 401, error: "unauthorized" };
+  const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const { data: me } = await adminCheck.from("profiles").select("role, can_manage_users").eq("id", userData.user.id).maybeSingle();
+  if (!me || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
+  return { ok: true };
+}
 
 const QUEUE_LIMIT_DEFAULT = 20;
 const DIRTY_LIMIT_DEFAULT = 8;
-
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-const json = (body: unknown, status = 200) =>
-  new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
+const QUEUE_LIMIT_MAX = 50; // hard cap on caller-supplied limits (audit S10)
 
 // ---------------------------------------------------------------------------
 // POS REST client (subset of the connector's posClient, fetch-native).
@@ -285,6 +326,8 @@ const ITEM_SELECT =
   "pos_product_id, pos_variant_id, item_costs ( cost_price ), categories ( slug, name )";
 
 Deno.serve(async (req) => {
+  const cors = corsHeaders(req);
+  const json = makeJson(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
@@ -293,31 +336,29 @@ Deno.serve(async (req) => {
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const POS_BASE_URL = (Deno.env.get("POS_BASE_URL") || "").replace(/\/$/, "");
 
-  // Same gate as pos-mirror: exact service secret, shared invoke key, or an
-  // authenticated admin/user-manager. Deployed with --no-verify-jwt, so never
-  // trust decoded JWT claims here.
-  const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-  const INVOKE_KEY = Deno.env.get("MIRROR_INVOKE_KEY") || "";
-  const isService =
-    (bearer && bearer === SERVICE_KEY) ||
-    (INVOKE_KEY && bearer === INVOKE_KEY);
-  if (!isService) {
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${bearer}` } },
-    });
-    const { data: userData } = await userClient.auth.getUser();
-    if (!userData?.user) return json({ error: "unauthorized" }, 401);
-    const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
-    const { data: me } = await adminCheck
-      .from("profiles").select("role, can_manage_users").eq("id", userData.user.id).single();
-    if (!me || !(me.can_manage_users || me.role === "admin")) return json({ error: "forbidden" }, 403);
-  }
+  // Authorize: constant-time service secret / MIRROR_INVOKE_KEY, or a signed-in
+  // admin/user-manager. Deployed --no-verify-jwt — see authorizePosCaller above (S4).
+  const authz = await authorizePosCaller(req, { SUPABASE_URL, SERVICE_KEY, ANON_KEY });
+  if (!authz.ok) return json({ error: authz.error }, authz.status);
 
+  // Clamp caller-supplied limits so one request can't blow past the edge-function
+  // timeout or the POS image rate limit (audit S10).
   const opts = await req.json().catch(() => ({}));
-  const queueLimit = Number(opts?.limit) > 0 ? Number(opts.limit) : QUEUE_LIMIT_DEFAULT;
-  const dirtyLimit = Number(opts?.dirtyLimit) >= 0 ? Number(opts.dirtyLimit) : DIRTY_LIMIT_DEFAULT;
+  const queueLimit = Math.min(Number(opts?.limit) > 0 ? Number(opts.limit) : QUEUE_LIMIT_DEFAULT, QUEUE_LIMIT_MAX);
+  const dirtyLimit = Math.min(Number(opts?.dirtyLimit) >= 0 ? Number(opts.dirtyLimit) : DIRTY_LIMIT_DEFAULT, QUEUE_LIMIT_MAX);
 
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+
+  // Single-flight lock: two overlapping push runs (cron + manual "Sync now")
+  // could each book a stock receipt for the same item. Acquire an atomic,
+  // stale-tolerant lock; bail if another run holds it (audit DI1, migration 0028).
+  const LOCK_NAME = "pos-push";
+  const { data: gotLock, error: lockErr } = await db.rpc("try_acquire_sync_lock", {
+    p_name: LOCK_NAME, p_stale_seconds: 600, p_by: new Date().toISOString(),
+  });
+  if (lockErr) return json({ ok: false, error: `lock error: ${lockErr.message}` }, 500);
+  if (!gotLock) return json({ ok: true, skipped: true, reason: "another push run is in progress" });
+
   const startedAt = new Date().toISOString();
   const summary = {
     queue_seen: 0, created: 0, add_variant: 0, add_stock: 0, blocked: 0, errored: 0,
@@ -546,10 +587,15 @@ Deno.serve(async (req) => {
     });
     return json({ ok: true, ...summary });
   } catch (err) {
+    // Detail stays in the manager-readable run row + logs; caller gets generic (S11).
+    console.error("pos-push error", String(err?.stack || err));
     await db.from("pos_sync_runs").insert({
       kind: "push", started_at: startedAt, finished_at: new Date().toISOString(),
       ok: false, ok_count: 0, error_count: 1, error: String(err?.message || err), summary,
     });
-    return json({ ok: false, error: String(err?.message || err), ...summary }, 500);
+    return json({ ok: false, error: "internal error", ...summary }, 500);
+  } finally {
+    // Always release the single-flight lock, even on error.
+    await db.rpc("release_sync_lock", { p_name: LOCK_NAME }).catch(() => {});
   }
 });

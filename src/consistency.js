@@ -1,13 +1,8 @@
 import { supabase } from "./db.js";
 import { AI_BLIND_FIELDS, loadRefData, normalizeAttributeValue, resolveFields } from "./data.js";
 import { missingCoreFields } from "./readiness.js";
-import { openBottomSheet } from "./ui.js";
+import { esc, openBottomSheet } from "./ui.js";
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 function canonicalBrand(v) {
   return String(v || "").toLowerCase().replace(/[^a-z0-9]+/g, "");

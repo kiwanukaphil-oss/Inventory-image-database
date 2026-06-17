@@ -1,8 +1,9 @@
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, resolveFields, getSetting } from "./data.js";
-import { toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
+import { esc, toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
 import { openPricing } from "./pricing.js";
 import { logManyItemActivities } from "./activity.js";
+import { costFromRetail } from "./lib/price.js";
 
 // ============================================================================
 //  Guided pricing — "price like you'd say it".
@@ -22,10 +23,6 @@ import { logManyItemActivities } from "./activity.js";
 //  cost lives in Advanced where it is capability-gated.
 // ============================================================================
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
 
 // Attribute keys that can carry a "size-like" number (band exceptions).
 const isNumericish = (v) => v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v));
@@ -153,12 +150,11 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   // Whether cost-setting is active (admin + a mode chosen) and the cost for a
   // given retail price under the current cost rule (rounded), or null.
   const costOn = () => caps.can_view_cost && costEnabled;
+  // Delegates the arithmetic to the shared, unit-tested helper (src/lib/price.js)
+  // so the guided and advanced pricing tools compute cost identically.
   const costOf = (retail) => {
     if (!costOn() || retail == null) return null;
-    if (costMode === "fixed") { const c = Number(costFixed); return Number.isFinite(c) && c >= 0 ? c : null; }
-    const pct = Number(costPct);
-    if (!Number.isFinite(pct) || pct < 0) return null;
-    return Math.round((retail * pct) / 100);
+    return costFromRetail(retail, { mode: costMode, value: costMode === "fixed" ? costFixed : costPct });
   };
 
   const exText = (ex) => {
@@ -602,7 +598,11 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   }
 
   // ---- apply (one undoable write) ------------------------------------------
+  let applying = false; // in-flight guard: a double-tap must not write twice (R7)
   async function apply() {
+    if (applying) return;
+    applying = true;
+    try {
     const writes = new Map(); // price -> ids[]
     const prior = [];
     for (const it of pile) {
@@ -630,16 +630,23 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
 
     // --- cost (admin-gated item_costs upsert), snapshotting prior cost for Undo ---
     let priorCostById = new Map();
+    let costApplied = false;
     if (costTargets.length) {
       const ids = costTargets.map((x) => x.id);
-      try {
-        const { data } = await supabase.from("item_costs").select("item_id, cost_price").in("item_id", ids);
+      // R5: without a reliable prior-cost snapshot, an Undo could WIPE real cost
+      // data — so if the snapshot read fails we don't write cost at all (retail
+      // is already applied). Undo then has nothing cost-related to get wrong.
+      const { data, error: snapErr } = await supabase.from("item_costs").select("item_id, cost_price").in("item_id", ids);
+      if (snapErr) {
+        toast("Prices set; cost skipped (couldn't read current cost — retry).");
+      } else {
         priorCostById = new Map((data || []).map((r) => [r.item_id, r.cost_price ?? null]));
-      } catch { /* best-effort snapshot — Undo restores what we could read */ }
-      for (const id of ids) if (!priorCostById.has(id)) priorCostById.set(id, null);
-      const { error: cErr } = await supabase.from("item_costs")
-        .upsert(costTargets.map((x) => ({ item_id: x.id, cost_price: x.cost })), { onConflict: "item_id" });
-      if (cErr) { toast("Prices set, but cost failed: " + cErr.message); }
+        for (const id of ids) if (!priorCostById.has(id)) priorCostById.set(id, null);
+        const { error: cErr } = await supabase.from("item_costs")
+          .upsert(costTargets.map((x) => ({ item_id: x.id, cost_price: x.cost })), { onConflict: "item_id" });
+        if (cErr) toast("Prices set, but cost failed: " + cErr.message);
+        else costApplied = true;
+      }
     }
 
     if (prior.length) {
@@ -649,7 +656,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
         "Applied guided pricing"
       );
     }
-    if (costTargets.length) {
+    if (costApplied) {
       await logManyItemActivities(
         costTargets.map((x) => x.id), "pricing", "pricing",
         // Value-less by design — the logger redacts cost_price regardless.
@@ -660,9 +667,10 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     for (const it of pile) if (priceById.has(it.id)) it.price = priceById.get(it.id);
     navigator.vibrate?.([12, 40, 12]);
 
+    const costCount = costApplied ? costTargets.length : 0;
     const pricedMsg = prior.length
-      ? `Priced ${prior.length} item${prior.length === 1 ? "" : "s"}${costTargets.length ? ` · cost on ${costTargets.length}` : ""}`
-      : `Cost set on ${costTargets.length} item${costTargets.length === 1 ? "" : "s"}`;
+      ? `Priced ${prior.length} item${prior.length === 1 ? "" : "s"}${costCount ? ` · cost on ${costCount}` : ""}`
+      : `Cost set on ${costCount} item${costCount === 1 ? "" : "s"}`;
     toast(pricedMsg, {
       label: "Undo",
       onClick: async () => {
@@ -693,6 +701,9 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     step = 1; drillId = null; pickedId = null; pile = [];
     basePrice = ""; keepPriced = false; exceptions.length = 0; costEnabled = false;
     render();
+    } finally {
+      applying = false;
+    }
   }
 
   render();

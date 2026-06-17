@@ -20,9 +20,10 @@ export async function loadCostPresence(itemIds, { canViewCost = false } = {}) {
       for (const row of data || []) byItem.set(row.item_id, !!row.has_cost_price);
     }
     if (byItem.size) return byItem;
-  } catch {
+  } catch (e) {
     // Migration 0025 may not be applied yet. Admins can fall back to item_costs;
     // non-admins get an unknown cost state rather than seeing sensitive values.
+    console.warn("cost-presence RPC unavailable, falling back —", e?.message || e); // Q3
   }
 
   if (!canViewCost) return new Map();
@@ -37,7 +38,8 @@ export async function loadCostPresence(itemIds, { canViewCost = false } = {}) {
       if (error) throw error;
       for (const row of data || []) byItem.set(row.item_id, row.cost_price !== null && row.cost_price !== undefined);
     }
-  } catch {
+  } catch (e) {
+    console.warn("cost-presence fallback read failed —", e?.message || e); // Q3
     return new Map();
   }
   return byItem;

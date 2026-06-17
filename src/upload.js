@@ -4,7 +4,7 @@ import { compressImage } from "./imageCompress.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { diffItemValues, logItemActivity } from "./activity.js";
 import { dHash, hammingHex } from "./imagehash.js";
-import { toast, trapFocus, ICON } from "./ui.js";
+import { esc, toast, trapFocus, ICON } from "./ui.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
 // grid you can prune), set fields common to the whole batch once, then upload
@@ -27,11 +27,6 @@ function uuid() {
   return `${h.slice(0, 4).join("")}-${h.slice(4, 6).join("")}-${h.slice(6, 8).join("")}-${h.slice(8, 10).join("")}-${h.slice(10, 16).join("")}`;
 }
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 function loadUploadDefaults() {
   try { return JSON.parse(localStorage.getItem(UPLOAD_DEFAULTS_KEY) || "null") || {}; }
@@ -445,12 +440,22 @@ export async function renderUpload(view, caps, onDone) {
       const s = session.pop();
       paintBurst();
       navigator.vibrate?.(8);
-      if (s?.url) URL.revokeObjectURL(s.url);
-      if (s?.id) {
-        try {
-          await supabase.from("items").delete().eq("id", s.id);
-          if (s.path) await supabase.storage.from("product-images").remove([s.path]);
-        } catch (e) { console.error("burst undo delete failed", e); }
+      if (!s) return;
+      if (!s.id) { if (s.url) URL.revokeObjectURL(s.url); return; } // not uploaded yet
+      try {
+        const { error } = await supabase.from("items").delete().eq("id", s.id);
+        if (error) throw error;
+        if (s.path) await supabase.storage.from("product-images").remove([s.path]);
+        if (s.url) URL.revokeObjectURL(s.url); // free the thumb only once the row is really gone
+      } catch (e) {
+        // R3: the unit is still in the DB — re-surfacing it keeps the captured
+        // count honest (a silent drop would understate real stock + orphan a row
+        // that can reach Review/POS). Keep the thumb (url not revoked) and let
+        // the user retry.
+        console.error("burst undo delete failed", e);
+        session.push(s);
+        paintBurst();
+        toast("Couldn't remove that unit — it's still saved. Tap Undo to retry.");
       }
     }
 
@@ -544,7 +549,10 @@ export async function renderUpload(view, caps, onDone) {
   // exists but before AI runs, so the burst filmstrip can flip to "reading…".
   // Returns the new id/path plus the AI result (for live self-ID surfaces).
   async function uploadOne(entry, common, onUploaded) {
-    const { blob, ext } = await compressImage(entry.file);
+    const { blob, ext, oversize } = await compressImage(entry.file);
+    // R6: only reject the absurd case (couldn't compress AND still huge); normal
+    // fallbacks upload as-is. Prevents silently storing a 10MB+ phone photo.
+    if (oversize) throw new Error("Photo is too large and couldn't be compressed — use a smaller image.");
     const id = uuid();
     const path = `${common.slug}/${id}.${ext}`;
     const up = await supabase.storage.from("product-images")

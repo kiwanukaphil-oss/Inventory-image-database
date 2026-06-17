@@ -23,6 +23,14 @@ export async function loadRefData(force = false) {
     supabase.from("app_settings").select("key, value").limit(REF_DATA_LIMIT),
   ]);
 
+  // Ref data is load-bearing (cards/editor render blank without it). Keep the
+  // graceful `|| []` fallback below, but surface a failure instead of a silent
+  // degraded UI (Q3). app_settings can legitimately be missing on older DBs.
+  if (cats.error) console.warn("ref data: categories failed —", cats.error.message);
+  if (fields.error) console.warn("ref data: category_fields failed —", fields.error.message);
+  if (vocab.error) console.warn("ref data: vocabularies failed —", vocab.error.message);
+  if (settings.error) console.warn("ref data: app_settings failed —", settings.error.message);
+
   const categories = cats.data || [];
   const byId = Object.fromEntries(categories.map((c) => [c.id, c]));
 

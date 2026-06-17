@@ -41,11 +41,12 @@ export async function renderExport(view, caps) {
   view.querySelector("#expCurrent").onclick = async () => {
     setStatus("Preparing catalogue…");
     try {
+      const ITEM_EXPORT_CAP = 10000;
       const { data: items, error } = await supabase
         .from("items")
         .select("id, category_id, name, brand, sku, status, price, stock_quantity, reorder_level, image_path, attributes, created_at, updated_at")
         .order("created_at", { ascending: true })
-        .limit(10000);
+        .limit(ITEM_EXPORT_CAP);
       if (error) throw error;
 
       // Cost only when permitted (RLS also enforces this).
@@ -74,7 +75,9 @@ export async function renderExport(view, caps) {
       });
 
       download(`kline-catalogue-${today()}.csv`, toCsv(cols, rows));
-      setStatus(`Downloaded ${rows.length} items.`);
+      // P5: never let a truncated export look complete.
+      const capped = items.length >= ITEM_EXPORT_CAP;
+      setStatus(`Downloaded ${rows.length} items.${capped ? ` ⚠ Only the first ${ITEM_EXPORT_CAP.toLocaleString()} — the catalogue is larger.` : ""}`);
     } catch (e) {
       setStatus("Export failed: " + (e?.message || e));
     }
@@ -84,13 +87,15 @@ export async function renderExport(view, caps) {
   if (auditBtn) auditBtn.onclick = async () => {
     setStatus("Preparing change log…");
     try {
+      const LOG_EXPORT_CAP = 50000;
       const cols = ["created_at", "item_id", "change_type", "field", "before", "after", "sku_before", "sku_after", "actor", "notes"];
       const { data: log, error } = await supabase
-        .from("audit_log").select(cols.join(", ")).order("created_at", { ascending: true }).limit(50000);
+        .from("audit_log").select(cols.join(", ")).order("created_at", { ascending: true }).limit(LOG_EXPORT_CAP);
       if (error) throw error;
       const rows = (log || []).map((r) => cols.map((c) => r[c]));
       download(`kline-changelog-${today()}.csv`, toCsv(cols, rows));
-      setStatus(`Downloaded ${rows.length} changes.`);
+      const capped = (log || []).length >= LOG_EXPORT_CAP;
+      setStatus(`Downloaded ${rows.length} changes.${capped ? ` ⚠ Only the first ${LOG_EXPORT_CAP.toLocaleString()} — older history not included.` : ""}`);
     } catch (e) {
       setStatus("Export failed: " + (e?.message || e));
     }

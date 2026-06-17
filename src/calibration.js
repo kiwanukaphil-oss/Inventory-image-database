@@ -12,7 +12,7 @@
 
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, AI_BLIND_FIELDS } from "./data.js";
-import { toast, trapFocus, openLightbox, lightboxOpen, ICON } from "./ui.js";
+import { esc, toast, trapFocus, openLightbox, lightboxOpen, ICON } from "./ui.js";
 
 const LEVELS = ["High", "Medium", "Low"];
 
@@ -35,10 +35,6 @@ function aiFields(it) {
     .filter((f) => f.value !== null && f.value !== undefined && f.value !== "");
 }
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
 
 /**
  * Open the full-screen calibration flow.

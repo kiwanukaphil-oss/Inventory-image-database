@@ -3,7 +3,7 @@ import { loadRefData, loadPosMirror, getSetting, categoryPath } from "./data.js"
 import { openEditor } from "./editor.js";
 import { openSyncCenter } from "./synccenter.js";
 import { syncCountsFromItems } from "./syncstate.js";
-import { ICON } from "./ui.js";
+import { esc, ICON } from "./ui.js";
 
 // The Shop tab — answers, not analytics. Each card is a question floor staff
 // actually ask, answered with photos and plain words over the read-only POS
@@ -14,15 +14,11 @@ import { ICON } from "./ui.js";
 // actual reorder signal: sell-rate and weeks of cover. Money stays out of v1
 // beyond the selling price already on the tag.
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 const DAY_MS = 86_400_000;
 const SLEEPER_DAYS = 60; // in shop this long with zero sales = markdown candidate
 const SECTION_CAP = 6;   // rows shown per section before "Show all"
+const SHOP_ITEM_CAP = 10000; // explicit cap (P5): the report was relying on PostgREST's silent default
 
 // Filter/view state survives tab switches within the session (same pattern as
 // the gallery's browseState).
@@ -38,7 +34,8 @@ export async function renderShop(view, caps, onChanged) {
     supabase
       .from("items")
       .select("id, name, brand, sku, status, image_path, attributes, category_id, pos_sync_status, pos_variant_id, pos_synced_at, pos_dirty, categories(name)")
-      .order("created_at", { ascending: true }),
+      .order("created_at", { ascending: true })
+      .limit(SHOP_ITEM_CAP),
     loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
   ]);
   if (error) {
@@ -46,6 +43,9 @@ export async function renderShop(view, caps, onChanged) {
       <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
     return;
   }
+  // P5: an aggregate report over a truncated set would mislead — flag it.
+  const truncated = (items || []).length >= SHOP_ITEM_CAP;
+  if (truncated) console.warn("shop: item set hit the cap", SHOP_ITEM_CAP);
 
   // One representative catalog item per POS variant (oldest with a photo) —
   // duplicate-SKU photos collapse here; the report counts products, not photos.
@@ -191,7 +191,7 @@ export async function renderShop(view, caps, onChanged) {
           ${tops.map((t) => `<button class="shop-chip${state.top === t ? " on" : ""}" data-top="${esc(t)}">${esc(t)}</button>`).join("")}
         </div>` : ""}
         <div class="shop-asof${staleMins > 30 ? " stale" : ""}">
-          <span>${asOf ? `Shop data as of ${esc(asOf)}${staleMins > 30 ? " — may be stale" : ""}` : "No shop data yet — the first sync hasn't run."}</span>
+          <span>${asOf ? `Shop data as of ${esc(asOf)}${staleMins > 30 ? " — may be stale" : ""}` : "No shop data yet — the first sync hasn't run."}${truncated ? ` · ⚠ first ${SHOP_ITEM_CAP.toLocaleString()} items only` : ""}</span>
           <button class="shop-refresh" id="shopRefresh" aria-label="Refresh">${ICON.refresh || "↻"}</button>
         </div>
 

@@ -14,7 +14,7 @@
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, getSetting } from "./data.js";
 import { logManyItemActivities } from "./activity.js";
-import { toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
+import { esc, toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
 
 // Grouping key chosen last time, remembered across opens (per the "I pick the
 // grouping each time" workflow — start sensible, never force a default).
@@ -23,10 +23,6 @@ let lastGroupKeys = ["subcategory", "brand"];
 // the group list room. Remembered across opens.
 let controlsExpanded = false;
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
 
 const CHEVRON = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>`;
 
@@ -699,11 +695,18 @@ export async function openPricing(caps, onClose, opts = {}) {
   }
 
   // Single commit path: preview when risky, then write. Used by select-mode bulk
-  // set + per-group/band sets.
+  // set + per-group/band sets. An in-flight guard ignores a double-tap so the
+  // same price isn't written (and Undo-toasted) twice (R7).
+  let committing = false;
   async function commitPrice(ids, value) {
-    if (!ids.length) return;
-    if (needsPreview(ids) && !(await previewConfirm(ids, value))) return;
-    await applyPrice(ids, value);
+    if (!ids.length || committing) return;
+    committing = true;
+    try {
+      if (needsPreview(ids) && !(await previewConfirm(ids, value))) return;
+      await applyPrice(ids, value);
+    } finally {
+      committing = false;
+    }
   }
 
   // Apply one price/cost to every item in the selected groups — the deliberate

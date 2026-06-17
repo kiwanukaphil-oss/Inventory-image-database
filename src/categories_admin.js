@@ -1,6 +1,6 @@
 import { supabase } from "./db.js";
 import { refreshRefData } from "./data.js";
-import { toast, confirmSheet, trapFocus, isTopOverlay, ICON } from "./ui.js";
+import { esc, toast, confirmSheet, trapFocus, isTopOverlay, ICON } from "./ui.js";
 
 // Category & field manager (for user-managers): create/edit/delete categories
 // and their children, and manage the fields each category defines. Writes to
@@ -10,11 +10,6 @@ import { toast, confirmSheet, trapFocus, isTopOverlay, ICON } from "./ui.js";
 
 const FIELD_TYPES = ["text", "number", "select", "boolean", "size"];
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 function slugify(name) {
   return (name || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "category";
 }

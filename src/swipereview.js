@@ -3,7 +3,7 @@ import { openEditor } from "./editor.js";
 import { getItemReadiness } from "./readiness.js";
 import { logItemActivity } from "./activity.js";
 import { getSetting } from "./data.js";
-import { toast, trapFocus, ICON } from "./ui.js";
+import { esc, toast, trapFocus, ICON } from "./ui.js";
 
 // Swipe-review stack — the uncertain pile as a one-card-at-a-time deck.
 //   swipe right / Approve  → approve (only if nothing blocks it)
@@ -13,10 +13,6 @@ import { toast, trapFocus, ICON } from "./ui.js";
 // (touch gesture handling can't be assumed on every device). Undo reverts the
 // last approve/flag. Reuses the readiness engine + editor fix-mode wholesale.
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
 
 export async function openSwipeReview(items, caps, opts = {}) {
   const queue = (items || []).slice();

@@ -32,7 +32,8 @@ import { loadCostPresence } from "./costs.js";
 import { loadLatestFailedJobs } from "./joblog.js";
 import { openConsistencyAudit } from "./consistency.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
-import { toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
+import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
+import { sortItems } from "./lib/itemsort.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
 
@@ -426,11 +427,6 @@ function themeLabel() {
 
 // Escape user-provided text before injecting into innerHTML (brands/colours can
 // contain &, <, quotes — e.g. "Jery & Sluo").
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 // Format a price with thousands separators + the shop's currency prefix (if set).
 function fmtPrice(v) {
@@ -870,29 +866,9 @@ async function renderGallery(view, caps, opts = {}) {
   }
 
   // Sort comparators that always push blank (null) numbers to the end.
-  const numAsc = (key) => (a, b) => {
-    const x = a[key], y = b[key];
-    if (x == null && y == null) return 0;
-    if (x == null) return 1; if (y == null) return -1;
-    return x - y;
-  };
-  const numDesc = (key) => (a, b) => {
-    const x = a[key], y = b[key];
-    if (x == null && y == null) return 0;
-    if (x == null) return 1; if (y == null) return -1;
-    return y - x;
-  };
-  function applySort(rows) {
-    const r = rows.slice(); // data is loaded newest-first, so "new" needs no sort
-    if (sortBy === "old") r.reverse();
-    else if (sortBy === "price-asc") r.sort(numAsc("price"));
-    else if (sortBy === "price-desc") r.sort(numDesc("price"));
-    else if (sortBy === "stock-asc") r.sort(numAsc("stock_quantity"));
-    else if (sortBy === "stock-desc") r.sort(numDesc("stock_quantity"));
-    else if (sortBy === "brand") r.sort((a, b) =>
-      (a.brand || a.name || "").localeCompare(b.brand || b.name || "", undefined, { numeric: true }));
-    return r;
-  }
+  // Pure sort lives in src/lib/itemsort.js (tested); this thin wrapper binds the
+  // current sortBy so existing call sites are unchanged. (Q1)
+  const applySort = (rows) => sortItems(rows, sortBy);
 
   // One product card.
   function cardHtml(it) {
@@ -1762,17 +1738,25 @@ async function renderGallery(view, caps, opts = {}) {
             .upsert(ids.map((id) => ({ item_id: id, cost_price: costVal })), { onConflict: "item_id" });
           if (error) throw error;
         }
+        // jsonb attributes merge per item, so they can't be one atomic update
+        // like the columns. Collect per-item failures instead of aborting
+        // mid-batch (R2) — a blip on item N would otherwise leave a silent
+        // partial write the all-or-nothing Undo can't honestly describe.
+        const attrFailed = [];
         if (Object.keys(attrChanges).length) {
-          // jsonb attributes must merge per item (each has its own existing values).
           for (const it of items) {
             const merged = { ...(it.attributes || {}), ...attrChanges };
             const { error } = await supabase.from("items").update({ attributes: merged }).eq("id", it.id);
-            if (error) throw error;
+            if (error) { console.error("bulk attr update failed", it.id, error); attrFailed.push(it.id); }
           }
         }
         await logManyItemActivities(ids, "bulk_edit", "bulk", changesByItem, "Bulk edited selected items");
         navigator.vibrate?.([12, 40, 12]);
-        toast(`Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`, {
+        const okCount = ids.length - attrFailed.length;
+        const doneMsg = attrFailed.length
+          ? `Updated ${okCount} of ${ids.length} — ${attrFailed.length} attribute update${attrFailed.length === 1 ? "" : "s"} failed, retry`
+          : `Updated ${ids.length} item${ids.length === 1 ? "" : "s"}`;
+        toast(doneMsg, {
           label: "Undo",
           onClick: async () => {
             try {
@@ -1808,84 +1792,6 @@ async function renderGallery(view, caps, opts = {}) {
       }
       refresh();
     };
-  }
-
-  // REMOVAL CANDIDATE (v3.1): superseded by guided pricing's selection mode,
-  // which now handles "price these specific items" with a preview. Left in place
-  // per the flag-don't-delete rule; remove once the guided path is confirmed.
-  async function quickPriceItems(ids) {
-    const targetIds = ids.filter((id) => byId[id]?.price == null);
-    if (!targetIds.length) { toast("Those items already have prices."); return; }
-    const raw = await promptSheet({
-      title: "Set price",
-      message: `Set one retail price on ${targetIds.length} visible item${targetIds.length === 1 ? "" : "s"}.`,
-      label: "Retail price",
-      inputType: "number",
-      confirmText: "Set price",
-    });
-    if (raw === null) return;
-    const value = Number(raw);
-    if (!Number.isFinite(value) || value < 0) { toast("Enter a valid price."); return; }
-    const targetItems = targetIds.map((id) => byId[id]).filter(Boolean);
-    const summarizeCounts = (values) => {
-      const counts = new Map();
-      for (const v of values) counts.set(v, (counts.get(v) || 0) + 1);
-      const rows = [...counts.entries()]
-        .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])));
-      const shown = rows.slice(0, 3).map(([label, n]) => `${label} (${n})`);
-      const rest = rows.length - shown.length;
-      return shown.join(", ") + (rest > 0 ? `, plus ${rest} more` : "");
-    };
-    const brands = summarizeCounts(targetItems.map((it) => it.brand || it.name || "Unbranded"));
-    const cats = summarizeCounts(targetItems.map((it) => it.categories?.name || categoryPath(it.category_id) || "Uncategorized"));
-    const examples = targetItems
-      .slice(0, 4)
-      .map((it) => [it.brand || it.name || "Unnamed", it.categories?.name || categoryPath(it.category_id)].filter(Boolean).join(" / "))
-      .join("; ");
-    const ok = await confirmSheet({
-      title: "Confirm price scope",
-      message: `Apply ${fmtPrice(value)} to ${targetIds.length} visible unpriced item${targetIds.length === 1 ? "" : "s"}. Existing prices will not change. Categories: ${cats}. Brands: ${brands}. Examples: ${examples}.`,
-      confirmText: "Apply price",
-      cancelText: "Review first",
-    });
-    if (!ok) return;
-
-    const prior = targetIds.map((id) => ({ id, value: byId[id]?.price ?? null }));
-    const { error } = await supabase.from("items").update({ price: value }).in("id", targetIds);
-    if (error) { toast("Couldn't set price: " + error.message); return; }
-    // Optimistic: reflect locally + redraw at once (the write already
-    // succeeded); the activity log is fire-and-forget so it never delays the UI.
-    for (const id of targetIds) if (byId[id]) byId[id].price = value;
-    draw();
-    logManyItemActivities(
-      targetIds,
-      "pricing",
-      "pricing",
-      new Map(prior.map((p) => [p.id, [{ field_path: "price", before: p.value, after: value }]])),
-      `Set price ${fmtPrice(value)}`
-    ).catch(() => {});
-    toast(`Set price ${fmtPrice(value)} on ${targetIds.length} item${targetIds.length === 1 ? "" : "s"}`, {
-      label: "Undo",
-      onClick: async () => {
-        const byValue = {};
-        for (const p of prior) (byValue[p.value ?? "__null__"] ||= []).push(p.id);
-        for (const [old, oldIds] of Object.entries(byValue)) {
-          const price = old === "__null__" ? null : Number(old);
-          const { error: uErr } = await supabase.from("items").update({ price }).in("id", oldIds);
-          if (uErr) { toast("Undo failed: " + uErr.message); return; }
-        }
-        for (const p of prior) if (byId[p.id]) byId[p.id].price = p.value;
-        draw();
-        logManyItemActivities(
-          targetIds,
-          "undo",
-          "undo",
-          new Map(prior.map((p) => [p.id, [{ field_path: "price", before: value, after: p.value }]])),
-          "Undid price change"
-        ).catch(() => {});
-        toast("Price change undone");
-      },
-    });
   }
 
   // One-tap bulk approve for the current selection. Approving is fully

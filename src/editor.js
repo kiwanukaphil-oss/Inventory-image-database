@@ -9,10 +9,11 @@ import {
   AI_BLIND_FIELDS,
 } from "./data.js";
 import { loadCostPresence } from "./costs.js";
+import { parsePrice } from "./lib/price.js";
 import { clearItemJobFailures, loadLatestFailedJobs, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, fieldKeyFromPath, loadItemActivity, logItemActivity } from "./activity.js";
-import { toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
+import { esc, toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
 
 // The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
 // the item's category. Universal columns (name/brand/price/stock) plus the
@@ -26,11 +27,6 @@ const CONF_CYCLE = ["", "High", "Medium", "Low"];
 // don't fill fields (which would defeat the only-fill-empty workflow).
 const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
 
-function esc(v) {
-  return String(v ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-  );
-}
 
 function hasValue(v) {
   return v !== null && v !== undefined && v !== "";
@@ -650,6 +646,18 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       });
       if (!sure) return false;
     }
+    // Reject negative / non-numeric money before writing (R1). The DB CHECK is
+    // the backstop; this catches it with a clear message instead of a raw error.
+    const moneyInvalid = (key) => {
+      const el = sheet.querySelector(`[data-key="${key}"]`);
+      if (!el || el.disabled) return false;
+      const raw = el.value.trim();
+      return raw !== "" && parsePrice(raw) === null;
+    };
+    if (moneyInvalid("price") || moneyInvalid("cost_price")) {
+      toast("Enter a valid price (a number, 0 or more).");
+      return false;
+    }
     const btn = headerSaveBtn;
     setSaveBusy(true);
     btn.disabled = true;
@@ -889,10 +897,7 @@ function formItemForReadiness(sheet, item, fields, conf, status) {
   }
 
   const textVal = (key) => sheet.querySelector(`[data-key="${key}"]`)?.value.trim() || "";
-  const numVal = (key) => {
-    const v = textVal(key);
-    return v ? Number(v) : null;
-  };
+  const numVal = (key) => parsePrice(textVal(key)); // non-negative, NaN-safe (R1)
   const costEl = sheet.querySelector('[data-key="cost_price"]');
   const costPrice = costEl ? numVal("cost_price") : item.cost_price;
   const hasCostPrice = costEl
@@ -935,11 +940,7 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost, currentC
   const brandEl = sheet.querySelector('[data-key="brand"]');
   const brand = normalizeValue("brand", brandEl.value.trim()) || null;
 
-  const num = (k) => {
-    const el = sheet.querySelector(`[data-key="${k}"]`);
-    const t = el?.value.trim();
-    return t ? Number(t) : null;
-  };
+  const num = (k) => parsePrice(sheet.querySelector(`[data-key="${k}"]`)?.value.trim()); // non-negative, NaN-safe (R1)
 
   const update = {
     name: sheet.querySelector('[data-key="name"]').value.trim() || null,

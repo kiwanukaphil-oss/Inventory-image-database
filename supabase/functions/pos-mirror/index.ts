@@ -25,14 +25,67 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-const json = (body: unknown, status = 200) =>
+// Self-contained for direct Supabase-dashboard deploy (no CLI bundling of _shared).
+// Origin-allowlisted CORS (S5) + constant-time, fail-closed POS-caller auth (S4).
+// These two helpers are duplicated across the 3 pos-* functions — keep them in sync.
+const DEFAULT_ALLOWED = "https://klinemen-catalog.com";
+function corsHeaders(req) {
+  const allowed = (Deno.env.get("ALLOWED_ORIGINS") || DEFAULT_ALLOWED).split(",").map((s) => s.trim()).filter(Boolean);
+  const origin = req.headers.get("Origin") || "";
+  const headers = {
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+  if (allowed.includes("*")) headers["Access-Control-Allow-Origin"] = "*";
+  else if (origin && allowed.includes(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
+const makeJson = (cors) => (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
+
+async function timingSafeEqual(a, b) {
+  const enc = new TextEncoder();
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const va = new Uint8Array(ha), vb = new Uint8Array(hb);
+  let diff = 0;
+  for (let i = 0; i < va.length; i++) diff |= va[i] ^ vb[i];
+  return diff === 0;
+}
+async function authorizePosCaller(req, env) {
+  const { SUPABASE_URL, SERVICE_KEY, ANON_KEY } = env;
+  if (!SERVICE_KEY || SERVICE_KEY.length < 20) return { ok: false, status: 500, error: "server auth not configured" };
+  const invokeKey = Deno.env.get("MIRROR_INVOKE_KEY") || "";
+  if (invokeKey && invokeKey.length < 32) console.warn("MIRROR_INVOKE_KEY shorter than 32 chars — rotate to a stronger value.");
+  const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (bearer) {
+    if (await timingSafeEqual(bearer, SERVICE_KEY)) return { ok: true };
+    if (invokeKey && (await timingSafeEqual(bearer, invokeKey))) return { ok: true };
+  }
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
+  const { data: userData } = await userClient.auth.getUser();
+  if (!userData?.user) return { ok: false, status: 401, error: "unauthorized" };
+  const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const { data: me } = await adminCheck.from("profiles").select("role, can_manage_users").eq("id", userData.user.id).maybeSingle();
+  if (!me || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
+  return { ok: true };
+}
+
+// Defensive clamp on POS-supplied text before it lands in our DB + the PWA UI
+// (audit S14): cap length and strip control characters. The PWA escapes these
+// on render, but never trust an upstream system to send sane strings.
+const clampText = (v, max = 200) => {
+  if (v == null) return null;
+  let out = "";
+  for (const ch of String(v)) {
+    const c = ch.charCodeAt(0);
+    if (c >= 32 && c !== 127) out += ch; // drop ASCII control chars
+  }
+  return out.slice(0, max);
+};
 
 /** Log in to the POS as catalog_sync and return a Bearer token. */
 async function posLogin(baseUrl: string) {
@@ -103,6 +156,8 @@ function shopMidnightIso() {
 }
 
 Deno.serve(async (req) => {
+  const cors = corsHeaders(req);
+  const json = makeJson(cors);
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "method not allowed" }, 405);
 
@@ -111,31 +166,11 @@ Deno.serve(async (req) => {
   const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
   const POS_BASE_URL = (Deno.env.get("POS_BASE_URL") || "").replace(/\/$/, "");
 
-  // --- authorize: the cron/service caller, or an admin/user-manager user ---
-  // Deployed with --no-verify-jwt (the project uses new-style sb_secret_ keys,
-  // which the gateway's JWT check doesn't understand), so THIS block is the
-  // only gate. Accepted callers:
-  //   1. the exact service-role/secret key value
-  //   2. the dedicated MIRROR_INVOKE_KEY secret (what the cron job sends)
-  //   3. a signed-in admin / user-manager (the future "Sync now" button)
-  // Never trust a decoded JWT role claim here because the gateway is not
-  // verifying the token for this function.
-  const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
-  const INVOKE_KEY = Deno.env.get("MIRROR_INVOKE_KEY") || "";
-  const isService =
-    (bearer && bearer === SERVICE_KEY) ||
-    (INVOKE_KEY && bearer === INVOKE_KEY);
-  if (!isService) {
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: `Bearer ${bearer}` } },
-    });
-    const { data: userData } = await userClient.auth.getUser();
-    if (!userData?.user) return json({ error: "unauthorized" }, 401);
-    const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
-    const { data: me } = await adminCheck
-      .from("profiles").select("role, can_manage_users").eq("id", userData.user.id).single();
-    if (!me || !(me.can_manage_users || me.role === "admin")) return json({ error: "forbidden" }, 403);
-  }
+  // Authorize the cron/service caller (constant-time secret or MIRROR_INVOKE_KEY)
+  // or a signed-in admin/user-manager. Deployed --no-verify-jwt, so this is the
+  // only gate — see authorizePosCaller above (audit S4).
+  const authz = await authorizePosCaller(req, { SUPABASE_URL, SERVICE_KEY, ANON_KEY });
+  if (!authz.ok) return json({ error: authz.error }, authz.status);
 
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const startedAt = new Date().toISOString();
@@ -164,9 +199,9 @@ Deno.serve(async (req) => {
     const nowIso = new Date().toISOString();
     const rows = variants.map((v) => ({
       pos_variant_id: v.id,
-      pos_sku: (v.sku || "").toUpperCase(),
-      product_name: v.product_name || null,
-      brand_name: v.brand_name || null,
+      pos_sku: clampText((v.sku || "").toUpperCase(), 64),
+      product_name: clampText(v.product_name, 200),
+      brand_name: clampText(v.brand_name, 120),
       price: v.price ?? null,
       stock_quantity: Number(v.quantity_in_stock) || 0,
       reorder_level: v.reorder_level ?? null,
@@ -207,10 +242,13 @@ Deno.serve(async (req) => {
     });
     return json({ ok: true, ...summary });
   } catch (err) {
+    // Keep the detail in the manager-readable run row + server logs; return a
+    // generic message to the caller (audit S11).
+    console.error("pos-mirror error", String(err?.stack || err));
     await db.from("pos_sync_runs").insert({
       kind: "mirror", started_at: startedAt, finished_at: new Date().toISOString(),
       ok: false, ok_count: 0, error_count: 1, error: String(err?.message || err),
     });
-    return json({ ok: false, error: String(err?.message || err) }, 500);
+    return json({ ok: false, error: "internal error" }, 500);
   }
 });
