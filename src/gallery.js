@@ -33,6 +33,7 @@ import { loadLatestFailedJobs } from "./joblog.js";
 import { openConsistencyAudit } from "./consistency.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
 import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
+import { sortItems } from "./lib/itemsort.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
 
@@ -865,29 +866,9 @@ async function renderGallery(view, caps, opts = {}) {
   }
 
   // Sort comparators that always push blank (null) numbers to the end.
-  const numAsc = (key) => (a, b) => {
-    const x = a[key], y = b[key];
-    if (x == null && y == null) return 0;
-    if (x == null) return 1; if (y == null) return -1;
-    return x - y;
-  };
-  const numDesc = (key) => (a, b) => {
-    const x = a[key], y = b[key];
-    if (x == null && y == null) return 0;
-    if (x == null) return 1; if (y == null) return -1;
-    return y - x;
-  };
-  function applySort(rows) {
-    const r = rows.slice(); // data is loaded newest-first, so "new" needs no sort
-    if (sortBy === "old") r.reverse();
-    else if (sortBy === "price-asc") r.sort(numAsc("price"));
-    else if (sortBy === "price-desc") r.sort(numDesc("price"));
-    else if (sortBy === "stock-asc") r.sort(numAsc("stock_quantity"));
-    else if (sortBy === "stock-desc") r.sort(numDesc("stock_quantity"));
-    else if (sortBy === "brand") r.sort((a, b) =>
-      (a.brand || a.name || "").localeCompare(b.brand || b.name || "", undefined, { numeric: true }));
-    return r;
-  }
+  // Pure sort lives in src/lib/itemsort.js (tested); this thin wrapper binds the
+  // current sortBy so existing call sites are unchanged. (Q1)
+  const applySort = (rows) => sortItems(rows, sortBy);
 
   // One product card.
   function cardHtml(it) {
