@@ -34,6 +34,7 @@ import { openConsistencyAudit } from "./consistency.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
 import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
 import { sortItems } from "./lib/itemsort.js";
+import { shopState as libShopState, facetValue, buildFacets, searchText, matchesItem } from "./lib/facets.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
 
@@ -633,21 +634,8 @@ async function renderGallery(view, caps, opts = {}) {
   // plus the live mirror. Used verbatim as the facet value, so chip and filter
   // can never disagree.
   const mirrorOf = (it) => (it.pos_variant_id ? posMirror.byVariant.get(it.pos_variant_id) : undefined);
-  function shopState(it) {
-    const s = it.pos_sync_status;
-    if (s === "synced") {
-      if (it.pos_dirty) return "Update pending";
-      const m = mirrorOf(it);
-      if (m && m.is_active === false) return "Retired";
-      if (m && m.stock_quantity <= 0) return "Sold out";
-      if (m && m.reorder_level != null && m.stock_quantity <= m.reorder_level) return "Low stock";
-      return "In shop";
-    }
-    if (s === "error") return "Sync error";
-    if (s === "awaiting_approval" || s === "pending") return "Sending";
-    if (it.status === "approved") return "Queued";
-    return "Not pushed";
-  }
+  // Pure logic in src/lib/facets.js (tested); bind the live mirror lookup here.
+  const shopState = (it) => libShopState(it, mirrorOf);
   // The small ambient chip on every card. Short on the card, full story in the
   // title (long-press / hover). Items the integration hasn't touched get none.
   function posChipHtml(it) {
@@ -679,34 +667,17 @@ async function renderGallery(view, caps, opts = {}) {
     return ` · <span class="freshness${stale ? " stale" : ""}">shop data ${stale ? "may be stale — " : ""}as of ${hhmm}</span>`;
   }
 
-  // ---- faceting engine (ported from the old Find tab) ----
-  // The value of a given facet key for an item.
-  const valueOf = (it, key) => {
-    if (key === "brand") return it.brand || "";
-    if (key === "status") return statusLabel(it.status);
-    if (key === "issue") return ISSUE_META[issueState(it)]?.label || "Clean";
-    if (key === "shop") return shopState(it);
-    if (key === "top") return (categoryPath(it.category_id) || "").split(" › ")[0] || "";
-    if (key === "category") return (categoryPath(it.category_id) || "").split(" › ").pop() || "";
-    const v = it.attributes?.[key];
-    return v === null || v === undefined ? "" : String(v);
+  // ---- faceting engine (pure logic in src/lib/facets.js; bind resolvers here) ----
+  const facetResolvers = {
+    statusLabel,
+    issueLabel: (it) => ISSUE_META[issueState(it)]?.label || "Clean",
+    issueShort: (it) => ISSUE_META[issueState(it)]?.short || "",
+    shopStateOf: shopState,
+    categoryPathOf: categoryPath,
   };
-  // Base fields + every attribute key present, keeping only facets with ≥2 values.
+  const valueOf = (it, key) => facetValue(it, key, facetResolvers);
   const attrKeys = [...new Set(data.flatMap((it) => Object.keys(it.attributes || {})))];
-  const facetCmp = (a, b) => a.localeCompare(b, undefined, { numeric: true });
-  const facets = [];
-  for (const f of [
-    { key: "top", label: "Top category" },
-    { key: "category", label: "Category" },
-    { key: "brand", label: "Brand" },
-    { key: "status", label: "Status" },
-    { key: "issue", label: "Issue" },
-    { key: "shop", label: "Shop" },
-    ...attrKeys.map((k) => ({ key: k, label: fieldLabel(k) })),
-  ]) {
-    const values = [...new Set(data.map((it) => valueOf(it, f.key)).filter(Boolean))].sort(facetCmp);
-    if (values.length >= 2) facets.push({ ...f, values });
-  }
+  const facets = buildFacets(data, { attrKeys, fieldLabel, resolvers: facetResolvers });
   const facetByKey = Object.fromEntries(facets.map((f) => [f.key, f]));
 
   // ---- view state (restored from the session, per surface) ----
@@ -837,33 +808,21 @@ async function renderGallery(view, caps, opts = {}) {
   // Status badge colour per workflow state.
   const stClass = { draft: "st-draft", "needs-review": "st-review", approved: "st-ok", flag: "st-flag" };
 
-  // Free-text search across brand/name/sku/category + all attribute values.
-  const textMatch = (it) => !q || [it.brand, it.name, it.sku, it.categories?.name,
-    ISSUE_META[issueState(it)]?.label, ISSUE_META[issueState(it)]?.short,
-    ...Object.values(it.attributes || {})].join(" ").toLowerCase().includes(q);
-
-  // Does an item pass all active filters? excludeKey lets a facet's own counts
-  // ignore its own selection (standard faceted counting).
-  function matches(it, excludeKey) {
-    if (!textMatch(it)) return false;
-    if (itemIds.size && !itemIds.has(it.id)) return false;
-    if (review) {
-      // The review queue partitions: Ready (complete — glance & approve) vs
-      // Needs work (everything else in triage). No overlap, no gaps.
-      if (!queueMatches(it, issue)) return false;
-    } else if (needsReview && !needsReviewItem(it)) return false;
-    if (noPrice && it.price != null) return false;
-    if (priceMin !== "" && (it.price == null || it.price < Number(priceMin))) return false;
-    if (priceMax !== "" && (it.price == null || it.price > Number(priceMax))) return false;
-    const cutoff = dateCutoff(datePreset);
-    if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
-    for (const k in active) {
-      if (k === excludeKey) continue;
-      const set = active[k];
-      if (set && set.size && !set.has(valueOf(it, k))) return false;
-    }
-    return true;
-  }
+  // Filtering is pure in src/lib/facets.js; bind the live criteria + stateful
+  // resolvers (search haystack, facet value, review-queue predicate) here. The
+  // review queue partitions Ready vs Needs-work (no overlap, no gaps).
+  const passesQueue = (it) =>
+    review ? queueMatches(it, issue) : (!needsReview || needsReviewItem(it));
+  const matchCtx = {
+    textOf: (it) => searchText(it, facetResolvers),
+    valueOf,
+    passesQueue,
+  };
+  // excludeKey lets a facet's own counts ignore its own selection (faceted counting).
+  const matches = (it, excludeKey) => matchesItem(it, {
+    q, itemIds, noPrice, priceMin, priceMax,
+    cutoff: dateCutoff(datePreset), active,
+  }, matchCtx, excludeKey);
 
   // Sort comparators that always push blank (null) numbers to the end.
   // Pure sort lives in src/lib/itemsort.js (tested); this thin wrapper binds the
