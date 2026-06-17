@@ -543,7 +543,12 @@ function fadeInImages(container) {
 // Premium gallery: clean top bar (search · filters · select), active-filter
 // pills, and a contextual selection action bar (replaces the app nav while
 // selecting). Tapping a card opens the editor; tapping its photo the lightbox.
+// Monotonic render token: each renderGallery call claims the next number. If a
+// newer call starts while this one is still awaiting data, the stale one bails
+// before touching the DOM — kills the interleaved-render race (Q1 step 6).
+let renderGallerySeq = 0;
 async function renderGallery(view, caps, opts = {}) {
+  const mySeq = ++renderGallerySeq;
   const review = !!opts.review; // Review tab = this surface pre-filtered to triage
   const state = review ? browseState.review : browseState.gallery;
   const canEdit = !!caps.can_edit;
@@ -592,6 +597,8 @@ async function renderGallery(view, caps, opts = {}) {
   setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
   setShopBadge((syncCounts.errors || 0) + (syncCounts.dirty || 0));
 
+  if (mySeq !== renderGallerySeq) return; // a newer render superseded this one — don't clobber it
+
   if (!data || data.length === 0) {
     // First-run: a coached empty state showing the whole value loop at a glance,
     // instead of a dead-end emoji. (Review's empty state stays terse.)
@@ -628,6 +635,8 @@ async function renderGallery(view, caps, opts = {}) {
   // This user's saved views (cloud-synced; empty if the table isn't there yet).
   const { data: svData } = await supabase.from("saved_views").select("id, name, payload").order("created_at");
   let savedViews = svData || [];
+
+  if (mySeq !== renderGallerySeq) return; // last await done — bail if superseded before the DOM build
 
   // ---- POS shop state (chips + the "Shop" facet) ----
   // One mutually-exclusive state per item, derived from the sync link columns
