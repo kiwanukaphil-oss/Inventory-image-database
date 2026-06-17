@@ -460,10 +460,15 @@ function dateCutoff(v) {
   return d;
 }
 
-// Hard caps on how many rows each browse surface loads at once. Exposed so the
-// UI can warn when a result set is truncated rather than silently hiding items.
-const GALLERY_LIMIT = 1000;
-const FIND_LIMIT = 2000;
+// Hard cap on how many rows the browse surface loads at once. The UI warns when
+// a result set is truncated rather than silently hiding items. True server-side
+// pagination is a deliberate NON-GOAL: the facet counts are computed client-side
+// over the whole set (the product's value), so paging the fetch would break them
+// — that would mean rebuilding faceting in Postgres. Instead we cap generously
+// (raised 1000→2000 for headroom as the catalogue grows) and stay honest about
+// truncation; render virtualization is the future lever if a single shop ever
+// exceeds this. (Phase 5 · P5 pagination decision — see roadmap §10.)
+const GALLERY_LIMIT = 2000;
 
 // A grid of shimmering placeholder cards shown while data loads, so the screen
 // shows the eventual layout immediately instead of a lone centered spinner.
