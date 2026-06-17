@@ -197,9 +197,10 @@ class Pos {
 }
 
 // ---------------------------------------------------------------------------
-// Mapping — ported verbatim from the connector's mapping.js (same semantics,
-// same naming/grouping/payload rules; keep the two in sync until the CLI
-// retires).
+// Mapping — the CANONICAL, UNIT-TESTED spec lives in src/lib/sku.js
+// (test/sku.test.js is the contract). This copy is kept inline because the
+// function must be self-contained for dashboard deploy; the connector's
+// mapping.js is a third copy. KEEP ALL THREE IN SYNC with src/lib/sku.js.
 // ---------------------------------------------------------------------------
 const normalize = (v: unknown) => String(v || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
