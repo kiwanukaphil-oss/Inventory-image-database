@@ -13,6 +13,13 @@ Companion to [V3_ENGINEERING_HARDENING_ROADMAP.md](V3_ENGINEERING_HARDENING_ROAD
   `ROLLBACK:` block with the exact down-SQL. (See 0027/0028/0029 for the pattern.)
 - **Staging first, always.** Apply to `klinemen-catalog-staging`, verify, then prod.
 - **One source of truth.** The repo is authoritative; prod must equal the repo.
+- **Data migrations are one-shot + guarded (S15).** A migration that *mutates rows*
+  (normalisation, placeholder-clearing) must be idempotent AND guarded so a replay
+  can't re-mangle hand-corrected data — prefer keeping bulk data fixes out of the
+  always-applied schema set. The existing data migrations (`0006` seed vocab,
+  `0011` clear placeholders, `0021` normalise waist sizes) are pattern-guarded
+  (they only touch rows still matching the original placeholder/format), so a
+  replay is safe; future data fixes should follow the same rule.
 
 ## Current state (2026-06-16)
 - **Prod** (`rlqtnmahyryvuitaytah`): applied through **0026**. Hardening

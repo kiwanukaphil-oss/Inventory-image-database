@@ -75,11 +75,11 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?*
 | R5 | Guided-pricing cost-snapshot swallowed weakens Undo | Robustness | 🟡 | 3 | No | DONE (skip cost on snapshot fail) |
 | R6 | `imageCompress` silent full-res fallback | Robustness | 🟡 | 3 | No | DONE (oversize reject >10MB) |
 | R7 | Inconsistent double-tap guards | Robustness | 🟡 | 3 | No | DONE (in-flight guards both tools) |
-| Q2 | `esc()` duplicated 5× | Code quality | 🟠 | 4 | No | TODO |
-| Q3 | Swallowed/empty catches | Code quality | 🟡 | 4 | No | TODO |
-| Q4 | Dead code `quickPriceItems` | Code quality | 🟢 | 4 | No | TODO |
-| Q5 | Comment/naming nits vs CLAUDE.md | Code quality | 🟢 | 4 | No | TODO |
-| S15 | Data migrations interleaved with schema DDL | Ops | 🟢 | 4 | No | TODO |
+| Q2 | `esc()` duplicated 5× (actually 14) | Code quality | 🟠 | 4 | No | DONE (single source in ui.js) |
+| Q3 | Swallowed/empty catches | Code quality | 🟡 | 4 | No | DONE (warn on load-bearing failures) |
+| Q4 | Dead code `quickPriceItems` | Code quality | 🟢 | 4 | No | DONE (removed) |
+| Q5 | Comment/naming nits vs CLAUDE.md | Code quality | 🟢 | 4 | No | WON'T FIX (optional; comment coverage already strong, renames = churn) |
+| S15 | Data migrations interleaved with schema DDL | Ops | 🟢 | 4 | No | DONE (documented in MIGRATIONS.md; existing ones guarded) |
 | P6 | Root `.gitignore` missing `supabase/.temp/` | Ops | 🟢 | 4 | No | DONE (added `supabase/.temp/` + `.env.*.local`) |
 | Q1 | `gallery.js` god-module / full re-render | Architecture | 🟠 | 5 | No | TODO |
 | P5 | No pagination; gallery 1000-cap; Shop unbounded | Scalability | 🟠 | 5 | No | TODO |
@@ -269,6 +269,7 @@ Gallery is paginated; `renderGallery` no longer reloads the full dataset per edi
 
 > Append newest entries at the top. Mirror the changelog style of `V3_ROADMAP.md` §10.
 
+- **2026-06-17 — Phase 4 (code-quality hygiene) complete.** Q4 removed dead `quickPriceItems` (`fceaaae`); Q2 collapsed 14 byte-identical `esc()` copies to the single `ui.js` export (`138a010`); Q3 added warnings on load-bearing silent failures in `data.js`/`costs.js` (`85e1dec`); S15 documented the data-vs-schema migration rule in MIGRATIONS.md (existing data migrations are replay-guarded); Q5 accepted as WON'T FIX (optional nit, strong existing coverage). Build + 24 tests green. **Only Phase 5 (scale: P5 pagination, Q1 gallery decomposition, POS-SKU lib) remains — a dedicated effort.**
 - **2026-06-17 — Phase 2 closed; Phase 3 (robustness) complete.** S13 accepted (won't-fix, documented). Phase 3 all committed: R1 editor parsePrice guard (`feecb0c`); R6 oversize-upload reject + R3 honest burst-undo (`9fcdcaf`); R2 bulk-edit partial-failure reporting (`da70aa1`); R7 double-tap guards + R5 safe cost-undo + R4 whole-number precision note (`1fb713c`). Build + 24 tests green throughout. Next: Phase 4 (code-quality: Q2 esc dedup, Q3 catches, Q4 dead code, Q5 nits, S15) then Phase 5 (scale).
 - **2026-06-17 — Phase 1 closed; Phase 2 nearly done.** Owner cleared P1 (staging admin works — upload persisted, confirming the promote-SQL) and P7 (prod managed backups present; a one-off test-restore still recommended). Phase 2: `0030_active_enforcement.sql` — S9 (`auth_is_active()` + `active` baked into all capability helpers + added to broad read policies) and S12 (calibration/item_jobs → capability helpers); Docker-validated (inactive account reads 0 + denied write; 0027 suite still green; commit `5ce9158`). Edge: S11 (generic error responses, detail kept in run row + logs) + S14 (clampText sanitizes POS-mirror text); commit `9440d66`. **S13 (storage per-path ownership) left as an OWNER DECISION** — current keys are random UUIDs with no upsert (clobber risk ≈ nil), so per-user-folder scoping needs an upload-path convention change for marginal gain; decide before closing Phase 2.
 - **2026-06-16 — Phase 1 underway (commit-per-item).** P4 committed (`c37ed20`). T1: Vitest added (`npm test`, gated in CI); pure logic extracted to `src/lib/price.js` (parsePrice/costFromRetail/marginPercent — the suite caught a `Number(null)===0` bug) and `src/lib/readiness-core.js` (dependency-injected; `readiness.js` now a thin wrapper preserving every export). 24 tests green; build green; commits `a83a4a9`, `c12723c`. P2: deploy.yml gains a `test` job that blocks build+deploy (`78…`→pending commit). **POS-SKU JS unit tests deferred with rationale:** the grouping logic lives in the Deno `pos-push` function (and is duplicated in the connector); SKU derivation is already covered by the SQL harness (`derive_item_sku`), and extracting a third shared copy is best done when pos-push/connector are reconciled (folded into Phase 5). Remaining Phase 1 solo: P3 runbook. Owner: P1 staging admin + dev boot; P7 backups.
