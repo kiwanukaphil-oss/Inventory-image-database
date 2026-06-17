@@ -18,7 +18,24 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders, makeJson } from "../_shared/http.ts";
+
+// Self-contained for direct Supabase-dashboard deploy (no CLI bundling of
+// _shared). Origin-allowlisted CORS (audit S5): set ALLOWED_ORIGINS to add origins.
+const DEFAULT_ALLOWED = "https://klinemen-catalog.com";
+function corsHeaders(req) {
+  const allowed = (Deno.env.get("ALLOWED_ORIGINS") || DEFAULT_ALLOWED).split(",").map((s) => s.trim()).filter(Boolean);
+  const origin = req.headers.get("Origin") || "";
+  const headers = {
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+  if (allowed.includes("*")) headers["Access-Control-Allow-Origin"] = "*";
+  else if (origin && allowed.includes(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
+const makeJson = (cors) => (body, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 
 const BAN_FOREVER = "876000h"; // ~100 years
 const ALLOWED_ROLES = ["admin", "editor", "viewer", "custom"];

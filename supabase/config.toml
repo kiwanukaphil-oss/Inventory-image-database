@@ -14,8 +14,8 @@ verify_jwt = true
 verify_jwt = true
 
 # The POS sync functions are invoked by cron with MIRROR_INVOKE_KEY (not a JWT)
-# and by admins with a JWT; they authorize themselves (supabase/functions/
-# _shared/auth.ts), so the gateway JWT check must stay OFF.
+# and by admins with a JWT; they authorize themselves (the authorizePosCaller
+# helper inlined in each), so the gateway JWT check must stay OFF.
 [functions.pos-push]
 verify_jwt = false
 

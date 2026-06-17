@@ -24,8 +24,54 @@
 // =============================================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { corsHeaders, makeJson } from "../_shared/http.ts";
-import { authorizePosCaller } from "../_shared/auth.ts";
+// Self-contained for direct Supabase-dashboard deploy (no CLI bundling of _shared).
+// Origin-allowlisted CORS (S5) + constant-time, fail-closed POS-caller auth (S4).
+// These two helpers are duplicated across the 3 pos-* functions — keep them in sync.
+const DEFAULT_ALLOWED = "https://klinemen-catalog.com";
+function corsHeaders(req) {
+  const allowed = (Deno.env.get("ALLOWED_ORIGINS") || DEFAULT_ALLOWED).split(",").map((s) => s.trim()).filter(Boolean);
+  const origin = req.headers.get("Origin") || "";
+  const headers = {
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+  if (allowed.includes("*")) headers["Access-Control-Allow-Origin"] = "*";
+  else if (origin && allowed.includes(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  return headers;
+}
+const makeJson = (cors) => (body, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
+
+async function timingSafeEqual(a, b) {
+  const enc = new TextEncoder();
+  const [ha, hb] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const va = new Uint8Array(ha), vb = new Uint8Array(hb);
+  let diff = 0;
+  for (let i = 0; i < va.length; i++) diff |= va[i] ^ vb[i];
+  return diff === 0;
+}
+async function authorizePosCaller(req, env) {
+  const { SUPABASE_URL, SERVICE_KEY, ANON_KEY } = env;
+  if (!SERVICE_KEY || SERVICE_KEY.length < 20) return { ok: false, status: 500, error: "server auth not configured" };
+  const invokeKey = Deno.env.get("MIRROR_INVOKE_KEY") || "";
+  if (invokeKey && invokeKey.length < 32) console.warn("MIRROR_INVOKE_KEY shorter than 32 chars — rotate to a stronger value.");
+  const bearer = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (bearer) {
+    if (await timingSafeEqual(bearer, SERVICE_KEY)) return { ok: true };
+    if (invokeKey && (await timingSafeEqual(bearer, invokeKey))) return { ok: true };
+  }
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, { global: { headers: { Authorization: `Bearer ${bearer}` } } });
+  const { data: userData } = await userClient.auth.getUser();
+  if (!userData?.user) return { ok: false, status: 401, error: "unauthorized" };
+  const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+  const { data: me } = await adminCheck.from("profiles").select("role, can_manage_users").eq("id", userData.user.id).maybeSingle();
+  if (!me || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
+  return { ok: true };
+}
 
 const MAX_FINDINGS = 50;
 
@@ -86,7 +132,7 @@ Deno.serve(async (req) => {
   const POS_BASE_URL = (Deno.env.get("POS_BASE_URL") || "").replace(/\/$/, "");
 
   // Authorize: constant-time service secret / MIRROR_INVOKE_KEY, or a signed-in
-  // admin/user-manager. Deployed --no-verify-jwt — see _shared/auth.ts (S4).
+  // admin/user-manager. Deployed --no-verify-jwt — see authorizePosCaller above (S4).
   const authz = await authorizePosCaller(req, { SUPABASE_URL, SERVICE_KEY, ANON_KEY });
   if (!authz.ok) return json({ error: authz.error }, authz.status);
 
