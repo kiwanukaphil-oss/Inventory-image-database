@@ -45,30 +45,32 @@ This roadmap is written for **current and future engineers** — including peopl
 
 Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?** = must be resolved before public/multi-user launch. Status: `TODO` / `IN PROGRESS` / `IN REVIEW` / `DONE` / `WON'T FIX (rationale)`.
 
+> **Coverage (2026-06-17):** Phases 0–4 are **100% complete and live in prod** (every item DONE, except two consciously-accepted WON'T-FIX Lows: S13, Q5). The **only** open work is **Phase 5** (Q1 gallery decomposition + the gallery-pagination half of P5 + the POS-SKU lib) — in progress on the `phase5/gallery-decomposition` branch. When Phase 5 lands, the roadmap is fully closed.
+
 | ID | Title | Area | Sev | Phase | Before prod? | Status |
 |----|-------|------|-----|-------|--------------|--------|
-| S1 | Self-promotion via `profiles` UPDATE | Security/RLS | 🔴 | 0 | Yes | IN REVIEW |
-| S2 | `manage-users` admin-minting + no password policy | Security/Edge | 🔴 | 0 | Yes | IN REVIEW |
-| S3 | Cost redaction app-only (item_events editor-readable) | Security/RLS | 🟠 | 0 | Yes | IN REVIEW |
-| R1 | Editor accepts negative/NaN price & cost | Robustness | 🔴 | 0/3 | Yes | DONE (DB CHECK S7 + editor parsePrice guard) |
-| S7 | Missing DB CHECK/NOT NULL/uniqueness constraints | Data integrity | 🟠 | 0 | Yes | IN REVIEW |
-| S4 | Fragile/non-constant-time secret gate on POS fns | Security/Edge | 🔴 | 0 | Yes | IN REVIEW |
-| S5 | Wildcard CORS on admin + paid endpoints | Security/Edge | 🟠 | 0 | Yes | IN REVIEW |
-| S6 | No rate/cost cap on paid `ai-extract` | Security/Edge | 🟠 | 0 | Yes | IN REVIEW |
-| DI1 | `pos-push` double-receipt race (no run lock) | Data integrity | 🟠 | 0 | Yes | IN REVIEW |
-| P1 | No dev/prod environment separation | Ops | 🔴 | 1 | Yes | IN PROGRESS (staging `klinemen-catalog-staging` live; `.env`→staging; migs 0001–0028 applied+verified; pending: admin user + dev boot) |
-| T1 | Zero automated tests | Testing | 🔴 | 1 | Yes | IN PROGRESS (Vitest: price + readiness + imagehash, 24 tests; lib/ extraction. POS-SKU JS units deferred — see note) |
-| P2 | CI has no test/lint gate before deploy | Ops/CI | 🟠 | 1 | Yes | IN REVIEW (test job gates build+deploy) |
-| P3 | Manual migrations, no rollback story | Ops | 🟠 | 1 | Yes | IN REVIEW (docs/V3_upgrade/MIGRATIONS.md + per-migration ROLLBACK blocks) |
-| P4 | No error tracking / monitoring | Ops | 🟠 | 1 | Yes | IN REVIEW (0029 client_errors + src/errorlog.js + main.js hook; validated) |
-| P7 | Backups/PITR unverified | Ops | 🟠 | 1 | Yes | TODO |
-| S8 | Audit log not tamper-resistant; actor spoofable | Security/RLS | 🟠 | 0 | Yes | IN REVIEW (pulled into 0027) |
-| S9 | `profiles.active` not enforced in RLS | Security/RLS | 🟠 | 2 | Cond. | IN REVIEW (0030, validated) |
-| S10 | `pos-push` unbounded `limit` | Security/Edge | 🟡 | 0 | No | IN REVIEW (clamped in pos-push) |
-| S11 | Raw downstream error strings to client | Security/Edge | 🟡 | 2 | No | IN REVIEW (generic errors, detail server-side) |
-| S12 | Role-vs-capability dual model | Security/RLS | 🟡 | 2 | No | IN REVIEW (0030: calibration+item_jobs→caps) |
+| S1 | Self-promotion via `profiles` UPDATE | Security/RLS | 🔴 | 0 | Yes | DONE · live in prod |
+| S2 | `manage-users` admin-minting + no password policy | Security/Edge | 🔴 | 0 | Yes | DONE · live in prod |
+| S3 | Cost redaction app-only (item_events editor-readable) | Security/RLS | 🟠 | 0 | Yes | DONE · live in prod |
+| R1 | Editor accepts negative/NaN price & cost | Robustness | 🔴 | 0/3 | Yes | DONE · live (DB CHECK S7 + editor parsePrice) |
+| S7 | Missing DB CHECK/NOT NULL/uniqueness constraints | Data integrity | 🟠 | 0 | Yes | DONE · live in prod |
+| S4 | Fragile/non-constant-time secret gate on POS fns | Security/Edge | 🔴 | 0 | Yes | DONE · live in prod |
+| S5 | Wildcard CORS on admin + paid endpoints | Security/Edge | 🟠 | 0 | Yes | DONE · live in prod |
+| S6 | No rate/cost cap on paid `ai-extract` | Security/Edge | 🟠 | 0 | Yes | DONE · live in prod |
+| DI1 | `pos-push` double-receipt race (no run lock) | Data integrity | 🟠 | 0 | Yes | DONE · live in prod |
+| P1 | No dev/prod environment separation | Ops | 🔴 | 1 | Yes | DONE (staging klinemen-catalog-staging; admin + dev boot confirmed) |
+| T1 | Zero automated tests | Testing | 🔴 | 1 | Yes | DONE (Vitest, 43 tests, CI-gated; POS-SKU units land with the POS-SKU lib step) |
+| P2 | CI has no test/lint gate before deploy | Ops/CI | 🟠 | 1 | Yes | DONE · live (test job gates deploy) |
+| P3 | Manual migrations, no rollback story | Ops | 🟠 | 1 | Yes | DONE (MIGRATIONS.md + per-migration ROLLBACK blocks) |
+| P4 | No error tracking / monitoring | Ops | 🟠 | 1 | Yes | DONE · live (client_errors; 0 errors post-launch) |
+| P7 | Backups/PITR unverified | Ops | 🟠 | 1 | Yes | DONE (managed backups present; one-off test-restore recommended) |
+| S8 | Audit log not tamper-resistant; actor spoofable | Security/RLS | 🟠 | 0 | Yes | DONE · live in prod (0027) |
+| S9 | `profiles.active` not enforced in RLS | Security/RLS | 🟠 | 2 | Cond. | DONE · live in prod (0030) |
+| S10 | `pos-push` unbounded `limit` | Security/Edge | 🟡 | 0 | No | DONE · live in prod |
+| S11 | Raw downstream error strings to client | Security/Edge | 🟡 | 2 | No | DONE · live in prod |
+| S12 | Role-vs-capability dual model | Security/RLS | 🟡 | 2 | No | DONE · live in prod (0030) |
 | S13 | Storage has no per-path ownership | Security/RLS | 🟡 | 2 | No | WON'T FIX (accepted: random-UUID keys + no upsert ⇒ no clobber; revisit at upload refactor) |
-| S14 | POS-mirror text upserted unsanitized | Security/Edge | 🟡 | 2 | No | IN REVIEW (clampText in pos-mirror) |
+| S14 | POS-mirror text upserted unsanitized | Security/Edge | 🟡 | 2 | No | DONE · live in prod (clampText) |
 | R2 | Bulk attribute edit N+1 aborts mid-batch | Robustness | 🟠 | 3 | No | DONE (per-item failure report) |
 | R3 | Burst-undo delete best-effort → orphan | Robustness | 🟠 | 3 | No | DONE (re-surface + retry) |
 | R4 | Pricing float/rounding precision | Robustness | 🟡 | 3 | No | DONE (whole-number documented) |
@@ -81,7 +83,7 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?*
 | Q5 | Comment/naming nits vs CLAUDE.md | Code quality | 🟢 | 4 | No | WON'T FIX (optional; comment coverage already strong, renames = churn) |
 | S15 | Data migrations interleaved with schema DDL | Ops | 🟢 | 4 | No | DONE (documented in MIGRATIONS.md; existing ones guarded) |
 | P6 | Root `.gitignore` missing `supabase/.temp/` | Ops | 🟢 | 4 | No | DONE (added `supabase/.temp/` + `.env.*.local`) |
-| Q1 | `gallery.js` god-module / full re-render | Architecture | 🟠 | 5 | No | IN PROGRESS (sort→lib/itemsort.js extracted+tested; faceting/selection/bulk = review-gated, see §10 plan) |
+| Q1 | `gallery.js` god-module / full re-render | Architecture | 🟠 | 5 | No | IN PROGRESS · phase5 branch (sort + faceting → lib/*, tested; selection/filterSheet/bulk/render-token/pagination remain — §10) |
 | P5 | No pagination; gallery 1000-cap; Shop unbounded | Scalability | 🟠 | 5 | No | DONE for query caps (Shop/export); gallery infinite-scroll folded into Q1 |
 
 ---
