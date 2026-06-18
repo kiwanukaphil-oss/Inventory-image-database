@@ -34,6 +34,7 @@ import { openConsistencyAudit } from "./consistency.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
 import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
 import { sortItems } from "./lib/itemsort.js";
+import { shopState as libShopState, facetValue, buildFacets, searchText, matchesItem } from "./lib/facets.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
 
@@ -459,10 +460,15 @@ function dateCutoff(v) {
   return d;
 }
 
-// Hard caps on how many rows each browse surface loads at once. Exposed so the
-// UI can warn when a result set is truncated rather than silently hiding items.
-const GALLERY_LIMIT = 1000;
-const FIND_LIMIT = 2000;
+// Hard cap on how many rows the browse surface loads at once. The UI warns when
+// a result set is truncated rather than silently hiding items. True server-side
+// pagination is a deliberate NON-GOAL: the facet counts are computed client-side
+// over the whole set (the product's value), so paging the fetch would break them
+// — that would mean rebuilding faceting in Postgres. Instead we cap generously
+// (raised 1000→2000 for headroom as the catalogue grows) and stay honest about
+// truncation; render virtualization is the future lever if a single shop ever
+// exceeds this. (Phase 5 · P5 pagination decision — see roadmap §10.)
+const GALLERY_LIMIT = 2000;
 
 // A grid of shimmering placeholder cards shown while data loads, so the screen
 // shows the eventual layout immediately instead of a lone centered spinner.
@@ -542,7 +548,12 @@ function fadeInImages(container) {
 // Premium gallery: clean top bar (search · filters · select), active-filter
 // pills, and a contextual selection action bar (replaces the app nav while
 // selecting). Tapping a card opens the editor; tapping its photo the lightbox.
+// Monotonic render token: each renderGallery call claims the next number. If a
+// newer call starts while this one is still awaiting data, the stale one bails
+// before touching the DOM — kills the interleaved-render race (Q1 step 6).
+let renderGallerySeq = 0;
 async function renderGallery(view, caps, opts = {}) {
+  const mySeq = ++renderGallerySeq;
   const review = !!opts.review; // Review tab = this surface pre-filtered to triage
   const state = review ? browseState.review : browseState.gallery;
   const canEdit = !!caps.can_edit;
@@ -591,6 +602,8 @@ async function renderGallery(view, caps, opts = {}) {
   setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
   setShopBadge((syncCounts.errors || 0) + (syncCounts.dirty || 0));
 
+  if (mySeq !== renderGallerySeq) return; // a newer render superseded this one — don't clobber it
+
   if (!data || data.length === 0) {
     // First-run: a coached empty state showing the whole value loop at a glance,
     // instead of a dead-end emoji. (Review's empty state stays terse.)
@@ -628,26 +641,15 @@ async function renderGallery(view, caps, opts = {}) {
   const { data: svData } = await supabase.from("saved_views").select("id, name, payload").order("created_at");
   let savedViews = svData || [];
 
+  if (mySeq !== renderGallerySeq) return; // last await done — bail if superseded before the DOM build
+
   // ---- POS shop state (chips + the "Shop" facet) ----
   // One mutually-exclusive state per item, derived from the sync link columns
   // plus the live mirror. Used verbatim as the facet value, so chip and filter
   // can never disagree.
   const mirrorOf = (it) => (it.pos_variant_id ? posMirror.byVariant.get(it.pos_variant_id) : undefined);
-  function shopState(it) {
-    const s = it.pos_sync_status;
-    if (s === "synced") {
-      if (it.pos_dirty) return "Update pending";
-      const m = mirrorOf(it);
-      if (m && m.is_active === false) return "Retired";
-      if (m && m.stock_quantity <= 0) return "Sold out";
-      if (m && m.reorder_level != null && m.stock_quantity <= m.reorder_level) return "Low stock";
-      return "In shop";
-    }
-    if (s === "error") return "Sync error";
-    if (s === "awaiting_approval" || s === "pending") return "Sending";
-    if (it.status === "approved") return "Queued";
-    return "Not pushed";
-  }
+  // Pure logic in src/lib/facets.js (tested); bind the live mirror lookup here.
+  const shopState = (it) => libShopState(it, mirrorOf);
   // The small ambient chip on every card. Short on the card, full story in the
   // title (long-press / hover). Items the integration hasn't touched get none.
   function posChipHtml(it) {
@@ -679,34 +681,17 @@ async function renderGallery(view, caps, opts = {}) {
     return ` · <span class="freshness${stale ? " stale" : ""}">shop data ${stale ? "may be stale — " : ""}as of ${hhmm}</span>`;
   }
 
-  // ---- faceting engine (ported from the old Find tab) ----
-  // The value of a given facet key for an item.
-  const valueOf = (it, key) => {
-    if (key === "brand") return it.brand || "";
-    if (key === "status") return statusLabel(it.status);
-    if (key === "issue") return ISSUE_META[issueState(it)]?.label || "Clean";
-    if (key === "shop") return shopState(it);
-    if (key === "top") return (categoryPath(it.category_id) || "").split(" › ")[0] || "";
-    if (key === "category") return (categoryPath(it.category_id) || "").split(" › ").pop() || "";
-    const v = it.attributes?.[key];
-    return v === null || v === undefined ? "" : String(v);
+  // ---- faceting engine (pure logic in src/lib/facets.js; bind resolvers here) ----
+  const facetResolvers = {
+    statusLabel,
+    issueLabel: (it) => ISSUE_META[issueState(it)]?.label || "Clean",
+    issueShort: (it) => ISSUE_META[issueState(it)]?.short || "",
+    shopStateOf: shopState,
+    categoryPathOf: categoryPath,
   };
-  // Base fields + every attribute key present, keeping only facets with ≥2 values.
+  const valueOf = (it, key) => facetValue(it, key, facetResolvers);
   const attrKeys = [...new Set(data.flatMap((it) => Object.keys(it.attributes || {})))];
-  const facetCmp = (a, b) => a.localeCompare(b, undefined, { numeric: true });
-  const facets = [];
-  for (const f of [
-    { key: "top", label: "Top category" },
-    { key: "category", label: "Category" },
-    { key: "brand", label: "Brand" },
-    { key: "status", label: "Status" },
-    { key: "issue", label: "Issue" },
-    { key: "shop", label: "Shop" },
-    ...attrKeys.map((k) => ({ key: k, label: fieldLabel(k) })),
-  ]) {
-    const values = [...new Set(data.map((it) => valueOf(it, f.key)).filter(Boolean))].sort(facetCmp);
-    if (values.length >= 2) facets.push({ ...f, values });
-  }
+  const facets = buildFacets(data, { attrKeys, fieldLabel, resolvers: facetResolvers });
   const facetByKey = Object.fromEntries(facets.map((f) => [f.key, f]));
 
   // ---- view state (restored from the session, per surface) ----
@@ -776,10 +761,58 @@ async function renderGallery(view, caps, opts = {}) {
   };
 
   // Re-render after an edit/bulk action without losing the user's scroll place.
-  const refresh = () => {
+  // Pass changedIds to patch ONLY those rows in place (Q1 step 6b) instead of
+  // cold-reloading the whole catalogue; no args = full reload (bulk/delete).
+  const refresh = (changedIds) => {
     const y = view.scrollTop;
+    if (Array.isArray(changedIds) && changedIds.length) {
+      return patchItems(changedIds).then(() => view.scrollTo(0, y));
+    }
     return renderGallery(view, caps, opts).then(() => view.scrollTo(0, y));
   };
+
+  // Targeted refresh: re-fetch only the changed rows + their meta and patch the
+  // in-memory model (byId/data/signed), then redraw — the reconciler updates just
+  // the affected cards and draw() recomputes the segment counts. Re-fetching the
+  // authoritative rows avoids local drift; any error falls back to a full reload.
+  async function patchItems(ids) {
+    const { data: fresh, error } = await supabase
+      .from("items")
+      .select("id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_dirty, categories(name)")
+      .in("id", ids);
+    if (error) return renderGallery(view, caps, opts);
+    const [jobs, acts, costs] = await Promise.all([
+      loadLatestFailedJobs(ids, "ai_fill"),
+      loadItemActivitySummaries(ids),
+      loadCostPresence(ids, { canViewCost: !!caps.can_view_cost }),
+    ]);
+    const newPaths = (fresh || []).map((r) => r.image_path).filter((p) => p && !signed[p]);
+    if (newPaths.length) {
+      const { data: urls } = await supabase.storage.from("product-images").createSignedUrls(newPaths, 3600);
+      (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
+    }
+    const returned = new Set();
+    for (const row of fresh || []) {
+      returned.add(row.id);
+      const job = jobs.get(row.id); if (job) row.latest_ai_job = job;
+      const activity = acts.get(row.id); if (activity) row.activity = activity;
+      if (costs.has(row.id)) row.has_cost_price = costs.get(row.id);
+      const idx = data.findIndex((d) => d.id === row.id);
+      if (idx >= 0) data[idx] = row; else data.unshift(row);
+      byId[row.id] = row;
+    }
+    for (const id of ids) { // requested but not returned = deleted
+      if (returned.has(id)) continue;
+      delete byId[id];
+      const idx = data.findIndex((d) => d.id === id);
+      if (idx >= 0) data.splice(idx, 1);
+    }
+    draw();
+    // draw() keeps the in-surface seg counts live; the two nav badges are set
+    // once per full render, so refresh them here too.
+    setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
+    loadSyncCounts(["errors", "dirty"]).then((sc) => setShopBadge((sc.errors || 0) + (sc.dirty || 0))).catch(() => {});
+  }
 
   // ---- selection mode (phone-gallery style multi-select) ----
   const byId = Object.fromEntries(data.map((d) => [d.id, d]));
@@ -837,33 +870,21 @@ async function renderGallery(view, caps, opts = {}) {
   // Status badge colour per workflow state.
   const stClass = { draft: "st-draft", "needs-review": "st-review", approved: "st-ok", flag: "st-flag" };
 
-  // Free-text search across brand/name/sku/category + all attribute values.
-  const textMatch = (it) => !q || [it.brand, it.name, it.sku, it.categories?.name,
-    ISSUE_META[issueState(it)]?.label, ISSUE_META[issueState(it)]?.short,
-    ...Object.values(it.attributes || {})].join(" ").toLowerCase().includes(q);
-
-  // Does an item pass all active filters? excludeKey lets a facet's own counts
-  // ignore its own selection (standard faceted counting).
-  function matches(it, excludeKey) {
-    if (!textMatch(it)) return false;
-    if (itemIds.size && !itemIds.has(it.id)) return false;
-    if (review) {
-      // The review queue partitions: Ready (complete — glance & approve) vs
-      // Needs work (everything else in triage). No overlap, no gaps.
-      if (!queueMatches(it, issue)) return false;
-    } else if (needsReview && !needsReviewItem(it)) return false;
-    if (noPrice && it.price != null) return false;
-    if (priceMin !== "" && (it.price == null || it.price < Number(priceMin))) return false;
-    if (priceMax !== "" && (it.price == null || it.price > Number(priceMax))) return false;
-    const cutoff = dateCutoff(datePreset);
-    if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
-    for (const k in active) {
-      if (k === excludeKey) continue;
-      const set = active[k];
-      if (set && set.size && !set.has(valueOf(it, k))) return false;
-    }
-    return true;
-  }
+  // Filtering is pure in src/lib/facets.js; bind the live criteria + stateful
+  // resolvers (search haystack, facet value, review-queue predicate) here. The
+  // review queue partitions Ready vs Needs-work (no overlap, no gaps).
+  const passesQueue = (it) =>
+    review ? queueMatches(it, issue) : (!needsReview || needsReviewItem(it));
+  const matchCtx = {
+    textOf: (it) => searchText(it, facetResolvers),
+    valueOf,
+    passesQueue,
+  };
+  // excludeKey lets a facet's own counts ignore its own selection (faceted counting).
+  const matches = (it, excludeKey) => matchesItem(it, {
+    q, itemIds, noPrice, priceMin, priceMax,
+    cutoff: dateCutoff(datePreset), active,
+  }, matchCtx, excludeKey);
 
   // Sort comparators that always push blank (null) numbers to the end.
   // Pure sort lives in src/lib/itemsort.js (tested); this thin wrapper binds the
@@ -1090,7 +1111,7 @@ async function renderGallery(view, caps, opts = {}) {
   const openItemEditor = (id, focusIssue) => openEditor(
     id,
     caps,
-    refresh,
+    () => refresh([id]), // targeted refresh: re-fetch only the edited item (Q1 step 6b)
     review ? { focusIssue: focusIssue || reviewFocusIssue(byId[id]) } : {}
   );
 

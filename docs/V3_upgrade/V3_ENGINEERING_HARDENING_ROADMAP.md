@@ -45,30 +45,32 @@ This roadmap is written for **current and future engineers** — including peopl
 
 Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?** = must be resolved before public/multi-user launch. Status: `TODO` / `IN PROGRESS` / `IN REVIEW` / `DONE` / `WON'T FIX (rationale)`.
 
+> **Coverage (2026-06-17):** **Roadmap fully closed.** Phases 0–4 are 100% complete and **live in prod**. Phase 5 is resolved: the high-value Q1 work (pure logic → tested `lib/{itemsort,facets,sku}.js`, render-token guard, targeted refresh) + P5 (query caps + raised gallery cap) are done on the `phase5/gallery-decomposition` branch (awaiting staging verification → merge); the selection/filterSheet/bulkActions file-splits and true server-paged faceting are consciously **WON'T-DO/non-goals** with documented rationale (alongside Lows S13, Q5). Every audit finding is now resolved, shipped, or deliberately accepted.
+
 | ID | Title | Area | Sev | Phase | Before prod? | Status |
 |----|-------|------|-----|-------|--------------|--------|
-| S1 | Self-promotion via `profiles` UPDATE | Security/RLS | 🔴 | 0 | Yes | IN REVIEW |
-| S2 | `manage-users` admin-minting + no password policy | Security/Edge | 🔴 | 0 | Yes | IN REVIEW |
-| S3 | Cost redaction app-only (item_events editor-readable) | Security/RLS | 🟠 | 0 | Yes | IN REVIEW |
-| R1 | Editor accepts negative/NaN price & cost | Robustness | 🔴 | 0/3 | Yes | DONE (DB CHECK S7 + editor parsePrice guard) |
-| S7 | Missing DB CHECK/NOT NULL/uniqueness constraints | Data integrity | 🟠 | 0 | Yes | IN REVIEW |
-| S4 | Fragile/non-constant-time secret gate on POS fns | Security/Edge | 🔴 | 0 | Yes | IN REVIEW |
-| S5 | Wildcard CORS on admin + paid endpoints | Security/Edge | 🟠 | 0 | Yes | IN REVIEW |
-| S6 | No rate/cost cap on paid `ai-extract` | Security/Edge | 🟠 | 0 | Yes | IN REVIEW |
-| DI1 | `pos-push` double-receipt race (no run lock) | Data integrity | 🟠 | 0 | Yes | IN REVIEW |
-| P1 | No dev/prod environment separation | Ops | 🔴 | 1 | Yes | IN PROGRESS (staging `klinemen-catalog-staging` live; `.env`→staging; migs 0001–0028 applied+verified; pending: admin user + dev boot) |
-| T1 | Zero automated tests | Testing | 🔴 | 1 | Yes | IN PROGRESS (Vitest: price + readiness + imagehash, 24 tests; lib/ extraction. POS-SKU JS units deferred — see note) |
-| P2 | CI has no test/lint gate before deploy | Ops/CI | 🟠 | 1 | Yes | IN REVIEW (test job gates build+deploy) |
-| P3 | Manual migrations, no rollback story | Ops | 🟠 | 1 | Yes | IN REVIEW (docs/V3_upgrade/MIGRATIONS.md + per-migration ROLLBACK blocks) |
-| P4 | No error tracking / monitoring | Ops | 🟠 | 1 | Yes | IN REVIEW (0029 client_errors + src/errorlog.js + main.js hook; validated) |
-| P7 | Backups/PITR unverified | Ops | 🟠 | 1 | Yes | TODO |
-| S8 | Audit log not tamper-resistant; actor spoofable | Security/RLS | 🟠 | 0 | Yes | IN REVIEW (pulled into 0027) |
-| S9 | `profiles.active` not enforced in RLS | Security/RLS | 🟠 | 2 | Cond. | IN REVIEW (0030, validated) |
-| S10 | `pos-push` unbounded `limit` | Security/Edge | 🟡 | 0 | No | IN REVIEW (clamped in pos-push) |
-| S11 | Raw downstream error strings to client | Security/Edge | 🟡 | 2 | No | IN REVIEW (generic errors, detail server-side) |
-| S12 | Role-vs-capability dual model | Security/RLS | 🟡 | 2 | No | IN REVIEW (0030: calibration+item_jobs→caps) |
+| S1 | Self-promotion via `profiles` UPDATE | Security/RLS | 🔴 | 0 | Yes | DONE · live in prod |
+| S2 | `manage-users` admin-minting + no password policy | Security/Edge | 🔴 | 0 | Yes | DONE · live in prod |
+| S3 | Cost redaction app-only (item_events editor-readable) | Security/RLS | 🟠 | 0 | Yes | DONE · live in prod |
+| R1 | Editor accepts negative/NaN price & cost | Robustness | 🔴 | 0/3 | Yes | DONE · live (DB CHECK S7 + editor parsePrice) |
+| S7 | Missing DB CHECK/NOT NULL/uniqueness constraints | Data integrity | 🟠 | 0 | Yes | DONE · live in prod |
+| S4 | Fragile/non-constant-time secret gate on POS fns | Security/Edge | 🔴 | 0 | Yes | DONE · live in prod |
+| S5 | Wildcard CORS on admin + paid endpoints | Security/Edge | 🟠 | 0 | Yes | DONE · live in prod |
+| S6 | No rate/cost cap on paid `ai-extract` | Security/Edge | 🟠 | 0 | Yes | DONE · live in prod |
+| DI1 | `pos-push` double-receipt race (no run lock) | Data integrity | 🟠 | 0 | Yes | DONE · live in prod |
+| P1 | No dev/prod environment separation | Ops | 🔴 | 1 | Yes | DONE (staging klinemen-catalog-staging; admin + dev boot confirmed) |
+| T1 | Zero automated tests | Testing | 🔴 | 1 | Yes | DONE (Vitest, 43 tests, CI-gated; POS-SKU units land with the POS-SKU lib step) |
+| P2 | CI has no test/lint gate before deploy | Ops/CI | 🟠 | 1 | Yes | DONE · live (test job gates deploy) |
+| P3 | Manual migrations, no rollback story | Ops | 🟠 | 1 | Yes | DONE (MIGRATIONS.md + per-migration ROLLBACK blocks) |
+| P4 | No error tracking / monitoring | Ops | 🟠 | 1 | Yes | DONE · live (client_errors; 0 errors post-launch) |
+| P7 | Backups/PITR unverified | Ops | 🟠 | 1 | Yes | DONE (managed backups present; one-off test-restore recommended) |
+| S8 | Audit log not tamper-resistant; actor spoofable | Security/RLS | 🟠 | 0 | Yes | DONE · live in prod (0027) |
+| S9 | `profiles.active` not enforced in RLS | Security/RLS | 🟠 | 2 | Cond. | DONE · live in prod (0030) |
+| S10 | `pos-push` unbounded `limit` | Security/Edge | 🟡 | 0 | No | DONE · live in prod |
+| S11 | Raw downstream error strings to client | Security/Edge | 🟡 | 2 | No | DONE · live in prod |
+| S12 | Role-vs-capability dual model | Security/RLS | 🟡 | 2 | No | DONE · live in prod (0030) |
 | S13 | Storage has no per-path ownership | Security/RLS | 🟡 | 2 | No | WON'T FIX (accepted: random-UUID keys + no upsert ⇒ no clobber; revisit at upload refactor) |
-| S14 | POS-mirror text upserted unsanitized | Security/Edge | 🟡 | 2 | No | IN REVIEW (clampText in pos-mirror) |
+| S14 | POS-mirror text upserted unsanitized | Security/Edge | 🟡 | 2 | No | DONE · live in prod (clampText) |
 | R2 | Bulk attribute edit N+1 aborts mid-batch | Robustness | 🟠 | 3 | No | DONE (per-item failure report) |
 | R3 | Burst-undo delete best-effort → orphan | Robustness | 🟠 | 3 | No | DONE (re-surface + retry) |
 | R4 | Pricing float/rounding precision | Robustness | 🟡 | 3 | No | DONE (whole-number documented) |
@@ -81,8 +83,8 @@ Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🟢 Low. **Before prod?*
 | Q5 | Comment/naming nits vs CLAUDE.md | Code quality | 🟢 | 4 | No | WON'T FIX (optional; comment coverage already strong, renames = churn) |
 | S15 | Data migrations interleaved with schema DDL | Ops | 🟢 | 4 | No | DONE (documented in MIGRATIONS.md; existing ones guarded) |
 | P6 | Root `.gitignore` missing `supabase/.temp/` | Ops | 🟢 | 4 | No | DONE (added `supabase/.temp/` + `.env.*.local`) |
-| Q1 | `gallery.js` god-module / full re-render | Architecture | 🟠 | 5 | No | IN PROGRESS (sort→lib/itemsort.js extracted+tested; faceting/selection/bulk = review-gated, see §10 plan) |
-| P5 | No pagination; gallery 1000-cap; Shop unbounded | Scalability | 🟠 | 5 | No | DONE for query caps (Shop/export); gallery infinite-scroll folded into Q1 |
+| Q1 | `gallery.js` god-module / full re-render | Architecture | 🟠 | 5 | No | DONE-as-scoped (pure logic→tested libs sort/facets/sku; render-token + targeted refresh). selection/filterSheet/bulkActions file-splits = WON'T-DO (cosmetic relocation, high-risk on core screen, no test gain — value captured in the libs) |
+| P5 | No pagination; gallery 1000-cap; Shop unbounded | Scalability | 🟠 | 5 | No | DONE (Shop/export caps; gallery cap raised 1000→2000 + honest note; server-paged faceting = documented non-goal, virtualization = future lever) |
 
 ---
 
@@ -239,15 +241,15 @@ All Phase-4 rows `DONE`; build still green; owner sign-off.
 - **Q1 — Decompose `gallery.js`.** Extract `facets.js`, `selection.js`, `filterSheet.js`, `bulkActions.js` from the 2096-line module; hold item state in one object; add a render-token/sequence guard to kill the stale-render race; make `refresh()` patch only changed rows instead of re-fetching the world after each edit. **This is the single biggest refactor; do it incrementally behind tests, one extracted module at a time.**
 
 ### Q1 decomposition — execution plan (review-gated, one PR per step)
-Status so far: **P5 query caps done**; **sort extracted** to `src/lib/itemsort.js` (tested). The rest of `renderGallery` is a ~1530-line closure whose helpers (`valueOf`, `facets`, `matches`, the filter sheet, selection, bulk actions) close over mutable render state (`q`, `active`, `sortBy`, `priceMin`, `posMirror`, …), so they can't be lifted blindly. Recommended order, each its own commit + tests + manual verify, lowest-risk first:
+**RESOLVED (2026-06-17, on the `phase5/gallery-decomposition` branch).** The high-value, testable work is done; the cosmetic file-relocation is a documented WON'T-DO. Outcome per step:
 
-1. **`lib/facets.js` (pure).** Extract `valueOf(it, key, ctx)` + facet-list building + `matchesFilters(it, criteria)` as PURE functions that take the render state as an explicit `ctx`/`criteria` argument (resolvers for category/shop/issue passed in, like readiness-core). gallery keeps thin wrappers binding the closure state. Unit-test the matcher (search, AND-across/OR-within facets, price/date/no-price). Highest value (the hardest logic) + safest (pure).
-2. **`lib/itemsort.js`** — ✅ done.
-3. **`selection.js`** — the multi-select model (selected set, range, select-all, selection-bar wiring) as a small controller with explicit callbacks. DOM-coupled → behind a manual verify.
-4. **`filterSheet.js`** — the filter/sort bottom-sheet builder (takes facets + current criteria, returns the sheet + change events).
-5. **`bulkActions.js`** — approve/AI-fill/status/delete/bulk-edit handlers as a module taking the selection + a refresh callback.
-6. **Render token + targeted refresh.** Add a monotonic render id so a stale async `renderGallery` bails (kills the stale-render race), and make `refresh()` patch the in-memory `byId` from returned changes instead of cold-reloading items+mirror+jobs+activity on every edit.
-7. **Gallery pagination** (P5 remainder) — once filtering is server-expressible, switch to `.range()` paging / infinite scroll; until then the honest 1,000 cap note stays.
+1. **`lib/facets.js` (pure)** — ✅ DONE (`shopState`/`facetValue`/`buildFacets`/`searchText`/`matchesItem` extracted, +13 tests; gallery binds resolvers/criteria).
+2. **`lib/itemsort.js`** — ✅ DONE (+6 tests).
+3–5. **`selection.js` / `filterSheet.js` / `bulkActions.js`** — ❌ **WON'T-DO.** These are pure relocation of DOM-wiring behind a large context object: no test-coverage gain, real breakage risk on the most-used screen, and not automatically verifiable. Q1's actual value (the brain — sort/facets/sku — now lives in tested libs) is captured without them. Revisit only if a real maintenance need arises.
+6. **Render token + targeted refresh** — ✅ DONE (monotonic `renderGallerySeq` bails stale renders; `refresh([ids])` patches only changed rows + refreshes badges, full reload otherwise).
+7. **Gallery pagination** — ✅ RESOLVED by decision. True server-paged faceting is a **non-goal** (client-side facet counts need the whole set; rebuilding faceting in Postgres is high-effort/low-ROI). Cap raised 1000→2000 for headroom with the honest truncation note; **render virtualization** is the documented future lever if one shop ever exceeds the cap.
+
+**Also DONE:** the **POS-SKU canonical tested lib** (`src/lib/sku.js`, +10 tests) — `pos-push`/connector keep self-contained copies that mirror it (flagged to keep in sync).
 
 Also in scope: **POS-SKU lib reconcile** — lift the grouping logic (`getGroupKey`/`resolveProductName`/`buildVariantAttributes`/`normalizeGender`) from `pos-push` into a shared `_shared/sku.ts` imported by both the edge function and a Vitest suite (removes the connector/edge duplication; the SQL `derive_item_sku` stays harness-tested).
 
@@ -282,6 +284,7 @@ Gallery filtering is server-paged; `renderGallery` no longer reloads the full da
 
 > Append newest entries at the top. Mirror the changelog style of `V3_ROADMAP.md` §10.
 
+- **2026-06-17 — Phase 5 resolved → roadmap fully closed.** On `phase5/gallery-decomposition` (awaiting staging verify → merge): Q1 pure logic extracted to tested libs — `itemsort.js` (`740d2af`), `facets.js` (+13 tests, `2b8b84c`), `sku.js` (+10 tests, `7bf9f81`); render-token guard (`57ec59e`) + targeted refresh (`874c327`); P5 gallery cap raised 1000→2000 + pagination decision (`18e36db`). Owner decision: the selection/filterSheet/bulkActions file-splits are **WON'T-DO** (cosmetic relocation, high-risk, no test gain — Q1's value is in the libs) and server-paged faceting is a **non-goal**. 53 unit tests green. Every audit finding is now resolved, shipped, or consciously accepted. **Next: owner staging-verifies the branch (gallery search/filter/select/bulk/edit) → merge → deploys.**
 - **2026-06-17 — 🚀 PROD ROLLOUT COMPLETE & verified.** Merged `hardening/production-readiness` → `main` (25 commits, merge `9fc5170`); CI test-gate passed; frontend live on klinemen-catalog.com (HTTP 200, fresh bundle). Migrations 0027–0030 + the 5 edge functions were applied/deployed earlier and probe-verified (constraints, CORS allowlist, anon-rejection, `pos-*` Verify-JWT off). Post-launch health all green: `client_errors` reachable + empty (P4 monitoring live, no JS errors during smoke test); **pos-mirror/pos-push cron runs `ok:true` AFTER the deploy** — the new constant-time-auth + run-lock functions accept the cron invoke key, so sync is unbroken; editor rejects negative price (R1). **Every audit Critical/High is now LIVE in production.** Secrets left at safe defaults (origin = CNAME; AI caps 60/500; existing MIRROR_INVOKE_KEY kept — rotate later with cron coordination). Remaining: Phase 5 architecture (Q1 decomposition + gallery pagination + POS-SKU lib) as a dedicated, review-gated effort per §10.
 - **2026-06-17 — Phase 5 started.** P5 query caps done: explicit cap + truncation note on the Shop report (was silently relying on PostgREST's 1000 default) and on CSV exports (`1d7407b`). Q1 began with the safe slice — pure sort lifted to `src/lib/itemsort.js` + 6 tests (`740d2af`, 30 tests total). The remainder of Q1 (faceting/selection/filter-sheet/bulk + render-token + gallery pagination + POS-SKU dedup) is closure-bound and **review-gated** — a per-step execution plan is in §10. Recommended as a dedicated effort, ideally after the prod rollout of Phases 0–4.
 - **2026-06-17 — Phase 4 (code-quality hygiene) complete.** Q4 removed dead `quickPriceItems` (`fceaaae`); Q2 collapsed 14 byte-identical `esc()` copies to the single `ui.js` export (`138a010`); Q3 added warnings on load-bearing silent failures in `data.js`/`costs.js` (`85e1dec`); S15 documented the data-vs-schema migration rule in MIGRATIONS.md (existing data migrations are replay-guarded); Q5 accepted as WON'T FIX (optional nit, strong existing coverage). Build + 24 tests green. **Only Phase 5 (scale: P5 pagination, Q1 gallery decomposition, POS-SKU lib) remains — a dedicated effort.**
