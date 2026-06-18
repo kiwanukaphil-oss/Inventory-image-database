@@ -535,7 +535,9 @@ function fadeInImages(container) {
   container.querySelectorAll(".thumb").forEach((thumb) => {
     const img = thumb.querySelector("img");
     if (!img) { thumb.classList.add("loaded"); return; }
-    if (img.complete) thumb.classList.add("loaded");
+    // Lazy thumbs have no src yet (set later by observeThumbs) — `complete` is true
+    // for a src-less img, so also require an actual currentSrc before fading in.
+    if (img.complete && img.currentSrc) thumb.classList.add("loaded");
     else img.addEventListener("load", () => thumb.classList.add("loaded"), { once: true });
   });
 }
@@ -893,17 +895,18 @@ async function renderGallery(view, caps, opts = {}) {
 
   // One product card.
   function cardHtml(it) {
-    const url = signed[it.image_path];
+    const hasImg = !!it.image_path;
     const cat = it.categories?.name || "";
     const variant = summarizeItem(it); // category-driven summary line
     const brand = it.brand || it.name || "—";
-    const inner = url
-      ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
+    // Thumbnail src is set lazily by observeThumbs (a small transform); the full
+    // image is used by the lightbox. data-img marks an image-bearing thumb; the
+    // lightbox builds its slide list from the current filtered rows on click, so
+    // the cached card HTML never holds a stale positional slide index.
+    const inner = hasImg
+      ? `<img class="cardthumb" data-thumb="${esc(it.image_path)}" alt="${esc(brand)}">`
       : `<span style="color:var(--muted);font-size:12px">no image</span>`;
-    // data-img marks an image-bearing thumb; the lightbox builds its slide list
-    // from the current filtered rows on click (see the tap handler below), so the
-    // cached card HTML never holds a stale positional slide index.
-    const thumb = `<div class="thumb"${url ? " data-img" : ""}>
+    const thumb = `<div class="thumb"${hasImg ? " data-img" : ""}>
       ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check" data-tip="Has an AI field to check"></span>' : ""}</div>`;
     return `<div class="card" data-id="${it.id}">
       ${thumb}
@@ -930,14 +933,14 @@ async function renderGallery(view, caps, opts = {}) {
   // reuses the `.card[data-id]` contract so all the selection/tap/lightbox
   // interactions below work unchanged.
   function rowHtml(it) {
-    const url = signed[it.image_path];
+    const hasImg = !!it.image_path;
     const cat = it.categories?.name || "";
     const brand = it.brand || it.name || "—";
     const variant = summarizeItemRich(it);
-    const inner = url
-      ? `<img loading="lazy" src="${url}" alt="${esc(brand)}">`
+    const inner = hasImg
+      ? `<img class="cardthumb" data-thumb="${esc(it.image_path)}" alt="${esc(brand)}">`
       : `<span class="row-noimg">—</span>`;
-    const thumb = `<div class="thumb"${url ? " data-img" : ""}>
+    const thumb = `<div class="thumb"${hasImg ? " data-img" : ""}>
       ${inner}<span class="selcheck">✓</span>${hasAiDoubt(it) ? '<span class="lowdot" title="Has an AI field to check" data-tip="Has an AI field to check"></span>' : ""}</div>`;
     return `<div class="card card-row" data-id="${it.id}">
       ${thumb}
@@ -956,6 +959,35 @@ async function renderGallery(view, caps, opts = {}) {
         </div>
       </div>
     </div>`;
+  }
+
+  // ---- lazy, transform-signed thumbnails ----------------------------------
+  // Cards load a ~500px WebP, signed ON DEMAND as they scroll into view — not the
+  // full ~1280px image. This cuts gallery transfer sharply (full ~200KB → ~100KB
+  // crisp thumb) AND only fetches what's actually visible. The full image is still
+  // used by the lightbox (tap to zoom), so quality on zoom is unchanged.
+  const thumbCache = new Map(); // path -> Promise<signedUrl|null>
+  function signThumb(path) {
+    if (thumbCache.has(path)) return thumbCache.get(path);
+    const p = supabase.storage.from("product-images")
+      .createSignedUrl(path, 3600, { transform: { width: 500, quality: 80, resize: "contain" } })
+      .then(({ data }) => data?.signedUrl || null)
+      .catch(() => null);
+    thumbCache.set(path, p);
+    return p;
+  }
+  const loadThumb = (img) => { const p = img.dataset.thumb; if (p) signThumb(p).then((u) => { if (u) img.src = u; }); };
+  // IntersectionObserver = the lazy mechanism (tighter than native loading=lazy,
+  // which was eagerly loading far more than one screen). 300px margin = start just
+  // before a card scrolls in. No-IO fallback: load thumbs immediately.
+  const thumbObserver = "IntersectionObserver" in window
+    ? new IntersectionObserver((entries, obs) => {
+        for (const e of entries) if (e.isIntersecting) { obs.unobserve(e.target); loadThumb(e.target); }
+      }, { rootMargin: "300px" })
+    : null;
+  function observeThumbs(container) {
+    container.querySelectorAll("img[data-thumb]:not([src])")
+      .forEach((img) => (thumbObserver ? thumbObserver.observe(img) : loadThumb(img)));
   }
 
   // ---- incremental grid render (C1) -------------------------------------
@@ -1007,6 +1039,7 @@ async function renderGallery(view, caps, opts = {}) {
       if (!seen.has(child.dataset.id)) { cardCache.delete(child.dataset.id); child.remove(); }
     }
     fadeInImages(gridInner);
+    observeThumbs(gridInner);
   }
 
   function draw() {
