@@ -17,6 +17,7 @@ const FIELD_COLUMNS = ["name", "brand", "price", "stock_quantity", "reorder_leve
 const HUMAN_EDIT_SOURCES = new Set(["manual", "bulk", "pricing", "approval", "undo"]);
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 const QUERY_CHUNK = 80;
+const QUERY_CONCURRENCY = 4;
 
 export function activitySourceLabel(source) {
   return SOURCE_LABELS[source] || source || "Updated";
@@ -59,6 +60,17 @@ function chunks(values, size = QUERY_CHUNK) {
   const out = [];
   for (let i = 0; i < values.length; i += size) out.push(values.slice(i, i + size));
   return out;
+}
+
+async function mapConcurrent(values, limit, worker) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, values.length) }, async () => {
+    while (next < values.length) {
+      const i = next++;
+      await worker(values[i], i);
+    }
+  });
+  await Promise.all(workers);
 }
 
 export function diffItemValues(before = {}, after = {}) {
@@ -160,7 +172,7 @@ export async function loadItemActivitySummaries(itemIds) {
   const uniqueIds = [...new Set(itemIds)];
   const rows = [];
   try {
-    for (const ids of chunks(uniqueIds)) {
+    await mapConcurrent(chunks(uniqueIds), QUERY_CONCURRENCY, async (ids) => {
       const { data, error } = await supabase
         .from("item_events")
         .select("item_id,event_type,source,field_path,summary,actor,created_at")
@@ -169,10 +181,10 @@ export async function loadItemActivitySummaries(itemIds) {
         .limit(Math.max(200, ids.length * 12));
       if (error) {
         console.warn("item activity summary failed", error.message);
-        continue;
+        return;
       }
       rows.push(...(data || []));
-    }
+    });
   } catch (e) {
     console.warn("item activity summary failed", e?.message || e);
   }

@@ -1,9 +1,29 @@
 import { supabase } from "./db.js";
 
+const JOB_CHUNK = 80;
+const JOB_CONCURRENCY = 4;
+
 function messageOf(err) {
   if (!err) return "";
   if (typeof err === "string") return err;
   return err.message || String(err);
+}
+
+function chunks(values, size = JOB_CHUNK) {
+  const out = [];
+  for (let i = 0; i < values.length; i += size) out.push(values.slice(i, i + size));
+  return out;
+}
+
+async function mapConcurrent(values, limit, worker) {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, values.length) }, async () => {
+    while (next < values.length) {
+      const i = next++;
+      await worker(values[i], i);
+    }
+  });
+  await Promise.all(workers);
 }
 
 export function classifyJobError(err) {
@@ -74,18 +94,24 @@ export async function clearItemJobFailures(itemId, jobType) {
 }
 
 export async function loadLatestFailedJobs(itemIds, jobType) {
-  if (!itemIds?.length) return new Map();
+  const ids = [...new Set(itemIds || [])].filter(Boolean);
+  if (!ids.length) return new Map();
   try {
-    const { data, error } = await supabase
-      .from("item_jobs")
-      .select("id,item_id,job_type,status,error_category,error_message,attempt_count,updated_at")
-      .eq("job_type", jobType)
-      .eq("status", "failed")
-      .in("item_id", itemIds)
-      .order("updated_at", { ascending: false });
-    if (error) return new Map();
+    const rows = [];
+    await mapConcurrent(chunks(ids), JOB_CONCURRENCY, async (chunk) => {
+      const { data, error } = await supabase
+        .from("item_jobs")
+        .select("id,item_id,job_type,status,error_category,error_message,attempt_count,updated_at")
+        .eq("job_type", jobType)
+        .eq("status", "failed")
+        .in("item_id", chunk)
+        .order("updated_at", { ascending: false });
+      if (error) return;
+      rows.push(...(data || []));
+    });
+    rows.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
     const byItem = new Map();
-    for (const row of data || []) {
+    for (const row of rows) {
       if (!byItem.has(row.item_id)) byItem.set(row.item_id, row);
     }
     return byItem;

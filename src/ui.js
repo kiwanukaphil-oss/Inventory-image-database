@@ -169,8 +169,10 @@ export function openBottomSheet(title, bodyHtml) {
 // --- Lightbox -------------------------------------------------------------
 // A single reusable full-screen image viewer with keyboard + swipe navigation.
 // Moved here from gallery.js so the editor and calibration photos can zoom too.
-// Callers pass slides as [{ url, caption }] with captions ALREADY HTML-escaped.
+// Callers pass slides as [{ url, caption }] or [{ getUrl, caption }] with
+// captions ALREADY HTML-escaped.
 let lbState = { slides: [], i: 0, el: null };
+let lbPaintSeq = 0;
 
 function ensureLightbox() {
   if (lbState.el) return lbState.el;
@@ -233,13 +235,30 @@ function moveLightbox(d) {
 }
 // Single-slide mode (an editor/calibration photo) hides the prev/next arrows.
 function paintLightbox() {
+  const seq = ++lbPaintSeq;
   const s = lbState.slides[lbState.i];
   if (!s) return;
   const img = lbState.el.querySelector("#lbimg");
-  img.src = s.url;
   img.alt = s.caption || "Product photo"; // describe the image for screen readers
+  const setUrl = (url) => {
+    if (seq !== lbPaintSeq) return;
+    if (url) img.src = url;
+    else img.removeAttribute("src");
+  };
+  if (s.url) setUrl(s.url);
+  else if (typeof s.getUrl === "function") {
+    img.removeAttribute("src");
+    Promise.resolve(s.getUrl(s)).then(setUrl).catch(() => setUrl(""));
+  } else {
+    img.removeAttribute("src");
+  }
   const single = lbState.slides.length <= 1;
   lbState.el.querySelectorAll(".lb-nav").forEach((b) => { b.hidden = single; });
+  if (!single) {
+    const n = lbState.slides.length;
+    [lbState.slides[(lbState.i + 1) % n], lbState.slides[(lbState.i - 1 + n) % n]]
+      .forEach((next) => { if (!next?.url && typeof next?.getUrl === "function") next.getUrl(next); });
+  }
   lbState.el.querySelector("#lbcap").innerHTML = single
     ? (s.caption || "")
     : `${s.caption} <span style="color:var(--muted)">· ${lbState.i + 1}/${lbState.slides.length}</span>`;

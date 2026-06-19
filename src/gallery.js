@@ -469,6 +469,114 @@ function dateCutoff(v) {
 // truncation; render virtualization is the future lever if a single shop ever
 // exceeds this. (Phase 5 · P5 pagination decision — see roadmap §10.)
 const GALLERY_LIMIT = 2000;
+const GALLERY_CACHE_TTL_MS = 60 * 1000;
+const SIGNED_URL_TTL_SECONDS = 3600;
+const SIGNED_URL_REFRESH_MS = (SIGNED_URL_TTL_SECONDS - 300) * 1000;
+const GALLERY_ITEM_SELECT = "id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_dirty, categories(name)";
+
+let galleryPayloadCache = null;
+let galleryPayloadPromise = null;
+const thumbUrlCache = new Map();
+const fullImageUrlCache = new Map();
+
+const galleryCacheKey = (caps = {}) => `${caps.id || caps.email || "user"}:${caps.can_view_cost ? "cost" : "nocost"}`;
+
+function cachedSignedUrl(cache, path, signer) {
+  if (!path) return Promise.resolve(null);
+  const now = Date.now();
+  const hit = cache.get(path);
+  if (hit && hit.expiresAt > now) return hit.promise;
+  const promise = signer()
+    .then(({ data }) => data?.signedUrl || null)
+    .catch(() => {
+      cache.delete(path);
+      return null;
+    });
+  cache.set(path, { promise, expiresAt: now + SIGNED_URL_REFRESH_MS });
+  return promise;
+}
+
+function signThumb(path) {
+  return cachedSignedUrl(thumbUrlCache, path, () =>
+    supabase.storage.from("product-images")
+      .createSignedUrl(path, SIGNED_URL_TTL_SECONDS, { transform: { width: 500, quality: 80, resize: "contain" } })
+  );
+}
+
+function signFullImage(path) {
+  return cachedSignedUrl(fullImageUrlCache, path, () =>
+    supabase.storage.from("product-images").createSignedUrl(path, SIGNED_URL_TTL_SECONDS)
+  );
+}
+
+function applyGalleryMeta(rows, failedAiJobs, activitySummaries, costPresence) {
+  for (const it of rows || []) {
+    const job = failedAiJobs.get(it.id);
+    if (job) it.latest_ai_job = job;
+    const activity = activitySummaries.get(it.id);
+    if (activity) it.activity = activity;
+    if (costPresence.has(it.id)) it.has_cost_price = costPresence.get(it.id);
+  }
+}
+
+async function fetchGalleryPayload(caps) {
+  await loadRefData(); // category tree + field definitions drive the card summary
+  const [{ data, error }, posMirror] = await Promise.all([
+    supabase
+      .from("items")
+      .select(GALLERY_ITEM_SELECT)
+      .order("created_at", { ascending: false })
+      .limit(GALLERY_LIMIT),
+    loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
+  ]);
+  if (error) throw error;
+
+  const rows = data || [];
+  const itemIdsForMeta = rows.map((it) => it.id);
+  const [failedAiJobs, activitySummaries, costPresence, syncCounts, savedViewsRes] = await Promise.all([
+    loadLatestFailedJobs(itemIdsForMeta, "ai_fill"),
+    loadItemActivitySummaries(itemIdsForMeta),
+    loadCostPresence(itemIdsForMeta, { canViewCost: !!caps.can_view_cost }),
+    loadSyncCounts(["errors", "dirty"]).catch(() => ({ errors: 0, dirty: 0 })),
+    (async () => {
+      try {
+        return await supabase.from("saved_views").select("id, name, payload").order("created_at");
+      } catch {
+        return { data: [] };
+      }
+    })(),
+  ]);
+  applyGalleryMeta(rows, failedAiJobs, activitySummaries, costPresence);
+
+  return {
+    key: galleryCacheKey(caps),
+    loadedAt: Date.now(),
+    data: rows,
+    posMirror,
+    syncCounts,
+    savedViews: savedViewsRes?.data || [],
+  };
+}
+
+async function loadGalleryPayload(caps, { force = false } = {}) {
+  const key = galleryCacheKey(caps);
+  const fresh = galleryPayloadCache
+    && galleryPayloadCache.key === key
+    && Date.now() - galleryPayloadCache.loadedAt < GALLERY_CACHE_TTL_MS;
+  if (!force && fresh) return galleryPayloadCache;
+  if (!force && galleryPayloadPromise?.key === key) return galleryPayloadPromise.promise;
+
+  const promise = fetchGalleryPayload(caps).then((payload) => {
+    galleryPayloadCache = payload;
+    return payload;
+  });
+  galleryPayloadPromise = { key, promise };
+  try {
+    return await promise;
+  } finally {
+    if (galleryPayloadPromise?.promise === promise) galleryPayloadPromise = null;
+  }
+}
 
 // A grid of shimmering placeholder cards shown while data loads, so the screen
 // shows the eventual layout immediately instead of a lone centered spinner.
@@ -563,44 +671,16 @@ async function renderGallery(view, caps, opts = {}) {
   const appNav = document.querySelector(".bottomnav");
   if (appNav) appNav.style.display = ""; // restore if a prior selection hid it
   view.innerHTML = skeletonGrid();
-  await loadRefData(); // category tree + field definitions drive the card summary
-  // Items + the POS stock mirror load together; the mirror is what turns the
-  // shop chips from "Queued" into live "· N left" counts.
-  const [{ data, error }, posMirror] = await Promise.all([
-    supabase
-      .from("items")
-      .select("id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_dirty, categories(name)")
-      .order("created_at", { ascending: false })
-      .limit(GALLERY_LIMIT),
-    loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
-  ]);
-
-  if (error) {
+  let galleryPayload;
+  try {
+    galleryPayload = await loadGalleryPayload(caps, { force: !!opts.force });
+  } catch (error) {
     view.innerHTML = `<div class="empty"><div class="big">⚠️</div>
       <div>Couldn't load items.</div>
-      <div style="color:var(--muted);font-size:13px">${esc(error.message)}</div></div>`;
+      <div style="color:var(--muted);font-size:13px">${esc(error.message || error)}</div></div>`;
     return;
   }
-
-  // Keep the Review tab's badge in sync on every load (any surface refreshes
-  // it). Both segments count — ready-to-approve items await action too.
-  const itemIdsForMeta = (data || []).map((it) => it.id);
-  const [failedAiJobs, activitySummaries, costPresence, syncCounts] = await Promise.all([
-    loadLatestFailedJobs(itemIdsForMeta, "ai_fill"),
-    loadItemActivitySummaries(itemIdsForMeta),
-    loadCostPresence(itemIdsForMeta, { canViewCost: !!caps.can_view_cost }),
-    // Surface POS sync problems on the Shop tab badge from every screen, so a
-    // manager sees them without opening Shop. Same single source as the strip.
-    loadSyncCounts(["errors", "dirty"]).catch(() => ({ errors: 0, dirty: 0 })),
-  ]);
-  for (const it of data || []) {
-    const job = failedAiJobs.get(it.id);
-    if (job) it.latest_ai_job = job;
-    const activity = activitySummaries.get(it.id);
-    if (activity) it.activity = activity;
-    if (costPresence.has(it.id)) it.has_cost_price = costPresence.get(it.id);
-  }
-
+  const { data, posMirror, syncCounts } = galleryPayload;
   setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
   setShopBadge((syncCounts.errors || 0) + (syncCounts.dirty || 0));
 
@@ -629,19 +709,8 @@ async function renderGallery(view, caps, opts = {}) {
     return;
   }
 
-  // Batch-create signed URLs for all thumbnails in one request.
-  const paths = data.filter((d) => d.image_path).map((d) => d.image_path);
-  const signed = {};
-  if (paths.length) {
-    const { data: urls } = await supabase.storage
-      .from("product-images")
-      .createSignedUrls(paths, 3600);
-    (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
-  }
-
   // This user's saved views (cloud-synced; empty if the table isn't there yet).
-  const { data: svData } = await supabase.from("saved_views").select("id, name, payload").order("created_at");
-  let savedViews = svData || [];
+  let savedViews = galleryPayload.savedViews || [];
 
   if (mySeq !== renderGallerySeq) return; // last await done — bail if superseded before the DOM build
 
@@ -770,29 +839,24 @@ async function renderGallery(view, caps, opts = {}) {
     if (Array.isArray(changedIds) && changedIds.length) {
       return patchItems(changedIds).then(() => view.scrollTo(0, y));
     }
-    return renderGallery(view, caps, opts).then(() => view.scrollTo(0, y));
+    return renderGallery(view, caps, { ...opts, force: true }).then(() => view.scrollTo(0, y));
   };
 
   // Targeted refresh: re-fetch only the changed rows + their meta and patch the
-  // in-memory model (byId/data/signed), then redraw — the reconciler updates just
+  // in-memory model (byId/data), then redraw — the reconciler updates just
   // the affected cards and draw() recomputes the segment counts. Re-fetching the
   // authoritative rows avoids local drift; any error falls back to a full reload.
   async function patchItems(ids) {
     const { data: fresh, error } = await supabase
       .from("items")
-      .select("id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_dirty, categories(name)")
+      .select(GALLERY_ITEM_SELECT)
       .in("id", ids);
-    if (error) return renderGallery(view, caps, opts);
+    if (error) return renderGallery(view, caps, { ...opts, force: true });
     const [jobs, acts, costs] = await Promise.all([
       loadLatestFailedJobs(ids, "ai_fill"),
       loadItemActivitySummaries(ids),
       loadCostPresence(ids, { canViewCost: !!caps.can_view_cost }),
     ]);
-    const newPaths = (fresh || []).map((r) => r.image_path).filter((p) => p && !signed[p]);
-    if (newPaths.length) {
-      const { data: urls } = await supabase.storage.from("product-images").createSignedUrls(newPaths, 3600);
-      (urls || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
-    }
     const returned = new Set();
     for (const row of fresh || []) {
       returned.add(row.id);
@@ -966,16 +1030,6 @@ async function renderGallery(view, caps, opts = {}) {
   // full ~1280px image. This cuts gallery transfer sharply (full ~200KB → ~100KB
   // crisp thumb) AND only fetches what's actually visible. The full image is still
   // used by the lightbox (tap to zoom), so quality on zoom is unchanged.
-  const thumbCache = new Map(); // path -> Promise<signedUrl|null>
-  function signThumb(path) {
-    if (thumbCache.has(path)) return thumbCache.get(path);
-    const p = supabase.storage.from("product-images")
-      .createSignedUrl(path, 3600, { transform: { width: 500, quality: 80, resize: "contain" } })
-      .then(({ data }) => data?.signedUrl || null)
-      .catch(() => null);
-    thumbCache.set(path, p);
-    return p;
-  }
   const loadThumb = (img) => { const p = img.dataset.thumb; if (p) signThumb(p).then((u) => { if (u) img.src = u; }); };
   // IntersectionObserver = the lazy mechanism (tighter than native loading=lazy,
   // which was eagerly loading far more than one screen). 300px margin = start just
@@ -1212,11 +1266,11 @@ async function renderGallery(view, caps, opts = {}) {
       // Build the lightbox slide list from the current filtered rows on demand,
       // so it always matches what's on screen regardless of render caching.
       const id = thumb.closest(".card[data-id]")?.dataset.id;
-      const imgRows = filtered.filter((it) => signed[it.image_path]);
+      const imgRows = filtered.filter((it) => it.image_path);
       const slides = imgRows.map((it) => {
         const brand = it.brand || it.name || "—";
         const sub = density === "list" ? (it.categories?.name || "") : summarizeItem(it);
-        return { url: signed[it.image_path], caption: esc([brand, sub].filter(Boolean).join(" · ")) };
+        return { getUrl: () => signFullImage(it.image_path), caption: esc([brand, sub].filter(Boolean).join(" · ")) };
       });
       openLightbox(slides, Math.max(0, imgRows.findIndex((it) => it.id === id)));
       return;
@@ -1611,6 +1665,7 @@ async function renderGallery(view, caps, opts = {}) {
         const { error } = await supabase.from("saved_views").delete().eq("id", del.dataset.del);
         if (error) { toast("Couldn't delete view: " + error.message); return; }
         savedViews = savedViews.filter((x) => x.id !== del.dataset.del);
+        galleryPayload.savedViews = savedViews;
         showSaved(); toast("View deleted");
         return;
       }
@@ -1635,7 +1690,9 @@ async function renderGallery(view, caps, opts = {}) {
         const payload = { active: serial, q, sortBy, priceMin, priceMax, noPrice, datePreset };
         const { data: created, error } = await supabase.from("saved_views").insert({ name, payload }).select("id, name, payload").single();
         if (error) { toast("Couldn't save view: " + error.message); return; }
-        savedViews.push(created); showSaved(); toast("View saved");
+        savedViews.push(created);
+        galleryPayload.savedViews = savedViews;
+        showSaved(); toast("View saved");
       }
     });
 
