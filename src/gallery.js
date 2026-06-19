@@ -102,7 +102,8 @@ function summarizeItemRich(it) {
 // Export moved into the ⋮ menu (admin-ish, rarely daily) to make room for
 // Shop — the floor-facing reports surface (Phase 3 of the POS integration).
 const NAV = [
-  { id: "gallery", label: "Gallery", ico: "navGallery" },
+  { id: "today", label: "Today", ico: "navToday" },
+  { id: "catalog", label: "Catalog", ico: "navGallery" },
   { id: "add", label: "Add", ico: "navAdd" },
   { id: "review", label: "Review", ico: "navReview", badge: true },
   { id: "shop", label: "Shop", ico: "navShop", badge: true },
@@ -131,6 +132,7 @@ function setNavBadge(id, count, animate = false) {
 // every screen so a manager knows without opening the Shop tab.
 const setReviewBadge = (count) => setNavBadge("reviewBadge", count, true);
 const setShopBadge = (count) => setNavBadge("shopBadge", count, false);
+let renderTodaySeq = 0;
 
 /**
  * Render the full app shell for a signed-in user.
@@ -172,7 +174,7 @@ export function renderApp(mount, profile, onSignOut) {
     }</button>`
   ).join("");
 
-  let currentViewId = "gallery";
+  let currentViewId = "today";
   const refreshCurrent = () => setView(currentViewId);
   function openReviewQueue(issueKey = "work", ids = []) {
     const next = REVIEW_QUEUE.includes(issueKey) ? issueKey : "work";
@@ -184,18 +186,21 @@ export function renderApp(mount, profile, onSignOut) {
 
   function setView(id) {
     currentViewId = id;
+    renderGallerySeq++;
+    renderTodaySeq++;
     view.scrollTo(0, 0); // .content is the app's only scroller (app-shell layout)
     nav.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === id)
     );
-    if (id === "gallery") renderGallery(view, caps);
+    if (id === "today") renderToday(view, caps, { setView, openReviewQueue, refreshCurrent });
+    else if (id === "catalog") renderGallery(view, caps);
     else if (id === "add")
       renderUpload(view, caps, (result = {}) => {
         if (result.view === "review" && result.itemIds?.length) {
           openReviewQueue(result.issue, result.itemIds);
         } else {
           browseState.gallery.itemIds = [];
-          setView("gallery");
+          setView("catalog");
         }
       });
     else if (id === "export") renderExport(view, caps); // routed from the ⋮ menu
@@ -267,6 +272,7 @@ export function renderApp(mount, profile, onSignOut) {
 
   function openQuickActions() {
     const actions = [
+      { id: "today", label: "Today", sub: "Open the operations overview", icon: ICON.navToday, show: true },
       { id: "add", label: "Add photos", sub: "Capture or upload a new batch", icon: ICON.navAdd, show: !!caps.can_upload },
       { id: "review-work", label: "Review needs work", sub: "Open all blocked items", icon: ICON.navReview, show: true },
       { id: "review-edited", label: "Recently edited", sub: "Return to items you touched", icon: ICON.pencil, show: true },
@@ -276,7 +282,7 @@ export function renderApp(mount, profile, onSignOut) {
       { id: "pricing", label: "Set prices", sub: "Open guided pricing", icon: ICON.pencil, show: !!caps.can_edit },
       { id: "audit", label: "AI consistency audit", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
       { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
-      { id: "shop", label: "Shop dashboard", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
+      { id: "shop", label: "Shop floor", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
       { id: "activity", label: "Recent activity", sub: "Who changed what, lately", icon: ICON.refresh, show: true },
       { id: "export", label: "Export CSV", sub: "Download catalog data", icon: ICON.navExport, show: true },
     ].filter((a) => a.show);
@@ -293,7 +299,8 @@ export function renderApp(mount, profile, onSignOut) {
       if (!b) return;
       sh.close();
       const cmd = b.dataset.cmd;
-      if (cmd === "add") setView("add");
+      if (cmd === "today") setView("today");
+      else if (cmd === "add") setView("add");
       else if (cmd === "review-work") openReviewQueue("work");
       else if (cmd === "review-edited") openReviewQueue("edited");
       else if (cmd === "review-ai") openReviewQueue("ai");
@@ -407,9 +414,10 @@ export function renderApp(mount, profile, onSignOut) {
   // Honour PWA shortcuts / share-target deep links on first paint, then clean the
   // URL so a later refresh doesn't re-trigger them.
   const params = new URLSearchParams(location.search);
-  const validView = new Set(["gallery", "add", "review", "shop"]);
+  const validView = new Set(["today", "catalog", "gallery", "add", "review", "shop"]);
   const wantView = params.get("view");
-  const initialView = params.get("share") === "1" ? "add" : (validView.has(wantView) ? wantView : "gallery");
+  const requestedView = wantView === "gallery" ? "catalog" : wantView;
+  const initialView = params.get("share") === "1" ? "add" : (validView.has(requestedView) ? requestedView : "today");
   if (params.has("view") || params.has("share")) history.replaceState(null, "", location.pathname);
   setView(initialView);
 }
@@ -2096,6 +2104,248 @@ async function renderGallery(view, caps, opts = {}) {
 
   draw();
   pills();
+}
+
+async function renderToday(view, caps, actions = {}) {
+  const mySeq = ++renderTodaySeq;
+  const appNav = document.querySelector(".bottomnav");
+  if (appNav) appNav.style.display = "";
+  view.innerHTML = `
+    <div class="today-wrap">
+      <section class="today-hero">
+        <div>
+          <div class="today-kicker">Operations</div>
+          <h2>Today</h2>
+          <p>Intake, review, pricing, and shop sync in one working surface.</p>
+        </div>
+        <div class="today-loading" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+      </section>
+      <div class="today-grid">
+        <div class="today-skel"></div><div class="today-skel"></div>
+        <div class="today-skel"></div><div class="today-skel"></div>
+      </div>
+    </div>`;
+
+  let galleryPayload;
+  try {
+    galleryPayload = await loadGalleryPayload(caps);
+  } catch (error) {
+    if (mySeq !== renderTodaySeq) return;
+    view.innerHTML = `<div class="empty"><div class="big">!</div>
+      <div>Couldn't load today's overview.</div>
+      <div style="color:var(--muted);font-size:13px">${esc(error.message || error)}</div></div>`;
+    return;
+  }
+  if (mySeq !== renderTodaySeq) return;
+
+  const rows = galleryPayload.data || [];
+  const syncCounts = galleryPayload.syncCounts || {};
+  const posMirror = galleryPayload.posMirror || {};
+  const byVariant = posMirror.byVariant instanceof Map ? posMirror.byVariant : new Map();
+  const reviewCount = rows.filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length;
+  const shopIssueCount = (syncCounts.errors || 0) + (syncCounts.dirty || 0);
+  let issueCounts = {};
+  setReviewBadge(reviewCount);
+  setShopBadge(shopIssueCount);
+
+  if (!rows.length) {
+    view.innerHTML = `
+      <div class="today-wrap">
+        <section class="today-hero">
+          <div>
+            <div class="today-kicker">Operations</div>
+            <h2>Today</h2>
+            <p>No inventory is loaded yet.</p>
+          </div>
+          <div class="today-hero-actions">
+            ${caps.can_upload ? `<button class="primary" data-today-action="add">Add photos</button>` : ""}
+            <button class="ghost" data-today-action="catalog">Open catalog</button>
+          </div>
+        </section>
+      </div>`;
+    bindTodayActions();
+    return;
+  }
+
+  issueCounts = Object.fromEntries(REVIEW_QUEUE.map((key) => [
+    key,
+    rows.filter((it) => queueMatches(it, key)).length,
+  ]));
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - 7);
+  const intakeToday = rows.filter((it) => it.created_at && new Date(it.created_at) >= todayStart).length;
+  const intakeWeek = rows.filter((it) => it.created_at && new Date(it.created_at) >= weekStart).length;
+  const mirrorOf = (it) => (it.pos_variant_id ? byVariant.get(it.pos_variant_id) : undefined);
+  const shopStateOf = (it) => libShopState(it, mirrorOf);
+  const shopStates = rows.map(shopStateOf);
+  const inShop = shopStates.filter((st) => ["In shop", "Low stock", "Sold out"].includes(st)).length;
+  const lowStock = shopStates.filter((st) => st === "Low stock").length;
+  const queued = shopStates.filter((st) => st === "Queued").length;
+  const syncErrors = shopStates.filter((st) => st === "Sync error").length;
+  const mirrorRows = [...byVariant.values()];
+  const soldToday = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_today || row.sold_today || 0), 0);
+  const soldWeek = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_7d || row.sold_7d || row.units_sold_week || 0), 0);
+  const aiChecks = (issueCounts.doubt || 0) + (issueCounts.ai || 0);
+  const freshness = todayFreshness(posMirror.lastMirror);
+
+  const photoRows = rows.filter((it) => it.image_path).slice(0, 5);
+  const photoUrls = await Promise.all(photoRows.map((it) => signThumb(it.image_path)));
+  if (mySeq !== renderTodaySeq) return;
+
+  const activityRows = rows
+    .filter((it) => it.activity?.latest_at)
+    .sort((a, b) => new Date(b.activity.latest_at) - new Date(a.activity.latest_at))
+    .slice(0, 4);
+
+  view.innerHTML = `
+    <div class="today-wrap">
+      <section class="today-hero">
+        <div class="today-hero-copy">
+          <div class="today-kicker">Operations</div>
+          <h2>Today</h2>
+          <p>${esc(rows.length.toLocaleString())} catalog item${rows.length === 1 ? "" : "s"} loaded. ${esc(reviewCount.toLocaleString())} item${reviewCount === 1 ? "" : "s"} need${reviewCount === 1 ? "s" : ""} a decision.</p>
+        </div>
+        <div class="today-hero-actions">
+          ${caps.can_upload ? `<button class="primary" data-today-action="add">${ICON.navAdd}<span>New intake</span></button>` : ""}
+          <button class="ghost" data-today-action="catalog">${ICON.navGallery}<span>Catalog</span></button>
+        </div>
+      </section>
+
+      <section class="today-decision-grid" aria-label="Work queues">
+        ${todayQueueCard("price", "Price queue", issueCounts.price || 0, "Items blocked by missing prices", "price", ICON.navShop)}
+        ${todayQueueCard("ai", "AI check", aiChecks, "Confidence, failed fill, and missing AI work", "ai-check", ICON.sparkle)}
+        ${todayQueueCard("ready", "Ready", issueCounts.ready || 0, "Priced items ready to approve", "ready", ICON.tick)}
+        ${todayQueueCard("sync", "Shop sync", shopIssueCount, "Errors and pending shop updates", "sync", ICON.refresh)}
+      </section>
+
+      <section class="today-main">
+        <div class="today-panel today-intake">
+          <div class="today-panel-head">
+            <div>
+              <h3>Intake</h3>
+              <p>${intakeToday.toLocaleString()} today, ${intakeWeek.toLocaleString()} in the last 7 days</p>
+            </div>
+            ${caps.can_upload ? `<button class="iconbtn" data-today-action="add" aria-label="Add photos">${ICON.navAdd}</button>` : ""}
+          </div>
+          <div class="today-strip">
+            ${photoRows.length ? photoRows.map((it, i) => todayThumbHtml(it, photoUrls[i])).join("") : `<div class="today-empty-inline">No product photos yet.</div>`}
+          </div>
+        </div>
+
+        <div class="today-panel today-shop">
+          <div class="today-panel-head">
+            <div>
+              <h3>Shop floor</h3>
+              <p class="${freshness.cls}">${esc(freshness.text)}</p>
+            </div>
+            <button class="iconbtn" data-today-action="shop" aria-label="Open shop">${ICON.navShop}</button>
+          </div>
+          <div class="today-metrics">
+            ${todayMetric("In shop", inShop)}
+            ${todayMetric("Sold today", soldToday)}
+            ${todayMetric("7 day sold", soldWeek)}
+            ${todayMetric("Low stock", lowStock, lowStock ? "warn" : "")}
+            ${todayMetric("Queued", queued)}
+            ${todayMetric("Errors", Math.max(syncErrors, syncCounts.errors || 0), (syncErrors || syncCounts.errors) ? "bad" : "")}
+          </div>
+        </div>
+      </section>
+
+      <section class="today-panel today-activity">
+        <div class="today-panel-head">
+          <div>
+            <h3>Recent activity</h3>
+            <p>Latest catalog changes</p>
+          </div>
+          <button class="ghost small" data-today-action="activity">Open feed</button>
+        </div>
+        <div class="today-activity-list">
+          ${activityRows.length ? activityRows.map(todayActivityHtml).join("") : `<div class="today-empty-inline">No recent activity.</div>`}
+        </div>
+      </section>
+    </div>`;
+  bindTodayActions();
+
+  function bindTodayActions() {
+    view.onclick = handleTodayClick;
+  }
+
+  function handleTodayClick(e) {
+    const actionBtn = e.target.closest("[data-today-action]");
+    const reviewBtn = e.target.closest("[data-today-review]");
+    const openBtn = e.target.closest("[data-today-open]");
+    if (reviewBtn) {
+      const key = reviewBtn.dataset.todayReview;
+      if (key === "ai-check") actions.openReviewQueue?.((issueCounts.doubt || 0) ? "doubt" : "ai");
+      else if (key === "sync") {
+        if (caps.can_manage_users) openSyncCenter(caps, actions.refreshCurrent, { focus: "errors" });
+        else actions.setView?.("shop");
+      } else {
+        actions.openReviewQueue?.(key);
+      }
+      return;
+    }
+    if (openBtn) {
+      const id = openBtn.dataset.todayOpen;
+      openEditor(id, caps, () => actions.refreshCurrent?.());
+      return;
+    }
+    if (!actionBtn) return;
+    const action = actionBtn.dataset.todayAction;
+    if (action === "add") actions.setView?.("add");
+    else if (action === "catalog") actions.setView?.("catalog");
+    else if (action === "shop") actions.setView?.("shop");
+    else if (action === "activity") openActivityFeed(caps);
+  }
+
+  function todayQueueCard(tone, title, count, sub, reviewKey, icon) {
+    return `<button class="today-qcard ${tone}" data-today-review="${esc(reviewKey)}">
+      <span class="today-qico">${icon || ""}</span>
+      <span class="today-qcopy"><b>${esc(Number(count || 0).toLocaleString())}</b><span>${esc(title)}</span><small>${esc(sub)}</small></span>
+    </button>`;
+  }
+
+  function todayThumbHtml(it, url) {
+    const title = todayItemTitle(it);
+    const sub = [it.categories?.name, it.price != null ? fmtPrice(it.price) : "Missing price"].filter(Boolean).join(" / ");
+    return `<button class="today-thumb" data-today-open="${esc(it.id)}" title="${esc(title)}">
+      ${url ? `<img src="${esc(url)}" alt="${esc(title)}">` : `<span>No image</span>`}
+      <span><b>${esc(title)}</b><small>${esc(sub)}</small></span>
+    </button>`;
+  }
+
+  function todayActivityHtml(it) {
+    const activity = it.activity || {};
+    const source = activitySourceLabel(activity.latest_source);
+    const cls = activitySourceClass(activity.latest_source);
+    const when = activity.latest_at ? new Date(activity.latest_at).toLocaleString() : "";
+    const summary = activity.latest_summary || "Updated";
+    return `<button class="today-act-row" data-today-open="${esc(it.id)}">
+      <span class="source-pill src-${esc(cls)}">${esc(source)}</span>
+      <span class="today-act-copy"><b>${esc(todayItemTitle(it))}</b><small>${esc(summary)}</small></span>
+      <time>${esc(when)}</time>
+    </button>`;
+  }
+}
+
+function todayMetric(label, value, cls = "") {
+  return `<span class="${esc(cls)}"><b>${esc(Number(value || 0).toLocaleString())}</b><small>${esc(label)}</small></span>`;
+}
+
+function todayItemTitle(it) {
+  return [it.brand, it.name].filter(Boolean).join(" ") || it.sku || "Untitled item";
+}
+
+function todayFreshness(lastMirror) {
+  if (!lastMirror?.finished_at) return { text: "Shop sync has not run", cls: "warn" };
+  const t = new Date(lastMirror.finished_at);
+  if (isNaN(t)) return { text: "Shop sync time unavailable", cls: "warn" };
+  const mins = Math.max(0, Math.round((Date.now() - t.getTime()) / 60000));
+  const age = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)} hr ago`;
+  if (lastMirror.ok === false) return { text: `Sync failed ${age}`, cls: "bad" };
+  return { text: `Shop data ${age}`, cls: mins > 30 ? "warn" : "" };
 }
 
 
