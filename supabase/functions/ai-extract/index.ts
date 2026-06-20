@@ -24,6 +24,18 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 // Self-contained for direct Supabase-dashboard deploy (no CLI bundling of
 // _shared). Origin-allowlisted CORS (audit S5): set ALLOWED_ORIGINS to add origins.
 const DEFAULT_ALLOWED = "https://klinemen-catalog.com";
+function isLocalDevOrigin(origin) {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (protocol !== "http:" && protocol !== "https:") return false;
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return true;
+    if (/^10\./.test(hostname) || /^192\.168\./.test(hostname)) return true;
+    const m = hostname.match(/^172\.(\d+)\./);
+    return !!m && Number(m[1]) >= 16 && Number(m[1]) <= 31;
+  } catch {
+    return false;
+  }
+}
 function corsHeaders(req) {
   const allowed = (Deno.env.get("ALLOWED_ORIGINS") || DEFAULT_ALLOWED).split(",").map((s) => s.trim()).filter(Boolean);
   const origin = req.headers.get("Origin") || "";
@@ -33,7 +45,7 @@ function corsHeaders(req) {
     "Vary": "Origin",
   };
   if (allowed.includes("*")) headers["Access-Control-Allow-Origin"] = "*";
-  else if (origin && allowed.includes(origin)) headers["Access-Control-Allow-Origin"] = origin;
+  else if (origin && (allowed.includes(origin) || isLocalDevOrigin(origin))) headers["Access-Control-Allow-Origin"] = origin;
   return headers;
 }
 const makeJson = (cors) => (body, status = 200) =>
