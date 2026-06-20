@@ -33,7 +33,10 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
   - Status: implemented.
   - Done: guided pricing entry points renamed to Build price rule, advanced pricing renamed to Group pricing table, POS-owned items skipped and explained in guided and advanced pricing flows, pricing CTA copy aligned across quick actions, review, approval, count-line shortcuts, and selection actions.
   - Outstanding: final block-review pricing regression around POS-owned skips, undo, preview, and cost mode.
-- [ ] Phase 6: Shop and Sync
+- [x] Phase 6: Shop and Sync
+  - Status: implemented.
+  - Done: Shop recovery callout for stale/no-mirror/queued/sending/dirty/error/drift states, visible POS-only read-only rows, Today shop-sync bridge includes stale/missing mirror work, Sync Center renamed to Shop recovery, Health/Queue/Problems/Drift/Actions layout, manager-only sync actions, manual drift-check action.
+  - Outstanding: final block-review state regression for queued, sending, dirty, error, in-shop, stale mirror, no mirror, and drift findings.
 - [ ] Phase 7: Admin and data tools
 - [ ] Phase 8: Intelligence layer
 
@@ -61,4 +64,7 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Commit and push Phase 4 slice.
 - [x] Implement Phase 5 pricing workflow language and POS-owned skip treatment.
 - [x] Validate Phase 5 slice with unit tests and production build.
-- [ ] Commit and push Phase 5 slice.
+- [x] Commit and push Phase 5 slice.
+- [x] Implement Phase 6 Shop floor report and Sync Center recovery polish.
+- [x] Validate Phase 6 slice with unit tests and production build.
+- [ ] Commit and push Phase 6 slice.

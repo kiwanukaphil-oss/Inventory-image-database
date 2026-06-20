@@ -888,11 +888,22 @@ body { overflow:hidden; overscroll-behavior:none; }
 .shop-main { flex:1; min-width:0; }
 .shop-name { font-weight:600; font-size:var(--text-base); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .shop-sub { font-size:var(--text-xs); color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.shop-readonly { display:inline-flex; margin-top:3px; padding:2px 6px; border:1px solid var(--line);
+  border-radius:var(--radius-sm); color:var(--muted); font-size:var(--text-2xs); }
 .shop-metric { font-size:var(--text-sm); color:var(--txt); white-space:nowrap; }
 .shop-metric b { font-size:var(--text-md); }
 .shop-empty { padding:10px 0 4px; color:var(--muted); font-size:var(--text-sm); }
 .shop-pipeline { display:flex; flex-direction:column; gap:var(--space-xs); margin-top:6px; font-size:var(--text-sm); }
 .shop-pipeline .warn { color:var(--warn); }
+.shop-recovery { display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg);
+  padding:10px 12px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--control); }
+.shop-recovery.warn { border-color:var(--warn); }
+.shop-recovery.bad { border-color:var(--flag-border); color:var(--flag-txt); }
+.shop-recovery div { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.shop-recovery b { font-size:var(--text-base); }
+.shop-recovery span { font-size:var(--text-sm); color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.shop-recovery.bad span { color:var(--flag-txt); }
+.shop-recovery button { flex:0 0 auto; }
 /* Shop filters: search + brand select on one line, category chips below. */
 .shop-filterbar { display:flex; gap:var(--space-md); }
 .shop-filterbar .fb-search { flex:1 1 auto; min-width:0; }
@@ -920,11 +931,31 @@ body { overflow:hidden; overscroll-behavior:none; }
 .shop-cover { font-size:var(--text-2xs); color:var(--muted); text-align:right; }
 
 /* ---------------- Sync Center (⋮ → Shop sync) ---------------- */
+.sync-lead { padding:2px 0 6px; color:var(--muted); font-size:var(--text-sm); line-height:1.35; }
+.sync-healthgrid, .sync-queuegrid { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:var(--space-sm); }
+.sync-healthcard, .sync-countcard { min-width:0; border:1px solid var(--line); border-radius:var(--radius-md);
+  background:var(--control); padding:9px 10px; }
+.sync-healthcard { display:flex; justify-content:space-between; gap:var(--space-md); align-items:flex-start; }
+.sync-healthcard.warn, .sync-countcard.warn { border-color:var(--warn); }
+.sync-countcard.bad { border-color:var(--flag-border); color:var(--flag-txt); }
+.sync-healthcard div { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.sync-healthcard b, .sync-countcard b { font-size:var(--text-lg); line-height:1.1; }
+.sync-healthcard span, .sync-healthcard small, .sync-countcard small { color:var(--muted); font-size:var(--text-xs); line-height:1.25; }
+.sync-healthcard small { color:var(--warn); }
+.sync-healthcard strong { flex:0 0 auto; font-size:var(--text-xs); color:var(--ok-txt); text-align:right; }
+.sync-healthcard.warn strong { color:var(--warn); }
+.sync-countcard { display:flex; flex-direction:column; gap:2px; }
+.sync-countcard span { font-size:var(--text-sm); font-weight:650; }
+.sync-actions { display:flex; flex-direction:column; gap:var(--space-sm); }
+.sync-readonly, .sync-empty { padding:9px 10px; border:1px solid var(--line); border-radius:var(--radius-md);
+  color:var(--muted); background:var(--control); font-size:var(--text-sm); line-height:1.35; }
 .sync-row { display:flex; justify-content:space-between; align-items:center; padding:7px 0; border-bottom:1px solid var(--line); font-size:var(--text-base); }
 .sync-val { color:var(--ok-txt); font-size:var(--text-sm); }
 .sync-val.warn { color:var(--warn); font-weight:600; }
 .sync-val.muted { color:var(--muted); }
 .sync-problem { padding:7px 0; border-bottom:1px solid var(--line); font-size:var(--text-sm); line-height:1.35; }
+.sync-problem b, .sync-problem span { display:block; }
+.sync-problem span { color:var(--muted); margin-top:2px; }
 .sync-problem-row { display:flex; align-items:flex-start; justify-content:space-between; gap:var(--space-lg); }
 .sync-problem-row > div { min-width:0; }
 .sync-open { flex:0 0 auto; min-height:32px; padding:0 10px; }

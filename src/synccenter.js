@@ -12,8 +12,8 @@ import { esc, openBottomSheet, toast } from "./ui.js";
 //              one glance
 //   Problems — items in error with their reason, plus any drift the nightly
 //              reconcile found
-// "Sync now" buttons invoke the edge functions directly with the signed-in
-// admin's JWT (the functions authorize admins/user-managers themselves).
+// Run buttons invoke the edge functions directly with the signed-in manager's
+// JWT (the functions authorize managers/admins themselves too).
 
 
 const FUNCTIONS_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
@@ -72,7 +72,8 @@ async function loadState() {
 }
 
 export function openSyncCenter(caps, onChanged, opts = {}) {
-  const sh = openBottomSheet("Shop sync", `<div class="muted" style="padding:14px">Loading…</div>`);
+  const canRunSync = !!caps?.can_manage_users;
+  const sh = openBottomSheet("Shop recovery", `<div class="muted" style="padding:14px">Loading…</div>`);
 
   async function render() {
     let s;
@@ -83,66 +84,85 @@ export function openSyncCenter(caps, onChanged, opts = {}) {
       return;
     }
 
-    const runRow = (label, run, staleAfterMin) => {
-      if (!run) return `<div class="sync-row"><span>${label}</span><span class="sync-val muted">never ran</span></div>`;
+    const runCard = (label, detail, run, staleAfterMin) => {
+      if (!run) return `<div class="sync-healthcard warn">
+        <div><b>${label}</b><span>${detail}</span></div><strong>never ran</strong>
+      </div>`;
       const mins = (Date.now() - new Date(run.finished_at).getTime()) / 60000;
       const bad = run.ok === false;
       const stale = staleAfterMin && mins > staleAfterMin;
-      const mark = bad ? "⚠ failed" : stale ? "⚠ overdue" : "✓";
-      return `<div class="sync-row"><span>${label}</span>
-        <span class="sync-val${bad || stale ? " warn" : ""}" ${run.error ? `title="${esc(run.error)}"` : ""}>${mark} · ${ago(run.finished_at)}</span></div>`;
+      const mark = bad ? "failed" : stale ? "overdue" : "healthy";
+      return `<div class="sync-healthcard${bad || stale ? " warn" : ""}">
+        <div><b>${label}</b><span>${detail}</span>${run.error ? `<small>${esc(run.error)}</small>` : ""}</div>
+        <strong>${mark} · ${ago(run.finished_at)}</strong>
+      </div>`;
     };
 
-    const countRow = (label, n, warn) =>
-      `<div class="sync-row"><span>${label}</span><span class="sync-val${warn && n ? " warn" : ""}">${n}</span></div>`;
+    const countCard = (label, n, detail, tone = "") =>
+      `<div class="sync-countcard${tone && n ? ` ${tone}` : ""}">
+        <b>${Number(n || 0).toLocaleString()}</b><span>${label}</span><small>${detail}</small>
+      </div>`;
 
     // Drift findings from the nightly reconcile (Phase 4) — only shown when present.
-    const findings = s.reconcile?.summary?.findings || [];
+    const findings = Array.isArray(s.reconcile?.summary?.findings) ? s.reconcile.summary.findings : [];
     const driftHtml = findings.length
-      ? `<div class="sheet-sec">Drift report</div>
-         ${findings.slice(0, 12).map((f) => `<div class="sync-problem"><b>${esc(f.sku || f.kind)}</b> — ${esc(f.note)}</div>`).join("")}`
-      : "";
+      ? findings.slice(0, 12).map((f) => `<div class="sync-problem"><b>${esc(f.sku || f.kind)}</b><span>${esc(f.note)}</span></div>`).join("")
+      : `<div class="sync-empty">No drift findings from the last check.</div>`;
 
     const focusProblems = opts.focus === "errors";
     const problemsHtml = s.errorItems.length
-      ? `<div class="sheet-sec${focusProblems ? " sync-focus-title" : ""}">Problems</div>
-         ${s.errorItems.map((it) => `<div class="sync-problem sync-problem-row">
-           <div><b>${esc(it.brand || it.name || "—")} · ${esc(it.sku || "no SKU")}</b><br>
-             <span class="muted">${esc(it.pos_sync_error || "unknown error")}</span></div>
+      ? s.errorItems.map((it) => `<div class="sync-problem sync-problem-row">
+           <div><b>${esc(it.brand || it.name || "—")} · ${esc(it.sku || "no SKU")}</b>
+             <span>${esc(it.pos_sync_error || "unknown error")}</span></div>
            <button class="ghost sync-open" data-open-item="${esc(it.id)}">Open</button>
-         </div>`).join("")}
-         <button class="ghost up-go" id="syncRetryErrors">Retry shop issues now</button>
-         <div class="menu-sub" style="margin-top:4px">Retry runs the shop push and keeps failures here until fixed.</div>`
-      : "";
+         </div>`).join("")
+      : `<div class="sync-empty">No item-level shop issues right now.</div>`;
+
+    const actionHtml = canRunSync
+      ? `<div class="sync-actions">
+          <button class="primary up-go" id="syncPush">Send to shop now</button>
+          ${s.errorItems.length ? `<button class="ghost up-go" id="syncRetryErrors">Retry shop issues</button>` : ""}
+          <button class="ghost" id="syncMirror">Refresh shop numbers</button>
+          <button class="ghost" id="syncReconcile">Run drift check</button>
+        </div>`
+      : `<div class="sync-readonly">Managers can run shop sync actions. This view is read-only for your role.</div>`;
 
     sh.body.innerHTML = `
+      <div class="sync-lead">Recover shop publishing, stock numbers, and drift checks from one place.</div>
       <div class="sheet-sec">Health</div>
-      ${runRow("Send to shop (push)", s.push, 0)}
-      ${runRow("Shop numbers (mirror)", s.mirror, 30)}
-      ${runRow("Drift check (reconcile)", s.reconcile, 0)}
+      <div class="sync-healthgrid">
+        ${runCard("Send to shop", "Push approved catalog items into the POS.", s.push, 0)}
+        ${runCard("Shop numbers", "Refresh stock and sales from the POS mirror.", s.mirror, 30)}
+        ${runCard("Drift check", "Find receipt, stock, and variant mismatches.", s.reconcile, 0)}
+      </div>
       <div class="sheet-sec">Queue</div>
-      ${countRow("Waiting to go to the shop", s.queued)}
-      ${countRow("Sending / awaiting POS approval", s.sending)}
-      ${countRow("Edits not yet in the shop", s.dirty)}
-      ${countRow("Errors", s.errors, true)}
+      <div class="sync-queuegrid">
+        ${countCard("Waiting", s.queued, "approved, not sent yet")}
+        ${countCard("Sending", s.sending, "in flight or awaiting POS approval")}
+        ${countCard("Update needed", s.dirty, "synced items changed here", "warn")}
+        ${countCard("Shop issues", s.errors, "failed and needs recovery", "bad")}
+      </div>
+      <div class="sheet-sec${focusProblems ? " sync-focus-title" : ""}">Problems</div>
       ${problemsHtml}
+      <div class="sheet-sec">Drift report</div>
       ${driftHtml}
-      <button class="primary up-go" id="syncPush" style="margin-top:12px">Send to shop now</button>
-      <button class="ghost" id="syncMirror" style="margin-top:8px">Refresh shop numbers</button>`;
+      <div class="sheet-sec">Actions</div>
+      ${actionHtml}`;
 
     const runBtn = (id, fn, doneMsg) => {
       const btn = sh.body.querySelector(id);
       if (!btn) return;
       btn.onclick = async () => {
+        if (!canRunSync) return;
         btn.disabled = true;
         const old = btn.textContent;
-        btn.textContent = "Running…";
+        btn.textContent = "Running...";
         try {
           const r = await invokeLoop(fn);
           toast(doneMsg(r));
           onChanged?.();
         } catch (e) {
-          toast(`Sync failed: ${e.message}`);
+          toast(`Shop sync failed: ${e.message}`);
         }
         btn.disabled = false;
         btn.textContent = old;
@@ -161,6 +181,7 @@ export function openSyncCenter(caps, onChanged, opts = {}) {
     runBtn("#syncRetryErrors", "pos-push", (r) =>
       `Sent — ${r.created || 0} new, ${r.add_variant || 0} sizes, ${r.add_stock || 0} stock, ${r.dirty_updated || 0} updates${r.errored ? `, ${r.errored} errors` : ""}`);
     runBtn("#syncMirror", "pos-mirror", (r) => `Shop numbers refreshed (${r.variants} products)`);
+    runBtn("#syncReconcile", "pos-reconcile", (r) => `Drift check complete (${r.drift || 0} finding${(r.drift || 0) === 1 ? "" : "s"})`);
   }
 
   render();

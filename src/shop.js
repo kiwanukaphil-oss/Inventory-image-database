@@ -24,19 +24,30 @@ const SHOP_ITEM_CAP = 10000; // explicit cap (P5): the report was relying on Pos
 // the gallery's browseState).
 const state = { q: "", top: "", brand: "", bestWindow: "7d", expanded: new Set() };
 
+async function loadLatestSyncRun(kind) {
+  const { data } = await supabase
+    .from("pos_sync_runs")
+    .select("finished_at, ok, error, summary")
+    .eq("kind", kind)
+    .order("started_at", { ascending: false })
+    .limit(1);
+  return (data || [])[0] || null;
+}
+
 export async function renderShop(view, caps, onChanged) {
   view.innerHTML = `<div class="shop-wrap"><div class="shop-skel">${
     Array.from({ length: 5 }, () => `<div class="shop-card"><div class="sk-line w45"></div><div class="sk-line w70"></div></div>`).join("")
   }</div></div>`;
   await loadRefData();
 
-  const [{ data: items, error }, posMirror] = await Promise.all([
+  const [{ data: items, error }, posMirror, reconcileRun] = await Promise.all([
     supabase
       .from("items")
       .select("id, name, brand, sku, status, image_path, attributes, category_id, pos_sync_status, pos_variant_id, pos_synced_at, pos_dirty, categories(name)")
       .order("created_at", { ascending: true })
       .limit(SHOP_ITEM_CAP),
     loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
+    loadLatestSyncRun("reconcile").catch(() => null),
   ]);
   if (error) {
     view.innerHTML = `<div class="empty"><div class="big">⚠️</div><div>Couldn't load shop data.</div>
@@ -58,6 +69,9 @@ export async function renderShop(view, caps, onChanged) {
   // Sync bucket counts come from the shared single source (syncstate.js) so the
   // Shop strip and the Sync Center can never disagree.
   const { queued, errors, sending, dirty, inShop } = syncCountsFromItems(items || []);
+  const driftFindings = Array.isArray(reconcileRun?.summary?.findings)
+    ? reconcileRun.summary.findings
+    : [];
 
   // The variant universe, dressed for filtering: top-level category + brand.
   const all = [...posMirror.byVariant.values()]
@@ -134,6 +148,7 @@ export async function renderShop(view, caps, onChanged) {
         <div class="shop-main">
           <div class="shop-name">${esc(title(v))}</div>
           <div class="shop-sub">${esc(subLine(v))}</div>
+          ${v.rep ? "" : `<div class="shop-readonly">POS-only row - read-only here</div>`}
         </div>
         <div class="shop-metric">${metric}</div>
       </div>`;
@@ -166,6 +181,23 @@ export async function renderShop(view, caps, onChanged) {
       : null;
     const staleMins = posMirror.lastMirror?.finished_at
       ? (Date.now() - new Date(posMirror.lastMirror.finished_at).getTime()) / 60000 : Infinity;
+    const mirrorProblem = !asOf || posMirror.lastMirror?.ok === false || staleMins > 30;
+    const syncBits = [];
+    if (!asOf) syncBits.push("no shop numbers yet");
+    else if (posMirror.lastMirror?.ok === false) syncBits.push("shop numbers failed");
+    else if (staleMins > 30) syncBits.push("shop numbers stale");
+    if (queued) syncBits.push(`${queued} waiting to send`);
+    if (sending) syncBits.push(`${sending} sending`);
+    if (dirty) syncBits.push(`${dirty} update needed`);
+    if (errors) syncBits.push(`${errors} shop issue${errors === 1 ? "" : "s"}`);
+    if (driftFindings.length) syncBits.push(`${driftFindings.length} drift finding${driftFindings.length === 1 ? "" : "s"}`);
+    const recoveryTone = errors || posMirror.lastMirror?.ok === false || !asOf ? " bad" : mirrorProblem || dirty || driftFindings.length ? " warn" : "";
+    const recoveryHtml = syncBits.length
+      ? `<div class="shop-recovery${recoveryTone}">
+          <div><b>Shop recovery</b><span>${esc(syncBits.slice(0, 4).join(" · "))}${syncBits.length > 4 ? ` · +${syncBits.length - 4} more` : ""}</span></div>
+          <button class="ghost" data-synccenter>${caps.can_manage_users ? "Open Sync Center" : "View Sync Center"}</button>
+        </div>`
+      : "";
     const daysIn = (v) => v.rep?.pos_synced_at
       ? Math.round((Date.now() - new Date(v.rep.pos_synced_at).getTime()) / DAY_MS) : "?";
 
@@ -194,6 +226,7 @@ export async function renderShop(view, caps, onChanged) {
           <span>${asOf ? `Shop data as of ${esc(asOf)}${staleMins > 30 ? " — may be stale" : ""}` : "No shop data yet — the first sync hasn't run."}${truncated ? ` · ⚠ first ${SHOP_ITEM_CAP.toLocaleString()} items only` : ""}</span>
           <button class="shop-refresh" id="shopRefresh" aria-label="Refresh">${ICON.refresh || "↻"}</button>
         </div>
+        ${recoveryHtml}
 
         <div class="shop-health">
           <span><b>${inShop}</b><small>In shop</small></span>
@@ -232,7 +265,10 @@ export async function renderShop(view, caps, onChanged) {
           <div class="shop-head"><span>Waiting to go to the shop</span></div>
           <div class="shop-pipeline">
             <span><b>${queued}</b> approved, going on the next sync</span>
-            ${errors ? `<span class="warn"><b>${errors}</b> failed — see ⋮ → Shop sync</span>` : ""}
+            ${sending ? `<span><b>${sending}</b> being sent or awaiting POS approval</span>` : ""}
+            ${dirty ? `<span class="warn"><b>${dirty}</b> in-shop item${dirty === 1 ? "" : "s"} need synced updates</span>` : ""}
+            ${errors ? `<span class="warn"><b>${errors}</b> failed — open Sync Center</span>` : ""}
+            ${driftFindings.length ? `<span class="warn"><b>${driftFindings.length}</b> drift finding${driftFindings.length === 1 ? "" : "s"} from the last check</span>` : ""}
           </div>
         </div>
       </div>`;

@@ -2397,7 +2397,9 @@ async function renderToday(view, caps, actions = {}) {
   const posMirror = galleryPayload.posMirror || {};
   const byVariant = posMirror.byVariant instanceof Map ? posMirror.byVariant : new Map();
   const reviewCount = rows.filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length;
-  const shopIssueCount = (syncCounts.errors || 0) + (syncCounts.dirty || 0);
+  const freshness = todayFreshness(posMirror.lastMirror);
+  const freshnessNeedsWork = freshness.cls === "warn" || freshness.cls === "bad";
+  const shopIssueCount = (syncCounts.errors || 0) + (syncCounts.dirty || 0) + (freshnessNeedsWork ? 1 : 0);
   let issueCounts = {};
   setReviewBadge(reviewCount);
   setShopBadge(shopIssueCount);
@@ -2440,7 +2442,9 @@ async function renderToday(view, caps, actions = {}) {
   const soldToday = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_today || row.sold_today || 0), 0);
   const soldWeek = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_7d || row.sold_7d || row.units_sold_week || 0), 0);
   const aiChecks = (issueCounts.doubt || 0) + (issueCounts.ai || 0);
-  const freshness = todayFreshness(posMirror.lastMirror);
+  const syncSub = freshnessNeedsWork
+    ? freshness.text
+    : `${Number(syncCounts.queued || 0).toLocaleString()} queued, ${Number(syncCounts.dirty || 0).toLocaleString()} updates, ${Number(syncCounts.errors || 0).toLocaleString()} errors`;
 
   const photoRows = rows.filter((it) => it.image_path).slice(0, 5);
   const photoUrls = await Promise.all(photoRows.map((it) => signThumb(it.image_path)));
@@ -2469,7 +2473,7 @@ async function renderToday(view, caps, actions = {}) {
         ${todayQueueCard("price", "Price queue", issueCounts.price || 0, "Items blocked by missing prices", "price", ICON.navShop)}
         ${todayQueueCard("ai", "AI check", aiChecks, "Confidence, failed fill, and missing AI work", "ai-check", ICON.sparkle)}
         ${todayQueueCard("ready", "Ready", issueCounts.ready || 0, "Priced items ready to approve", "ready", ICON.tick)}
-        ${todayQueueCard("sync", "Shop sync", shopIssueCount, "Errors and pending shop updates", "sync", ICON.refresh)}
+        ${todayQueueCard("sync", "Shop sync", shopIssueCount, syncSub, "sync", ICON.refresh)}
       </section>
 
       <section class="today-main">
