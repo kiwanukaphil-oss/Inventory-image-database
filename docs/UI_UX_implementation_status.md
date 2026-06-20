@@ -10,13 +10,13 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 ## Phase Checklist
 
 - [x] Phase 0: Design-system foundation
-  - Status: partially implemented.
-  - Done: warmer palette tokens, shared heading letter-spacing cleanup, Today-specific component layer.
-  - Outstanding: full component normalization and screenshot comparison across all major surfaces.
+  - Status: implemented.
+  - Done: warmer palette tokens, shared heading letter-spacing cleanup, shared focus/press/button/input treatment, Today-specific component layer, and final automated validation pass.
+  - Outstanding: authenticated screenshot comparison across all major live surfaces during block review.
 - [x] Phase 1: Today and navigation
   - Status: implemented.
-  - Done: Today default landing surface, Catalog nav rename, five-tab nav, Today work counts, intake strip, shop pulse, activity bridge.
-  - Outstanding: long-press work-card previews and permission-specific cost readiness counts.
+  - Done: Today default landing surface, Catalog nav rename, five-tab nav, Today work counts, intake strip, shop pulse, activity bridge, long-press/right-click work-card previews, permission-aware retail/cost price queue detail.
+  - Outstanding: none.
 - [x] Phase 2: Catalog and Review refresh
   - Status: implemented.
   - Done: visible Catalog smart-view shelves, saved-view shelf promotion, filter-sheet smart-view parity, shelf styling, refreshed tile and dense-row hierarchy, active Review queue brief and contextual actions, desktop preview pane, bulk-selection regression pass.
@@ -82,3 +82,4 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Commit and push Phase 8 slice.
 - [x] Run final full validation and worktree check.
 - [x] Commit and push final tracker update.
+- [x] Close remaining Phase 0/1 code-level items.

@@ -2460,6 +2460,11 @@ async function renderToday(view, caps, actions = {}) {
   const soldToday = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_today || row.sold_today || 0), 0);
   const soldWeek = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_7d || row.sold_7d || row.units_sold_week || 0), 0);
   const aiChecks = (issueCounts.doubt || 0) + (issueCounts.ai || 0);
+  const missingRetail = rows.filter((it) => it.price == null).length;
+  const missingCost = caps.can_view_cost ? rows.filter((it) => it.has_cost_price === false).length : 0;
+  const priceSub = caps.can_view_cost && missingCost
+    ? `${missingRetail.toLocaleString()} missing retail, ${missingCost.toLocaleString()} missing cost`
+    : "Items blocked by missing prices";
   const syncSub = freshnessNeedsWork
     ? freshness.text
     : `${Number(syncCounts.queued || 0).toLocaleString()} queued, ${Number(syncCounts.dirty || 0).toLocaleString()} updates, ${Number(syncCounts.errors || 0).toLocaleString()} errors`;
@@ -2472,6 +2477,7 @@ async function renderToday(view, caps, actions = {}) {
     .filter((it) => it.activity?.latest_at)
     .sort((a, b) => new Date(b.activity.latest_at) - new Date(a.activity.latest_at))
     .slice(0, 4);
+  let suppressTodayClick = false;
 
   view.innerHTML = `
     <div class="today-wrap">
@@ -2488,7 +2494,7 @@ async function renderToday(view, caps, actions = {}) {
       </section>
 
       <section class="today-decision-grid" aria-label="Work queues">
-        ${todayQueueCard("price", "Price queue", issueCounts.price || 0, "Items blocked by missing prices", "price", ICON.navShop)}
+        ${todayQueueCard("price", "Price queue", issueCounts.price || 0, priceSub, "price", ICON.navShop)}
         ${todayQueueCard("ai", "AI check", aiChecks, "Confidence, failed fill, and missing AI work", "ai-check", ICON.sparkle)}
         ${todayQueueCard("ready", "Ready", issueCounts.ready || 0, "Priced items ready to approve", "ready", ICON.tick)}
         ${todayQueueCard("sync", "Shop sync", shopIssueCount, syncSub, "sync", ICON.refresh)}
@@ -2544,12 +2550,17 @@ async function renderToday(view, caps, actions = {}) {
 
   function bindTodayActions() {
     view.onclick = handleTodayClick;
+    bindTodayPreview();
   }
 
   function handleTodayClick(e) {
     const actionBtn = e.target.closest("[data-today-action]");
     const reviewBtn = e.target.closest("[data-today-review]");
     const openBtn = e.target.closest("[data-today-open]");
+    if (suppressTodayClick && reviewBtn) {
+      suppressTodayClick = false;
+      return;
+    }
     if (reviewBtn) {
       const key = reviewBtn.dataset.todayReview;
       if (key === "ai-check") actions.openReviewQueue?.((issueCounts.doubt || 0) ? "doubt" : "ai");
@@ -2575,10 +2586,65 @@ async function renderToday(view, caps, actions = {}) {
   }
 
   function todayQueueCard(tone, title, count, sub, reviewKey, icon) {
-    return `<button class="today-qcard ${tone}" data-today-review="${esc(reviewKey)}">
+    return `<button class="today-qcard ${tone}" data-today-review="${esc(reviewKey)}"
+      data-preview-title="${esc(title)}" data-preview-count="${esc(Number(count || 0).toLocaleString())}" data-preview-detail="${esc(sub)}">
       <span class="today-qico">${icon || ""}</span>
       <span class="today-qcopy"><b>${esc(Number(count || 0).toLocaleString())}</b><span>${esc(title)}</span><small>${esc(sub)}</small></span>
     </button>`;
+  }
+
+  function bindTodayPreview() {
+    let timer = null, start = null, previewed = false;
+    const clearTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const openPreview = (btn, suppressClick = true) => {
+      if (!btn) return;
+      previewed = true;
+      if (suppressClick) {
+        suppressTodayClick = true;
+        setTimeout(() => { suppressTodayClick = false; }, 900);
+      }
+      const title = btn.dataset.previewTitle || "Work queue";
+      const count = btn.dataset.previewCount || "0";
+      const detail = btn.dataset.previewDetail || "";
+      const sh = openBottomSheet(title, `
+        <div class="today-preview">
+          <b>${esc(count)}</b>
+          <span>${esc(detail)}</span>
+          <button class="primary up-go" data-open-work>Open queue</button>
+        </div>`);
+      sh.body.querySelector("[data-open-work]").onclick = () => {
+        sh.close();
+        suppressTodayClick = false;
+        handleTodayClick({ target: btn });
+      };
+    };
+    view.querySelectorAll(".today-qcard").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        if (!suppressTodayClick) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        suppressTodayClick = false;
+      }, true);
+      btn.addEventListener("contextmenu", (e) => { e.preventDefault(); openPreview(btn, false); });
+      btn.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse") return;
+        start = { x: e.clientX, y: e.clientY };
+        previewed = false;
+        timer = setTimeout(() => openPreview(btn), 520);
+      });
+      btn.addEventListener("pointermove", (e) => {
+        if (!timer || !start) return;
+        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 12) clearTimer();
+      });
+      btn.addEventListener("pointerup", (e) => {
+        clearTimer();
+        if (previewed) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      });
+      btn.addEventListener("pointercancel", clearTimer);
+    });
   }
 
   function todayThumbHtml(it, url) {
