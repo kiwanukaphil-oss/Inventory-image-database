@@ -18,9 +18,9 @@ import { costFromRetail } from "./lib/price.js";
 //    4. CHECK  — every affected item shown as a photo with its new price tag,
 //                grouped by outcome, then ONE undoable write
 //
-//  The pivot-style tool (pricing.js) stays available behind "Advanced" — same
+//  The pivot-style tool (pricing.js) stays available behind "Group table" — same
 //  write semantics, different audience. This flow edits retail price only;
-//  cost lives in Advanced where it is capability-gated.
+//  cost lives in the group table where it is capability-gated.
 // ============================================================================
 
 
@@ -28,11 +28,11 @@ import { costFromRetail } from "./lib/price.js";
 const isNumericish = (v) => v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v));
 
 export async function openGuidedPricing(caps, onClose, opts = {}) {
-  // Show the overlay immediately with a spinner so "Set prices" feels responsive
+  // Show the overlay immediately with a spinner so "Build price rule" feels responsive
   // while the catalogue (up to 5000 rows) loads; real content replaces it below.
   const el = document.createElement("div");
   el.className = "calib pricing pgd";
-  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Set prices</span></div>
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Build price rule</span></div>
     <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add("open"));
@@ -61,7 +61,8 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   const items = allItems.filter(priceable);
   // Selection mode: when the caller hands us specific items (a gallery selection
   // or the review price queue), we price exactly those — skipping the category
-  // picker — so "Set prices" is one model everywhere. Pivot stays via Advanced.
+  // picker — so "Build price rule" is one model everywhere. Pivot stays via the
+  // group table.
   const selIds = Array.isArray(opts.itemIds) ? new Set(opts.itemIds) : null;
   const selectionMode = !!(selIds && selIds.size);
 
@@ -235,7 +236,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     return `<div class="pgd-pile">
       <div class="pgd-pilehead">${head}</div>
       <div class="pgd-strip">${withImg.map((it) => `<span class="pgd-stripthumb">${thumbOf(it)}</span>`).join("")}</div>
-      ${inShop ? `<div class="pgd-hint muted">${inShop} more ${inShop === 1 ? "is" : "are"} already in the shop and not shown — once pushed, prices change in the POS, not here.</div>` : ""}
+      ${inShop ? `<div class="pgd-posskip">${inShop} more ${inShop === 1 ? "is" : "are"} already in the shop and not shown. Change synced prices in the POS.</div>` : ""}
     </div>`;
   }
 
@@ -349,10 +350,10 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   const TITLES = { 1: "What are we pricing?", 2: "Base price", 3: "Exceptions", 4: "Check & apply" };
   function footHtml() {
     // While drilled into the tree, the left slot becomes Back (mobile users
-    // need a visible way up); Advanced is discoverable at the entry level.
+    // need a visible way up); Group table is discoverable at the entry level.
     if (step === 1) return `${drillId
       ? `<button class="ghost" id="pgdBack">‹ Back</button>`
-      : `<button class="ghost" id="pgdAdv">Advanced</button>`}<span class="pgd-dots">${dots()}</span><span></span>`;
+      : `<button class="ghost" id="pgdAdv">Group table</button>`}<span class="pgd-dots">${dots()}</span><span></span>`;
     const nextLabel = step === 2 ? "Exceptions ›" : step === 3 ? "Preview ›" : "Apply";
     const nextDisabled = step === 4 && !pile.some((it) => {
       const p = finalPriceOf(it);
@@ -371,7 +372,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
       <div class="calib-head">
         <button class="iconbtn" id="pgdX" aria-label="Close">${ICON.x}</button>
         <span>${esc(TITLES[step])}</span>
-        <span>${selectionMode ? `<button class="linkbtn" id="pgdAdv">Advanced</button>` : ""}</span>
+        <span>${selectionMode ? `<button class="linkbtn" id="pgdAdv">Group table</button>` : ""}</span>
       </div>
       ${step >= 2 && sentence() ? `<div class="pgd-sentence">${esc(selectionMode ? "Selected" : (categoryPath(pickedId)?.split(" › ").pop() || ""))}: ${esc(sentence())}</div>` : ""}
       <div class="calib-body" id="pgdBody">${body}</div>

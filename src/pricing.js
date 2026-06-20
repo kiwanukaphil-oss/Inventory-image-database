@@ -49,12 +49,12 @@ function valueOf(it, key) {
  * @param {object} [opts]    { itemIds } to price only a selected subset
  */
 export async function openPricing(caps, onClose, opts = {}) {
-  // Show the overlay immediately with a spinner so tapping "Set prices" feels
+  // Show the overlay immediately with a spinner so tapping "Group pricing table" feels
   // responsive — loading the catalogue (up to 5000 rows) can take a moment.
   // The real content replaces this innerHTML once the data + groups are ready.
   const el = document.createElement("div");
   el.className = "calib pricing";
-  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Set prices</span></div>
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Group pricing table</span></div>
     <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add("open"));
@@ -63,7 +63,7 @@ export async function openPricing(caps, onClose, opts = {}) {
 
   const { data: rows, error } = await supabase
     .from("items")
-    .select("id, brand, attributes, category_id, price")
+    .select("id, brand, attributes, category_id, price, pos_sync_status")
     .limit(5000);
   if (error) {
     // Keep the overlay open with a retry instead of vanishing on a network blip.
@@ -73,9 +73,15 @@ export async function openPricing(caps, onClose, opts = {}) {
     el.querySelector("#pgRetry").onclick = () => { el.remove(); openPricing(caps, onClose, opts); };
     return;
   }
-  // When launched from a gallery selection, price only those items.
+  // When launched from a gallery selection, price only those items. Once an item
+  // is synced to the POS, the POS owns its price, so skip it here and explain the
+  // count in the controls instead of offering an edit that will not take effect.
   const idset = opts.itemIds?.length ? new Set(opts.itemIds) : null;
-  const items = (rows || []).filter((it) => !idset || idset.has(it.id));
+  const allItems = rows || [];
+  const selectedRows = idset ? allItems.filter((it) => idset.has(it.id)) : allItems;
+  const priceable = (it) => !it.pos_sync_status || it.pos_sync_status === "error";
+  const posSkipped = selectedRows.filter((it) => !priceable(it)).length;
+  const items = selectedRows.filter(priceable);
   const byId = Object.fromEntries(items.map((it) => [it.id, it]));
 
   // Cost lives in the admin-only item_costs table, so only load it (and offer the
@@ -303,7 +309,10 @@ export async function openPricing(caps, onClose, opts = {}) {
     // The collapsed controls show just a one-line summary of the grouping/scope.
     const groupSummary = (groupKeys.length ? groupKeys.map(groupLabelFor).join(" · ") : "All items")
       + (scope.length ? ` · ${scope.length} scope${scope.length > 1 ? "s" : ""}` : "");
-    const titleText = idset ? `Set prices · ${items.length} selected` : "Set prices";
+    const titleText = idset ? `Group pricing table · ${items.length} selected` : "Group pricing table";
+    const posSkipNote = posSkipped
+      ? `<div class="pg-posskip">${posSkipped} POS-owned item${posSkipped === 1 ? "" : "s"} skipped. Change synced shop prices in the POS.</div>`
+      : "";
     const summaryLine = totalUnpriced
       ? `<div class="pg-summary">${totalUnpriced} of ${visibleCount} shown ${totalUnpriced === 1 ? "has" : "have"} no ${noun}${excluded ? ` · ${excluded} excluded by scope` : ""}</div>`
       : `<div class="pg-summary pg-done">All ${visibleCount} shown ${visibleCount === 1 ? "has" : "have"} a ${noun} ✓${excluded ? ` · ${excluded} excluded by scope` : ""}</div>`;
@@ -328,6 +337,7 @@ export async function openPricing(caps, onClose, opts = {}) {
         ` : ""}
         <label class="pg-toggle"><input type="checkbox" id="pgHidePriced"${hideFullyPriced ? " checked" : ""}> Show only groups that need a ${noun}</label>
         <label class="pg-toggle"><input type="checkbox" id="pgOnlyUnpriced"${onlyUnpriced ? " checked" : ""}> Only fill items with no ${noun}</label>
+        ${posSkipNote}
         <input id="pgFilter" class="fb-search" type="search" placeholder="Filter groups…" value="${esc(filterText)}">
         ${summaryLine}
       </div>

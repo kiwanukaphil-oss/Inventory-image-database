@@ -280,7 +280,7 @@ export function renderApp(mount, profile, onSignOut) {
       { id: "review-ai", label: "Needs AI fill", sub: "Find photos that need AI fill or retry", icon: ICON.sparkle, show: true },
       { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
       { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
-      { id: "pricing", label: "Set prices", sub: "Open guided pricing", icon: ICON.pencil, show: !!caps.can_edit },
+      { id: "pricing", label: "Build price rule", sub: "Open guided pricing", icon: ICON.pencil, show: !!caps.can_edit },
       { id: "audit", label: "AI consistency audit", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
       { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
       { id: "shop", label: "Shop floor", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
@@ -1208,7 +1208,7 @@ async function renderGallery(view, caps, opts = {}) {
     if (!review) { reviewBriefEl.hidden = true; return; }
     const guide = reviewQueueGuide(issue);
     const actions = [];
-    if (issue === "price" && canEdit && rows.length) actions.push(["setprices", "Set prices"]);
+    if (issue === "price" && canEdit && rows.length) actions.push(["setprices", "Build rule"]);
     else if (issue === "ai" && canEdit && rows.length) actions.push([failedAiShown ? "retryai" : "aifill", failedAiShown ? `Retry ${failedAiShown}` : "AI-fill"]);
     else if (issue === "sync" && canEdit && rows.length) actions.push(["sync", "Open sync"]);
     else if (issue === "ready" && canEdit && rows.length) actions.push(["approveall", `Approve ${rows.length}`]);
@@ -1352,10 +1352,10 @@ async function renderGallery(view, caps, opts = {}) {
 
     // Pricing is the gate to approval, so the count line doubles as its
     // doorway: a tap on "N without a price" applies the no-price filter, and
-    // once you're looking at the unpriced, "Set prices" is right there.
+    // once you're looking at the unpriced, "Build rule" is right there.
     const unpricedShown = rows.filter((it) => it.price == null).length;
     const priceCta = review && issue === "price" ? "" : noPrice
-      ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Set prices ›</button>` : "")
+      ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Build rule ›</button>` : "")
       : unpricedShown
         ? ` · <button class="count-cta" data-cta="noprice">${unpricedShown} without a price</button>`
         : "";
@@ -1374,7 +1374,7 @@ async function renderGallery(view, caps, opts = {}) {
           ? ` · <button class="count-cta" data-cta="retryai">Retry ${failedAiShown} failed ›</button>`
           : ` · <button class="count-cta" data-cta="aifill">AI-fill ${rows.length} ›</button>`
         : issue === "price"
-          ? ` · <button class="count-cta" data-cta="setprices">Set prices ›</button>`
+          ? ` · <button class="count-cta" data-cta="setprices">Build rule ›</button>`
           : issue === "sync"
             ? ` · <button class="count-cta" data-cta="sync">Open shop sync ›</button>`
             : ""
@@ -1618,7 +1618,7 @@ async function renderGallery(view, caps, opts = {}) {
     else if (cta.dataset.cta === "setprices") {
       // One model everywhere: guided pricing. In Review it opens scoped to the
       // items on screen (selection mode); elsewhere it starts at the category
-      // picker. The pivot tool stays reachable as "Advanced" inside guided.
+      // picker. The pivot tool stays reachable as "Group table" inside guided.
       if (review) openGuidedPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
       else openGuidedPricing(caps, refresh);
     }
@@ -2201,7 +2201,7 @@ async function renderGallery(view, caps, opts = {}) {
         readiness.blockers.some((b) => b.issue === "price")
       );
       const action = hasPriceBlocker
-        ? { label: "Set prices", onClick: () => { if (selectionMode) exitSelection(); openGuidedPricing(caps, refresh, { itemIds: ids }); } }
+        ? { label: "Build rule", onClick: () => { if (selectionMode) exitSelection(); openGuidedPricing(caps, refresh, { itemIds: ids }); } }
         : null;
       toast(`Can't approve: ${reasons}.`, action);
       return;
@@ -2292,7 +2292,7 @@ async function renderGallery(view, caps, opts = {}) {
     view.querySelector("#abMore").onclick = () => {
       if (!selected.size) return;
       const body = `
-        <button class="menu-item" data-pricesel>Set prices for ${selected.size} item(s)…</button>
+        <button class="menu-item" data-pricesel>Build price rule for ${selected.size} item(s)…</button>
         <button class="menu-item" data-clearsel>Clear selection</button>
         ${canDelete ? `<button class="menu-item danger" data-del>Delete ${selected.size} item(s)</button>` : ""}`;
       const sh = openBottomSheet("More actions", body);

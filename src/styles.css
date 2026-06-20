@@ -958,6 +958,10 @@ body { overflow:hidden; overscroll-behavior:none; }
 .pgd-stripthumb img { width:100%; height:100%; object-fit:cover; }
 .pgd-baseinput input { font-size:var(--text-xl); }
 .pgd-hint { font-size:var(--text-sm); margin-top:8px; line-height:1.4; }
+.pgd-posskip, .pg-posskip { padding:8px 10px; border:1px solid var(--review-border);
+  border-radius:var(--radius-sm); background:var(--control); color:var(--review-txt);
+  font-size:var(--text-sm); line-height:1.35; }
+.pgd-posskip { margin-top:8px; }
 .pgd-keep { margin-top:12px; }
 .pgd-suggest { display:block; width:100%; margin-top:10px; text-align:center; font-weight:600; }
 .pgd-suggest .muted { font-weight:400; font-size:var(--text-xs); }
@@ -1594,7 +1598,7 @@ body { overflow:hidden; overscroll-behavior:none; }
 .cs-rate { font-size:var(--text-md); font-weight:650; }
 .cs-approve { width:100%; margin-top:6px; }
 
-/* ---------------- pricing (set prices by group) ---------------- */
+/* ---------------- pricing (group pricing table) ---------------- */
 .pg-controls { flex:0 0 auto; padding:12px 14px; border-bottom:1px solid var(--line);
   display:flex; flex-direction:column; gap:var(--space-md); }
 .pg-bylabel { font-size:var(--text-2xs); text-transform:uppercase; letter-spacing:0; }

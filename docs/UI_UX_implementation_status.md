@@ -29,7 +29,10 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
   - Status: implemented.
   - Done: editor Verify/Details/Selling/Activity/Admin structure, prominent Fix Mode treatment, readiness and approval guards, POS-owned field notice, AI evidence panel, persisted AI visible-text transcript, failed-AI evidence state.
   - Outstanding: migration deployment verification and live AI transcript verification during block review.
-- [ ] Phase 5: Pricing
+- [x] Phase 5: Pricing
+  - Status: implemented.
+  - Done: guided pricing entry points renamed to Build price rule, advanced pricing renamed to Group pricing table, POS-owned items skipped and explained in guided and advanced pricing flows, pricing CTA copy aligned across quick actions, review, approval, count-line shortcuts, and selection actions.
+  - Outstanding: final block-review pricing regression around POS-owned skips, undo, preview, and cost mode.
 - [ ] Phase 6: Shop and Sync
 - [ ] Phase 7: Admin and data tools
 - [ ] Phase 8: Intelligence layer
@@ -56,3 +59,6 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Implement Phase 4 editor readiness and AI evidence slice.
 - [x] Validate Phase 4 slice with unit tests and production build.
 - [x] Commit and push Phase 4 slice.
+- [x] Implement Phase 5 pricing workflow language and POS-owned skip treatment.
+- [x] Validate Phase 5 slice with unit tests and production build.
+- [ ] Commit and push Phase 5 slice.
