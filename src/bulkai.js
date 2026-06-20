@@ -12,6 +12,10 @@ import { esc, trapFocus, isTopOverlay } from "./ui.js";
 const CONCURRENCY = 2; // keep Anthropic vision calls below overload-prone bursts
 const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
 
+function cleanAiVisibleText(value) {
+  const text = String(value || "").trim();
+  return text && !AI_PLACEHOLDER.has(text.toLowerCase()) ? text : "";
+}
 
 function edgeErrorMessage(body, fallback = "") {
   if (!body || typeof body !== "object") return fallback;
@@ -200,21 +204,28 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
         }
       }
 
-      if (changed > 0) {
+      const visibleText = cleanAiVisibleText(data.visible_text);
+      if (changed > 0 || visibleText) {
         const update = { attributes, confidence, brand: newBrand, name: newName };
+        if (visibleText) update.ai_visible_text = visibleText;
         // Surface freshly AI-touched drafts for review.
-        if (it.status === "draft") update.status = "needs-review";
+        if (changed > 0 && it.status === "draft") update.status = "needs-review";
         const { error: upErr } = await supabase.from("items").update(update).eq("id", it.id);
         if (upErr) throw upErr;
-        await logItemActivity(
-          it.id,
-          "ai_fill",
-          "ai",
-          diffItemValues(it, { ...it, ...update }),
-          `AI filled ${changed} field${changed === 1 ? "" : "s"}`
-        );
-        filled++;
-        logLine(`✓ ${label} — filled ${changed} field${changed === 1 ? "" : "s"}`);
+        if (changed > 0) {
+          await logItemActivity(
+            it.id,
+            "ai_fill",
+            "ai",
+            diffItemValues(it, { ...it, ...update }),
+            `AI filled ${changed} field${changed === 1 ? "" : "s"}`
+          );
+          filled++;
+          logLine(`✓ ${label} — filled ${changed} field${changed === 1 ? "" : "s"}`);
+        } else {
+          skipped++;
+          logLine(`· ${label} — saved AI text`);
+        }
       } else {
         skipped++;
         logLine(`· ${label} — nothing to fill`);

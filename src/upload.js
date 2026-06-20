@@ -49,6 +49,11 @@ function clearUploadDefaults() {
   try { localStorage.removeItem(UPLOAD_DEFAULTS_KEY); } catch {}
 }
 
+function cleanAiVisibleText(value) {
+  const text = String(value || "").trim();
+  return text && !["unknown", "n/a", "none", "null", "-", "--"].includes(text.toLowerCase()) ? text : "";
+}
+
 // Pick up any photos shared into the app via the PWA share target (stashed in a
 // Cache by public/sw-share.js), hand them to the Add flow, then clear the cache
 // so a later visit doesn't re-import them. Safe no-op when nothing was shared.
@@ -109,6 +114,8 @@ async function aiFillItem(id, common) {
     filled++;
   }
   const update = { brand, name, attributes, confidence };
+  const visibleText = cleanAiVisibleText(data.visible_text);
+  if (visibleText) update.ai_visible_text = visibleText;
   // Same rule as bulk AI-fill: an AI-touched draft surfaces in Review rather
   // than sitting silently as a confident-but-unchecked draft.
   if (filled && common.status === "draft") update.status = "needs-review";

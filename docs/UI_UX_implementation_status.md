@@ -25,7 +25,10 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
   - Status: implemented.
   - Done: Add workbench intake summary, visible batch/category/AI state, shared-photo import banner, clearer upload progress and recovery actions, burst filmstrip AI-issue state, failed-AI routing into Review.
   - Outstanding: final real-device camera/share-target verification during block review.
-- [ ] Phase 4: Editor, readiness, and AI evidence
+- [x] Phase 4: Editor, readiness, and AI evidence
+  - Status: implemented.
+  - Done: editor Verify/Details/Selling/Activity/Admin structure, prominent Fix Mode treatment, readiness and approval guards, POS-owned field notice, AI evidence panel, persisted AI visible-text transcript, failed-AI evidence state.
+  - Outstanding: migration deployment verification and live AI transcript verification during block review.
 - [ ] Phase 5: Pricing
 - [ ] Phase 6: Shop and Sync
 - [ ] Phase 7: Admin and data tools
@@ -50,3 +53,6 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Implement Phase 3 Add/camera workbench polish.
 - [x] Validate Phase 3 slice with unit tests and production build.
 - [x] Commit and push Phase 3 slice.
+- [x] Implement Phase 4 editor readiness and AI evidence slice.
+- [x] Validate Phase 4 slice with unit tests and production build.
+- [x] Commit and push Phase 4 slice.

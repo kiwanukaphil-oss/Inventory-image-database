@@ -289,7 +289,12 @@ Deno.serve(async (req) => {
       if (PLACEHOLDER.has(String(v).trim().toLowerCase())) continue;
       cleanValues[k] = v;
     }
-    return json({ values: cleanValues, confidence: result.confidence || {}, usage: data.usage });
+    return json({
+      visible_text: typeof result.visible_text === "string" ? result.visible_text.trim() : "",
+      values: cleanValues,
+      confidence: result.confidence || {},
+      usage: data.usage,
+    });
   } catch (e) {
     console.error("ai-extract error", String(e?.stack || e)); // detail server-side only (S11)
     return json({ error: "internal error" }, 500);

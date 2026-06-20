@@ -27,6 +27,10 @@ const CONF_CYCLE = ["", "High", "Medium", "Low"];
 // don't fill fields (which would defeat the only-fill-empty workflow).
 const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
 
+function cleanAiVisibleText(value) {
+  const text = String(value || "").trim();
+  return text && !AI_PLACEHOLDER.has(text.toLowerCase()) ? text : "";
+}
 
 function hasValue(v) {
   return v !== null && v !== undefined && v !== "";
@@ -162,6 +166,13 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     return "";
   }
 
+  function posOwnedNoticeHtml() {
+    if (item.pos_sync_status !== "synced") return "";
+    return `<div class="pos-owned-note">
+      Shop price and live stock are owned by the POS. This editor keeps the original catalog receipt visible for reference.
+    </div>`;
+  }
+
   const [{ data: signed }] = await Promise.all([
     item.image_path
       ? supabase.storage.from("product-images").createSignedUrl(item.image_path, 3600)
@@ -197,6 +208,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
         ${readinessPanelHtml(readiness)}
         ${fixModeHtml(fixPlan)}
+        ${aiEvidenceHtml(item, fields, conf)}
 
         <div class="status-row" id="statusRow" role="group" aria-label="Status">
           ${STATUS_OPTIONS
@@ -226,6 +238,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         <section class="ed-section ed-selling" data-ed-section="selling" aria-label="Selling">
           <div class="ed-section-title">Selling</div>
         ${shopLineHtml()}
+        ${posOwnedNoticeHtml()}
         ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
         ${fieldRow(
           { key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Units received (live stock lives in the POS)" : "Units in this batch (1 photo = 1 unit)", type: "number", inputmode: "numeric" },
@@ -378,6 +391,10 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     const panel = sheet.querySelector("#readyPanel");
     if (panel) panel.outerHTML = readinessPanelHtml(currentReadinessFor());
   };
+  const paintAiEvidence = () => {
+    const panel = sheet.querySelector("#aiEvidence");
+    if (panel) panel.outerHTML = aiEvidenceHtml(item, fields, conf);
+  };
   const paintApprovalAffordance = () => {
     const off = !navigator.onLine;
     const approvalReadiness = approvalReadinessFor();
@@ -510,6 +527,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       else delete conf[key];
       confDirty = true;
       paintConfPill(pill, next);
+      paintAiEvidence();
       paintApprovalAffordance();
     });
   });
@@ -593,15 +611,23 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
           throw new Error(detail);
         }
         if (data?.error) throw new Error(data.error);
+        const visibleText = cleanAiVisibleText(data.visible_text);
+        if (visibleText) {
+          const { error: evidenceErr } = await supabase.from("items").update({ ai_visible_text: visibleText }).eq("id", itemId);
+          if (evidenceErr) console.warn("AI evidence save failed", evidenceErr.message);
+          else item.ai_visible_text = visibleText;
+        }
         const n = applySuggestions(data.values, data.confidence);
         await clearItemJobFailures(itemId, "ai_fill");
         delete item.latest_ai_job;
         paintApprovalAffordance();
+        paintAiEvidence();
         toast(n ? `AI filled ${n} field${n === 1 ? "" : "s"} — review & Save` : "AI couldn't read any fields");
       } catch (e) {
         await recordItemJobFailure(itemId, "ai_fill", e);
         item.latest_ai_job = { status: "failed", error_message: e?.message || String(e) };
         paintApprovalAffordance();
+        paintAiEvidence();
         toast("AI failed: " + (e?.message || e));
       } finally {
         aiBtn.disabled = false;
@@ -771,6 +797,33 @@ function fixModeHtml(plan) {
       Show only ${plan.keys.size} field${plan.keys.size === 1 ? "" : "s"} to fix
     </button>
     ${labels ? `<div class="fixmode-note">Focus: ${esc(labels + extra)}</div>` : ""}
+  </div>`;
+}
+
+function aiEvidenceHtml(item, fields, conf = {}) {
+  const visibleText = cleanAiVisibleText(item.ai_visible_text);
+  const failed = item.latest_ai_job?.status === "failed";
+  const confRows = Object.entries(conf || {})
+    .filter(([key, level]) => level && !AI_BLIND_FIELDS.has(key))
+    .map(([key, level]) => ({ key, level, label: fieldNameForKey(key, fields) }));
+  const hasEvidence = visibleText || confRows.length || failed;
+  const confHtml = confRows.length
+    ? `<div class="ai-evidence-conf">
+        ${confRows.slice(0, 8).map((r) => `<span class="conf-pill ${confClass(r.level)}" title="${esc(r.label)}: ${esc(r.level)}">${esc(r.level[0])}</span><span>${esc(r.label)}</span>`).join("")}
+      </div>`
+    : "";
+  const failHtml = failed
+    ? `<div class="ai-evidence-fail">${esc(item.latest_ai_job.error_message || item.latest_ai_job.error_category || "AI fill failed.")}</div>`
+    : "";
+  return `<div class="ai-evidence${hasEvidence ? "" : " empty"}" id="aiEvidence">
+    <div class="ai-evidence-head">
+      <span>${ICON.sparkle}</span>
+      <b>AI evidence</b>
+    </div>
+    ${visibleText ? `<div class="ai-evidence-text">${esc(visibleText)}</div>` : ""}
+    ${confHtml}
+    ${failHtml}
+    ${hasEvidence ? "" : `<div class="muted">No AI read has been saved for this photo yet.</div>`}
   </div>`;
 }
 
