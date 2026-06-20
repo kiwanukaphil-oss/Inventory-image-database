@@ -725,6 +725,30 @@ body { overflow:hidden; overscroll-behavior:none; }
 .review-queues .seg { flex:0 0 auto; min-width:max-content; }
 .seg.on { border-color:var(--accent); color:var(--accent); }
 .seg-n { font-size:var(--text-xs); font-weight:400; color:var(--muted); }
+.review-brief {
+  display:flex; justify-content:space-between; align-items:center; gap:var(--space-xl);
+  padding:10px 12px; border:1px solid var(--line); border-radius:var(--radius-sm);
+  background:var(--panel); box-shadow:var(--shadow-card);
+}
+.review-brief-copy { min-width:0; }
+.review-brief-kicker {
+  color:var(--muted); font-size:var(--text-2xs); text-transform:uppercase; letter-spacing:0;
+}
+.review-brief-title { display:flex; align-items:baseline; gap:var(--space-md); margin-top:1px; }
+.review-brief-title b { font-size:var(--text-lg); line-height:1.15; }
+.review-brief-title span {
+  color:var(--accent-soft-txt); font-weight:750; font-variant-numeric:tabular-nums;
+}
+.review-brief p { margin:3px 0 0; color:var(--muted); font-size:var(--text-sm); line-height:1.35; }
+.review-brief-actions {
+  flex:0 0 auto; display:flex; align-items:center; gap:var(--space-sm); flex-wrap:wrap;
+  justify-content:flex-end;
+}
+.review-brief-actions button { min-height:34px; padding:6px 10px; border-radius:var(--radius-sm); font-size:var(--text-sm); }
+@media (max-width:560px) {
+  .review-brief { align-items:stretch; flex-direction:column; gap:var(--space-md); }
+  .review-brief-actions { justify-content:flex-start; }
+}
 .issue-line { min-height:20px; display:flex; flex-wrap:wrap; gap:var(--space-xs); }
 .issue-line:empty { display:none; }
 /* Issue + source pills share one base; only the semantic color differs (below). */

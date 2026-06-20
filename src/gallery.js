@@ -790,6 +790,21 @@ async function renderGallery(view, caps, opts = {}) {
   const facetFilter = {}; // facetKey -> typed text to narrow that facet's value list
   let filtered = []; // current filtered+sorted rows, for bulk actions
   let smartShelvesEl = null;
+  let reviewBriefEl = null;
+
+  function reviewQueueGuide(key) {
+    return ({
+      work: { title: "Needs work", detail: "Start here when you want every blocked item cleared or deliberately flagged." },
+      edited: { title: "Recently edited", detail: "Recheck changed items before they disappear into the approved catalog." },
+      ai: { title: "Needs AI fill", detail: "Run AI fill or retry failed jobs before manual review takes over." },
+      price: { title: "Missing price", detail: "Price these items before approval or shop sync can be trusted." },
+      doubt: { title: "AI checks", detail: "Verify the exact fields the model marked as uncertain." },
+      missing: { title: "Missing details", detail: "Complete required catalog facts that block approval." },
+      flag: { title: "Problem items", detail: "Resolve flagged records or leave them clearly marked for follow-up." },
+      sync: { title: "Shop issues", detail: "Repair sync errors and pending shop updates before stock goes live." },
+      ready: { title: "Ready to approve", detail: "Final inspection bench for priced items with no blockers." },
+    })[key] || { title: "Review", detail: "Turn uncertainty into decisions." };
+  }
 
   function smartViewDefs() {
     const todayCut = dateCutoff("today");
@@ -882,6 +897,7 @@ async function renderGallery(view, caps, opts = {}) {
         ${REVIEW_QUEUE.map((k) => `<button class="seg${issue === k ? " on" : ""} ${ISSUE_META[k].cls}" data-issue="${k}">
           ${esc(ISSUE_META[k].label)}<span class="seg-n" id="segN-${k}"></span></button>`).join("")}
       </div>` : ""}
+      ${review ? `<div class="review-brief" id="reviewBrief"></div>` : ""}
       <div class="smart-shelves" id="smartShelves"></div>
       <div class="active-pills" id="pills"></div>
       <div class="count" id="count"></div>
@@ -903,6 +919,7 @@ async function renderGallery(view, caps, opts = {}) {
   const hdrSelect = view.querySelector("#hdrSelect");
   const actionbar = view.querySelector("#actionbar");
   smartShelvesEl = view.querySelector("#smartShelves");
+  reviewBriefEl = view.querySelector("#reviewBrief");
 
   // Persist the current view state for this surface (so tab switches keep place).
   const saveState = () => {
@@ -1178,12 +1195,39 @@ async function renderGallery(view, caps, opts = {}) {
     observeThumbs(gridInner);
   }
 
+  function renderReviewBrief(rows, failedAiShown = 0) {
+    if (!reviewBriefEl) return;
+    if (!review) { reviewBriefEl.hidden = true; return; }
+    const guide = reviewQueueGuide(issue);
+    const actions = [];
+    if (issue === "price" && canEdit && rows.length) actions.push(["setprices", "Set prices"]);
+    else if (issue === "ai" && canEdit && rows.length) actions.push([failedAiShown ? "retryai" : "aifill", failedAiShown ? `Retry ${failedAiShown}` : "AI-fill"]);
+    else if (issue === "sync" && canEdit && rows.length) actions.push(["sync", "Open sync"]);
+    else if (issue === "ready" && canEdit && rows.length) actions.push(["approveall", `Approve ${rows.length}`]);
+    if (rows.length) actions.push(["openfirst", "Open first"]);
+    if (canEdit && rows.length > 1) actions.push(["swipe", `Swipe ${rows.length}`]);
+    reviewBriefEl.hidden = false;
+    reviewBriefEl.innerHTML = `
+      <div class="review-brief-copy">
+        <div class="review-brief-kicker">Review queue</div>
+        <div class="review-brief-title">
+          <b>${esc(guide.title)}</b>
+          <span>${esc(Number(rows.length || 0).toLocaleString())}</span>
+        </div>
+        <p>${esc(guide.detail)}</p>
+      </div>
+      <div class="review-brief-actions">
+        ${actions.map(([cta, label], i) => `<button class="${i === 0 ? "primary" : "ghost"}" data-cta="${esc(cta)}">${esc(label)}</button>`).join("")}
+      </div>`;
+  }
+
   function draw() {
     const rows = applySort(data.filter((it) => matches(it, null)));
     filtered = rows;          // expose current filtered+sorted set for bulk actions
     saveState();
     renderSmartShelves();
     const failedAiShown = rows.filter((it) => it.latest_ai_job?.status === "failed").length;
+    renderReviewBrief(rows, failedAiShown);
 
     // Pricing is the gate to approval, so the count line doubles as its
     // doorway: a tap on "N without a price" applies the no-price filter, and
@@ -1201,6 +1245,8 @@ async function renderGallery(view, caps, opts = {}) {
     // Swipe-review the current pile: full-screen one-card-at-a-time triage.
     const swipeCta = review && canEdit && rows.length > 1
       ? ` · <button class="count-cta" data-cta="swipe">Swipe ${rows.length} ›</button>` : "";
+    const openFirstCta = review && rows.length
+      ? ` &middot; <button class="count-cta" data-cta="openfirst">Open first &rsaquo;</button>` : "";
     const issueCta = review && canEdit && rows.length
       ? issue === "ai"
         ? failedAiShown
@@ -1263,7 +1309,7 @@ async function renderGallery(view, caps, opts = {}) {
     }
 
     reconcileGrid(rows);
-    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${approveCta}${swipeCta}${freshnessNote()}`;
+    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${openFirstCta}${approveCta}${swipeCta}${freshnessNote()}`;
   }
 
   // ---- selection interactions: tap, shift-click range, drag/slide sweep ----
@@ -1449,6 +1495,7 @@ async function renderGallery(view, caps, opts = {}) {
     else if (cta.dataset.cta === "openfirst" && filtered[0]) openItemEditor(filtered[0].id, reviewFocusIssue(filtered[0]));
   }
   countEl.addEventListener("click", handleCtaClick);
+  if (reviewBriefEl) reviewBriefEl.addEventListener("click", handleCtaClick);
 
   // Review-tab segment switch (Needs work ⇄ Ready to approve).
   const segRow = view.querySelector("#segRow");
