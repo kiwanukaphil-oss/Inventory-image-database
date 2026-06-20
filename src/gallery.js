@@ -789,6 +789,80 @@ async function renderGallery(view, caps, opts = {}) {
   let itemIds = new Set(state.itemIds || []);
   const facetFilter = {}; // facetKey -> typed text to narrow that facet's value list
   let filtered = []; // current filtered+sorted rows, for bulk actions
+  let smartShelvesEl = null;
+
+  function smartViewDefs() {
+    const todayCut = dateCutoff("today");
+    const issueCount = (key) => data.filter((it) => queueMatches(it, key)).length;
+    const issueOn = (key) => review
+      ? issue === key
+      : !!active.issue?.has(ISSUE_META[key]?.label);
+    return [
+      { id: "price", label: "Missing price", count: data.filter((it) => it.price == null).length, on: noPrice, tone: "price" },
+      { id: "doubt", label: "AI doubt", count: issueCount("doubt"), on: issueOn("doubt"), tone: "ai" },
+      { id: "ready", label: "Ready", count: issueCount("ready"), on: issueOn("ready"), tone: "ready" },
+      { id: "in-shop", label: "In shop", count: data.filter((it) => shopState(it) === "In shop").length, on: !!active.shop?.has("In shop"), tone: "shop" },
+      { id: "sync", label: "Sync error", count: issueCount("sync"), on: issueOn("sync"), tone: "sync" },
+      { id: "edited", label: "Recently edited", count: issueCount("edited"), on: issueOn("edited"), tone: "edited" },
+      { id: "today", label: "New today", count: data.filter((it) => it.created_at && new Date(it.created_at) >= todayCut).length, on: datePreset === "today", tone: "today" },
+    ];
+  }
+
+  function resetSmartBase() {
+    q = ""; if (qEl) qEl.value = "";
+    for (const k in active) delete active[k];
+    for (const k in facetFilter) delete facetFilter[k];
+    priceMin = ""; priceMax = ""; noPrice = false; datePreset = "all"; itemIds = new Set();
+    if (!review) needsReview = false;
+  }
+
+  function applySmartView(id) {
+    resetSmartBase();
+    if (id === "today") datePreset = "today";
+    else if (id === "price") noPrice = true;
+    else if (id === "in-shop") active.shop = new Set(["In shop"]);
+    else if (review && REVIEW_QUEUE.includes(id)) {
+      issue = id;
+      seg = id === "ready" ? "ready" : "work";
+      view.querySelectorAll("#segRow .seg").forEach((s) => s.classList.toggle("on", s.dataset.issue === issue));
+    } else if (ISSUE_META[id]) {
+      active.issue = new Set([ISSUE_META[id].label]);
+    }
+    draw();
+    pills();
+  }
+
+  function applySavedView(v, { announce = true } = {}) {
+    if (!v) return;
+    const p = v.payload || {};
+    for (const k in active) delete active[k];
+    for (const k in (p.active || {})) if (facetByKey[k]) active[k] = new Set(p.active[k]);
+    q = p.q || ""; if (qEl) qEl.value = q;
+    sortBy = p.sortBy && SORTS.some((s) => s.v === p.sortBy) ? p.sortBy : "new";
+    priceMin = p.priceMin || ""; priceMax = p.priceMax || ""; noPrice = !!p.noPrice; datePreset = p.datePreset || "all";
+    itemIds = new Set();
+    draw();
+    pills();
+    if (announce) toast(`Applied "${v.name}"`);
+  }
+
+  function renderSmartShelves() {
+    if (!smartShelvesEl) return;
+    const smartRow = !review ? `<div class="shelf-row">
+      <div class="shelf-label">Smart views</div>
+      <div class="shelf-track">${smartViewDefs().map((v) => `<button class="shelf-chip ${esc(v.tone)}${v.on ? " on" : ""}" data-smart-shelf="${esc(v.id)}">
+        <span>${esc(v.label)}</span><b>${esc(Number(v.count || 0).toLocaleString())}</b>
+      </button>`).join("")}</div>
+    </div>` : "";
+    const savedRow = savedViews.length ? `<div class="shelf-row saved">
+      <div class="shelf-label">Saved shelves</div>
+      <div class="shelf-track">${savedViews.slice(0, 8).map((v) => `<button class="shelf-chip saved" data-saved-shelf="${esc(v.id)}">
+        <span>${esc(v.name)}</span>
+      </button>`).join("")}</div>
+    </div>` : "";
+    smartShelvesEl.hidden = !(smartRow || savedRow);
+    smartShelvesEl.innerHTML = smartRow + savedRow;
+  }
 
   view.innerHTML = `
     <div class="galtop">
@@ -808,6 +882,7 @@ async function renderGallery(view, caps, opts = {}) {
         ${REVIEW_QUEUE.map((k) => `<button class="seg${issue === k ? " on" : ""} ${ISSUE_META[k].cls}" data-issue="${k}">
           ${esc(ISSUE_META[k].label)}<span class="seg-n" id="segN-${k}"></span></button>`).join("")}
       </div>` : ""}
+      <div class="smart-shelves" id="smartShelves"></div>
       <div class="active-pills" id="pills"></div>
       <div class="count" id="count"></div>
     </div>
@@ -827,6 +902,7 @@ async function renderGallery(view, caps, opts = {}) {
   const hdrNormal = view.querySelector("#hdrNormal");
   const hdrSelect = view.querySelector("#hdrSelect");
   const actionbar = view.querySelector("#actionbar");
+  smartShelvesEl = view.querySelector("#smartShelves");
 
   // Persist the current view state for this surface (so tab switches keep place).
   const saveState = () => {
@@ -1108,6 +1184,7 @@ async function renderGallery(view, caps, opts = {}) {
     const rows = applySort(data.filter((it) => matches(it, null)));
     filtered = rows;          // expose current filtered+sorted set for bulk actions
     saveState();
+    renderSmartShelves();
     const failedAiShown = rows.filter((it) => it.latest_ai_job?.status === "failed").length;
 
     // Pricing is the gate to approval, so the count line doubles as its
@@ -1433,6 +1510,13 @@ async function renderGallery(view, caps, opts = {}) {
   // picker), designed for non-technical mobile users: one consistent row idiom,
   // one decision per screen, current value shown on each row. Live-applies to
   // the grid behind it; the footer shows the live result count.
+  if (smartShelvesEl) smartShelvesEl.addEventListener("click", (e) => {
+    const smart = e.target.closest("[data-smart-shelf]");
+    if (smart) { applySmartView(smart.dataset.smartShelf); return; }
+    const saved = e.target.closest("[data-saved-shelf]");
+    if (saved) applySavedView(savedViews.find((v) => v.id === saved.dataset.savedShelf));
+  });
+
   function openFilters() {
     const matchCount = () => data.filter((it) => matches(it, null)).length;
     const PRIMARY = ["issue", "shop", "category", "brand"]; // shown directly; the rest go under "More"
@@ -1503,37 +1587,19 @@ async function renderGallery(view, caps, opts = {}) {
           : `<span class="fs-check-box${on ? " on" : ""}">${on ? "✓" : ""}</span><span class="fs-opt-label">${esc(label)}</span><span class="fs-opt-n">${n}</span>`
       }</button>`;
 
-    const smartViews = [
-      { id: "today", label: "Uploaded today" },
-      ...(review ? [{ id: "edited", label: ISSUE_META.edited.label }] : []),
-      { id: "ai", label: ISSUE_META.ai.label },
-      { id: "price", label: ISSUE_META.price.label },
-      { id: "doubt", label: ISSUE_META.doubt.label },
-      { id: "sync", label: ISSUE_META.sync.label },
-      { id: "ready", label: ISSUE_META.ready.label },
-    ];
+    const smartViews = () => smartViewDefs();
 
-    function resetSmartBase() {
-      q = ""; if (qEl) qEl.value = "";
-      for (const k in active) delete active[k];
-      priceMin = ""; priceMax = ""; noPrice = false; datePreset = "all"; itemIds = new Set();
-      if (!review) needsReview = false;
-    }
-
-    function applySmartView(id) {
-      resetSmartBase();
-      if (review && REVIEW_QUEUE.includes(id)) { issue = id; seg = id === "ready" ? "ready" : "work"; }
-      else if (id === "today") datePreset = "today";
-      else if (id === "price") noPrice = true;
-      else if (!review && ISSUE_META[id]) active.issue = new Set([ISSUE_META[id].label]);
-      apply(); showMaster();
+    function applySheetSmartView(id) {
+      applySmartView(id);
+      refreshShow();
+      showMaster();
     }
 
     // ---- MASTER list ----
     function showMaster() {
       currentBack = null; backBtn.hidden = true; titleEl.textContent = "Filters & sort";
-      let html = `<div class="sheet-sec">Smart views</div><div class="fs-list">${smartViews.map((v) =>
-        `<button class="fs-opt" data-smart="${esc(v.id)}"><span class="fs-opt-label">${esc(v.label)}</span></button>`).join("")}</div>`;
+      let html = `<div class="sheet-sec">Smart views</div><div class="fs-list">${smartViews().map((v) =>
+        `<button class="fs-opt${v.on ? " on" : ""}" data-smart="${esc(v.id)}"><span class="fs-opt-label">${esc(v.label)}</span><span class="fs-opt-n">${esc(Number(v.count || 0).toLocaleString())}</span></button>`).join("")}</div>`;
       html += `<div class="fs-list">${rowLink("sort", "Sort", SORTS.find((s) => s.v === sortBy)?.label || "Newest")}</div>`;
       html += `<div class="fs-list">`;
       for (const k of PRIMARY) if (facetByKey[k]) html += rowLink("facet:" + k, facetByKey[k].label, facetSummary(facetByKey[k]));
@@ -1623,7 +1689,7 @@ async function renderGallery(view, caps, opts = {}) {
     bodyEl.addEventListener("click", async (e) => {
       const nav = e.target.closest("[data-go]");
       const smart = e.target.closest("[data-smart]");
-      if (smart) { applySmartView(smart.dataset.smart); return; }
+      if (smart) { applySheetSmartView(smart.dataset.smart); return; }
       if (nav) {
         const id = nav.dataset.go;
         if (id === "sort") go(showSort, showMaster);
@@ -1674,6 +1740,7 @@ async function renderGallery(view, caps, opts = {}) {
         if (error) { toast("Couldn't delete view: " + error.message); return; }
         savedViews = savedViews.filter((x) => x.id !== del.dataset.del);
         galleryPayload.savedViews = savedViews;
+        renderSmartShelves();
         showSaved(); toast("View deleted");
         return;
       }
@@ -1700,6 +1767,7 @@ async function renderGallery(view, caps, opts = {}) {
         if (error) { toast("Couldn't save view: " + error.message); return; }
         savedViews.push(created);
         galleryPayload.savedViews = savedViews;
+        renderSmartShelves();
         showSaved(); toast("View saved");
       }
     });
