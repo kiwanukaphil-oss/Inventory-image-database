@@ -1,9 +1,9 @@
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, resolveFields, getSetting } from "./data.js";
-import { esc, toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
+import { esc, toast, trapFocus, openBottomSheet, bindPriceInput, ICON } from "./ui.js";
 import { openPricing } from "./pricing.js";
 import { logManyItemActivities } from "./activity.js";
-import { costFromRetail } from "./lib/price.js";
+import { costFromRetail, formatPriceInput, parsePrice, stripPriceGrouping } from "./lib/price.js";
 
 // ============================================================================
 //  Guided pricing — "price like you'd say it".
@@ -140,7 +140,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   // Final price for an item under the current sentence: base, then each
   // exception in order — the LAST matching line wins. null = untouched.
   const finalPriceOf = (it) => {
-    let p = basePrice === "" ? null : Number(basePrice);
+    let p = basePrice === "" ? null : parsePrice(basePrice);
     for (const ex of exceptions) if (exceptionMatches(ex, it)) p = Number(ex.price);
     if (p == null) return null;
     if (keepPriced && it.price != null) return null;
@@ -262,7 +262,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
       <div class="pgd-lead">Everyone pays this — unless an exception says otherwise.</div>
       <div class="pg-input pgd-baseinput">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-        <input id="pgdBase" type="number" inputmode="decimal" placeholder="Standard price — or leave empty" value="${esc(basePrice)}">
+        <input id="pgdBase" type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="Standard price — or leave empty" value="${esc(basePrice)}">
       </div>
       ${sug ? `<button class="ghost pgd-suggest" id="pgdSuggest" type="button">Use ${esc(fmt(sug.median))}<span class="muted"> · similar in your catalogue ${esc(fmt(sug.min))}–${esc(fmt(sug.max))} (${sug.n})</span></button>` : ""}
       <div class="pgd-hint muted">Leave it empty to only price the exceptions you add next
@@ -280,7 +280,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           </div>
           <div class="pg-input pgd-costinput">
             ${costMode === "fixed" && cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-            <input id="pgdCostVal" type="number" inputmode="decimal"
+            <input id="pgdCostVal" type="${costMode === "fixed" ? "text" : "number"}" inputmode="decimal"${costMode === "fixed" ? " data-price-input autocomplete=\"off\"" : ""}
               placeholder="${costMode === "fixed" ? "Cost amount" : "e.g. 50"}"
               value="${esc(costMode === "fixed" ? costFixed : costPct)}">
             ${costMode !== "fixed" ? `<span class="pg-cur">%</span>` : ""}
@@ -335,7 +335,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           </div>`).join("")}</div>
       </div>`).join("");
     const willCost = costOn() ? pile.filter((it) => { const p = finalPriceOf(it); return p != null && costOf(p) != null; }).length : 0;
-    const costLabel = costMode === "fixed" ? esc(fmt(Number(costFixed) || 0)) : `${esc(costPct)}% of each price`;
+    const costLabel = costMode === "fixed" ? esc(fmt(parsePrice(costFixed) ?? 0)) : `${esc(costPct)}% of each price`;
     return `
       <div class="pgd-lead">${total
         ? `Check the tags — <b>${total}</b> item${total === 1 ? "" : "s"} will be priced (${news} new · ${overwrites} changed${unchanged ? ` · ${unchanged} untouched` : ""}).`
@@ -397,14 +397,14 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
         }
       });
     } else if (step === 2) {
-      bodyEl.querySelector("#pgdBase").addEventListener("input", (e) => { basePrice = e.target.value.trim(); });
+      bindPriceInput(bodyEl.querySelector("#pgdBase"), (value) => { basePrice = stripPriceGrouping(value); });
       bodyEl.querySelector("#pgdKeep")?.addEventListener("change", (e) => { keepPriced = e.target.checked; });
       bodyEl.querySelector("#pgdSuggest")?.addEventListener("click", () => {
         const s = priceSuggestion();
         if (!s) return;
         basePrice = String(s.median);
         const input = bodyEl.querySelector("#pgdBase");
-        if (input) input.value = basePrice;
+        if (input) input.value = formatPriceInput(basePrice);
       });
       // Cost controls (admins): toggle visibility in place; mode switch re-renders
       // so the input's adornment (% vs currency) and placeholder update.
@@ -417,10 +417,9 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
         const btn = e.target.closest("[data-cm]");
         if (btn) { costMode = btn.dataset.cm; render(); }
       });
-      bodyEl.querySelector("#pgdCostVal")?.addEventListener("input", (e) => {
-        const v = e.target.value.trim();
-        if (costMode === "fixed") costFixed = v; else costPct = v;
-      });
+      const costInput = bodyEl.querySelector("#pgdCostVal");
+      if (costMode === "fixed") bindPriceInput(costInput, (value) => { costFixed = stripPriceGrouping(value); });
+      else costInput?.addEventListener("input", (e) => { costPct = e.target.value.trim(); });
       requestAnimationFrame(() => bodyEl.querySelector("#pgdBase")?.focus());
     } else if (step === 3) {
       bodyEl.querySelector("#pgdAddEx").onclick = openExceptionSheet;
@@ -437,7 +436,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
 
   function next() {
     if (step === 2) {
-      if (basePrice !== "" && (!Number.isFinite(Number(basePrice)) || Number(basePrice) < 0)) {
+      if (basePrice !== "" && parsePrice(basePrice) === null) {
         toast("Enter a valid base price (or leave it empty)."); return;
       }
       step = 3; render();
@@ -544,7 +543,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           <div class="cm-label" style="margin-top:10px">They pay</div>
           <div class="pg-input">
             ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-            <input type="number" inputmode="decimal" id="pgdExPrice" placeholder="Price for this exception" value="${esc(price)}">
+            <input type="text" inputmode="decimal" data-price-input autocomplete="off" id="pgdExPrice" placeholder="Price for this exception" value="${esc(price)}">
           </div>
           <button class="primary up-go" data-add>Add exception</button>`;
         sh.body.querySelector("[data-back]").onclick = showDiffs;
@@ -562,7 +561,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           const n = sh.body.querySelector("#pgdBandN"); const bn = bandCount();
           if (n) n.textContent = bn == null ? "Enter a number." : `${bn} item${bn === 1 ? "" : "s"} match.`;
         });
-        sh.body.querySelector("#pgdExPrice").addEventListener("input", (e) => { price = e.target.value.trim(); });
+        bindPriceInput(sh.body.querySelector("#pgdExPrice"), (value) => { price = stripPriceGrouping(value); });
         // Search filters the list in place (the input lives OUTSIDE the list,
         // so it keeps focus and the sheet's scroll position survives typing).
         sh.body.querySelector("#pgdValQ")?.addEventListener("input", (e) => {
@@ -582,12 +581,13 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           box.classList.toggle("on", on); box.textContent = on ? "✓" : "";
         });
         sh.body.querySelector("[data-add]").onclick = () => {
-          if (!Number.isFinite(Number(price)) || price === "" || Number(price) < 0) { toast("Enter the exception's price."); return; }
+          const parsedPrice = parsePrice(price);
+          if (parsedPrice === null) { toast("Enter the exception's price."); return; }
           if (mode === "values" && !sel.size) { toast("Pick at least one value."); return; }
           if (mode === "band" && !Number.isFinite(Number(threshold))) { toast("Enter the threshold number."); return; }
           exceptions.push(mode === "values"
-            ? { key: d.key, label: d.label, mode, values: new Set(sel), price: Number(price) }
-            : { key: d.key, label: d.label, mode, dir, threshold, price: Number(price) });
+            ? { key: d.key, label: d.label, mode, values: new Set(sel), price: parsedPrice }
+            : { key: d.key, label: d.label, mode, dir, threshold, price: parsedPrice });
           sh.close();
           render();
         };

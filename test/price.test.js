@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parsePrice, costFromRetail, marginPercent } from "../src/lib/price.js";
+import { formatPriceInput, parsePrice, costFromRetail, marginPercent } from "../src/lib/price.js";
 
 describe("parsePrice (R1)", () => {
   it("accepts valid non-negative numbers", () => {
@@ -7,6 +7,8 @@ describe("parsePrice (R1)", () => {
     expect(parsePrice("0")).toBe(0);
     expect(parsePrice(" 2500 ")).toBe(2500);
     expect(parsePrice("12.5")).toBe(12.5);
+    expect(parsePrice("12,500")).toBe(12500);
+    expect(parsePrice("1,234.5")).toBe(1234.5);
     expect(parsePrice(40)).toBe(40);
   });
   it("treats blank as unset (null), not zero", () => {
@@ -25,15 +27,29 @@ describe("parsePrice (R1)", () => {
   });
 });
 
+describe("formatPriceInput", () => {
+  it("adds thousands separators while preserving decimal input", () => {
+    expect(formatPriceInput("1000")).toBe("1,000");
+    expect(formatPriceInput("1234567")).toBe("1,234,567");
+    expect(formatPriceInput("1234.")).toBe("1,234.");
+    expect(formatPriceInput("1234.50")).toBe("1,234.50");
+  });
+  it("leaves invalid text available for validation", () => {
+    expect(formatPriceInput("abc")).toBe("abc");
+  });
+});
+
 describe("costFromRetail", () => {
   it("pct mode rounds a percentage of retail", () => {
     expect(costFromRetail(100, { mode: "pct", value: 50 })).toBe(50);
+    expect(costFromRetail("10,000", { mode: "pct", value: 50 })).toBe(5000);
     expect(costFromRetail(101, { mode: "pct", value: 50 })).toBe(51); // 50.5 -> 51
     expect(costFromRetail(33, { mode: "pct", value: 33 })).toBe(11); // 10.89 -> 11
     expect(costFromRetail(100, { mode: "pct", value: 0 })).toBe(0);
   });
   it("fixed mode returns the flat value regardless of retail", () => {
     expect(costFromRetail(100, { mode: "fixed", value: 40 })).toBe(40);
+    expect(costFromRetail(100, { mode: "fixed", value: "1,200" })).toBe(1200);
     expect(costFromRetail(999, { mode: "fixed", value: 0 })).toBe(0);
     expect(costFromRetail(null, { mode: "fixed", value: 40 })).toBe(40);
   });

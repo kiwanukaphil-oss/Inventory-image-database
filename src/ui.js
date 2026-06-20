@@ -1,3 +1,5 @@
+import { formatPriceInput } from "./lib/price.js";
+
 // =============================================================================
 // ui.js — shared, app-styled UI primitives
 //
@@ -7,7 +9,7 @@
 // theme — native dialogs broke all three and made an installed PWA feel like a
 // raw web page.
 //
-// Exports: esc, toast, openBottomSheet, confirmSheet, promptSheet.
+// Exports: esc, toast, bindPriceInput, openBottomSheet, confirmSheet, promptSheet.
 // =============================================================================
 
 // HTML-escape any value before interpolating it into markup.
@@ -15,6 +17,34 @@ export function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
+}
+
+export function bindPriceInput(input, onInput) {
+  if (!input) return null;
+  const placeCaret = (raw, formatted, oldPos) => {
+    const logical = raw.slice(0, oldPos ?? raw.length).replace(/,/g, "").length;
+    let pos = 0;
+    let seen = 0;
+    while (pos < formatted.length && seen < logical) {
+      if (formatted[pos] !== ",") seen++;
+      pos++;
+    }
+    try { input.setSelectionRange(pos, pos); } catch {}
+  };
+  const sync = () => {
+    const raw = input.value;
+    const oldPos = input.selectionStart ?? raw.length;
+    const formatted = formatPriceInput(raw);
+    if (formatted !== raw) {
+      input.value = formatted;
+      placeCaret(raw, formatted, oldPos);
+    }
+    onInput?.(input.value);
+  };
+  const initial = formatPriceInput(input.value);
+  if (initial !== input.value) input.value = initial;
+  input.addEventListener("input", sync);
+  return sync;
 }
 
 // --- Icons ---------------------------------------------------------------

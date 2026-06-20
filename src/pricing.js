@@ -14,7 +14,8 @@
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, getSetting } from "./data.js";
 import { logManyItemActivities } from "./activity.js";
-import { esc, toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
+import { parsePrice } from "./lib/price.js";
+import { esc, toast, trapFocus, openBottomSheet, bindPriceInput, ICON } from "./ui.js";
 
 // Grouping key chosen last time, remembered across opens (per the "I pick the
 // grouping each time" workflow — start sensible, never force a default).
@@ -284,6 +285,14 @@ export async function openPricing(caps, onClose, opts = {}) {
     updateSelBar();
   }
 
+  function wirePriceInputs(root = el) {
+    root.querySelectorAll("[data-price-input]").forEach((input) => {
+      if (input.dataset.priceBound) return;
+      input.dataset.priceBound = "1";
+      bindPriceInput(input);
+    });
+  }
+
   // ---- render -------------------------------------------------------------
   function render() {
     const visible = visibleGroups();
@@ -346,6 +355,7 @@ export async function openPricing(caps, onClose, opts = {}) {
     </div>`;
 
     // ✕ backs out one level: leave select mode first, then close the overlay.
+    wirePriceInputs(el);
     el.querySelector("#pgX").onclick = () => { if (selectMode) exitSelect(); else close(); };
     if (selectMode) {
       el.querySelector("#pgSelDone").onclick = exitSelect;
@@ -441,7 +451,7 @@ export async function openPricing(caps, onClose, opts = {}) {
       </div>
       <div class="pg-input">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-        <input id="pgSelInput" type="number" inputmode="decimal" placeholder="${noun} for selected" aria-label="Price for selected groups">
+        <input id="pgSelInput" type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="${noun} for selected" aria-label="Price for selected groups">
         <button class="pg-set" id="pgSelSet"${sel.length ? "" : " disabled"}>Set ${noun}</button>
       </div>
     </div>`;
@@ -553,7 +563,7 @@ export async function openPricing(caps, onClose, opts = {}) {
       <span class="pg-state pg-${st.kind}">${esc(st.text)}</span>
       <div class="pg-input">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-        <input type="number" inputmode="decimal" placeholder="${ph}" value="${inputVal}" aria-label="Price for ${esc(name)}">
+        <input type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="${ph}" value="${inputVal}" aria-label="Price for ${esc(name)}">
         <button class="pg-set" data-set${bandKey ? ` data-band="${bandKey}"` : ""}>Set</button>
       </div>
     </div>`;
@@ -640,7 +650,11 @@ export async function openPricing(caps, onClose, opts = {}) {
   // Swap just one group's card in place (keeps the rest of the scroll/list).
   function replaceCard(idx) {
     const card = el.querySelector(`.pg-group[data-idx="${idx}"]`);
-    if (card) card.outerHTML = groupCardHtml(groups[Number(idx)]);
+    if (card) {
+      card.outerHTML = groupCardHtml(groups[Number(idx)]);
+      const next = el.querySelector(`.pg-group[data-idx="${idx}"]`);
+      if (next) wirePriceInputs(next);
+    }
   }
 
   // A price change is risky enough to preview when it spans more than one
@@ -725,8 +739,8 @@ export async function openPricing(caps, onClose, opts = {}) {
   async function setSelectedPrice() {
     const raw = el.querySelector("#pgSelInput").value.trim();
     if (raw === "") { toast("Enter a price first."); return; }
-    const value = Number(raw);
-    if (!Number.isFinite(value) || value < 0) { toast("Enter a valid price."); return; }
+    const value = parsePrice(raw);
+    if (value === null) { toast("Enter a valid price."); return; }
     const noun = priceMode === "cost" ? "cost" : "price";
     let ids = selectedItemIds();
     if (!ids.length) { toast("Select at least one group."); return; }
@@ -745,8 +759,8 @@ export async function openPricing(caps, onClose, opts = {}) {
     const g = groups[Number(card.dataset.idx)];
     const raw = setBtn.closest(".pg-input").querySelector("input").value.trim();
     if (raw === "") { toast("Enter a price first."); return; }
-    const price = Number(raw);
-    if (!Number.isFinite(price) || price < 0) { toast("Enter a valid price."); return; }
+    const price = parsePrice(raw);
+    if (price === null) { toast("Enter a valid price."); return; }
     const bandKey = setBtn.dataset.band;
     let targetIds = g.ids;
     if (bandKey) {

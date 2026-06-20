@@ -13,7 +13,7 @@ import { parsePrice } from "./lib/price.js";
 import { clearItemJobFailures, loadLatestFailedJobs, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, fieldKeyFromPath, loadItemActivity, logItemActivity } from "./activity.js";
-import { esc, toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
+import { esc, toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, bindPriceInput, ICON } from "./ui.js";
 
 // The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
 // the item's category. Universal columns (name/brand/price/stock) plus the
@@ -532,6 +532,8 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     });
   });
 
+  sheet.querySelectorAll("[data-price-input]").forEach((el) => bindPriceInput(el));
+
   // Mark changed inputs (highlight) versus their initial value.
   sheet.querySelectorAll("[data-key]").forEach((el) => {
     const initial = el.type === "checkbox" ? String(el.checked) : el.value;
@@ -904,11 +906,13 @@ function fieldRow(def, value, conf, showConf, canEdit = true) {
     </select>`;
   } else {
     const list = def.vocab ? ` list="dl-${def.vocab}"` : "";
-    const type = def.type === "number" ? "number" : "text";
+    const isPrice = def.key === "price" || def.key === "cost_price";
+    const type = def.type === "number" && !isPrice ? "number" : "text";
     // Number fields get a numeric keypad on mobile: decimal for money/measures,
     // "numeric" (integer) for counts. Callers override via def.inputmode.
     const im = def.type === "number" ? ` inputmode="${def.inputmode || "decimal"}"` : "";
-    control = `<input id="${id}" type="${type}"${im}${list} data-key="${def.key}" data-kind="value"
+    const priceAttr = isPrice ? ` data-price-input autocomplete="off"` : "";
+    control = `<input id="${id}" type="${type}"${im}${list} data-key="${def.key}" data-kind="value"${priceAttr}
       data-vocab="${def.vocab || ""}" value="${esc(v)}"${dis}>`;
   }
 

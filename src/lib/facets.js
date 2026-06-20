@@ -4,6 +4,8 @@
 // IN as resolvers/criteria, so this is trivially unit-testable (test/facets.test.js)
 // and gallery.js keeps thin wrappers that bind its live state.
 
+import { parsePrice } from "./price.js";
+
 // One mutually-exclusive shop state per item, from the sync columns + a mirror
 // lookup (mirrorOf: item -> mirror row | undefined). Used verbatim as the "shop"
 // facet value, so the card chip and the filter can never disagree.
@@ -81,8 +83,10 @@ export function matchesItem(it, criteria, ctx, excludeKey) {
   if (itemIds && itemIds.size && !itemIds.has(it.id)) return false;
   if (!ctx.passesQueue(it)) return false;
   if (noPrice && it.price != null) return false;
-  if ((priceMin ?? "") !== "" && (it.price == null || it.price < Number(priceMin))) return false;
-  if ((priceMax ?? "") !== "" && (it.price == null || it.price > Number(priceMax))) return false;
+  const min = (priceMin ?? "") !== "" ? parsePrice(priceMin) : null;
+  const max = (priceMax ?? "") !== "" ? parsePrice(priceMax) : null;
+  if (min !== null && (it.price == null || it.price < min)) return false;
+  if (max !== null && (it.price == null || it.price > max)) return false;
   if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
   for (const k in active) {
     if (k === excludeKey) continue;

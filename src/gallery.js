@@ -34,9 +34,10 @@ import { loadCostPresence } from "./costs.js";
 import { loadLatestFailedJobs } from "./joblog.js";
 import { openConsistencyAudit } from "./consistency.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
-import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
+import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, bindPriceInput, ICON } from "./ui.js";
 import { sortItems } from "./lib/itemsort.js";
 import { shopState as libShopState, facetValue, buildFacets, searchText, matchesItem } from "./lib/facets.js";
+import { parsePrice, stripPriceGrouping } from "./lib/price.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
 
@@ -442,7 +443,7 @@ function themeLabel() {
 
 // Format a price with thousands separators + the shop's currency prefix (if set).
 function fmtPrice(v) {
-  const n = Number(v);
+  const n = parsePrice(v);
   const s = Number.isFinite(n) ? n.toLocaleString() : esc(v);
   const cur = getSetting("currency", "");
   return cur ? `${esc(cur)} ${s}` : s;
@@ -1620,7 +1621,7 @@ async function renderGallery(view, caps, opts = {}) {
       out.push(`<button class="apill" data-facet="${esc(k)}" data-val="${esc(v)}">${esc(facetByKey[k]?.label || k)}: ${esc(v)} ✕</button>`);
     }
     if (noPrice) out.push(`<button class="apill" data-clear="noprice">Missing price ✕</button>`);
-    if (priceMin || priceMax) out.push(`<button class="apill" data-clear="price">Price: ${esc(priceMin || "0")}–${esc(priceMax || "∞")} ✕</button>`);
+    if (priceMin || priceMax) out.push(`<button class="apill" data-clear="price">Price: ${esc(priceMin ? fmtPrice(priceMin) : "0")}–${esc(priceMax ? fmtPrice(priceMax) : "∞")} ✕</button>`);
     if (datePreset !== "all") out.push(`<button class="apill" data-clear="dt">${esc(DATE_FILTERS.find((d) => d.v === datePreset)?.label || datePreset)} ✕</button>`);
     if (itemIds.size) out.unshift(`<button class="apill" data-clear="batch">Uploaded batch: ${itemIds.size} x</button>`);
     pillsEl.innerHTML = out.join("");
@@ -1830,10 +1831,11 @@ async function renderGallery(view, caps, opts = {}) {
       setFilterBody(`<div class="fs-detail">
         <div class="fs-list" style="margin-bottom:10px">${optRow("data-noprice", "Only items without a price", noPrice)}</div>
         <label class="cm-label" for="fsMin">Minimum price</label>
-        <input id="fsMin" class="rng" type="number" inputmode="numeric" placeholder="No minimum" value="${esc(priceMin)}"${noPrice ? " disabled" : ""}>
+        <input id="fsMin" class="rng" type="text" inputmode="numeric" data-price-input autocomplete="off" placeholder="No minimum" value="${esc(priceMin)}"${noPrice ? " disabled" : ""}>
         <label class="cm-label" for="fsMax">Maximum price</label>
-        <input id="fsMax" class="rng" type="number" inputmode="numeric" placeholder="No maximum" value="${esc(priceMax)}"${noPrice ? " disabled" : ""}>
+        <input id="fsMax" class="rng" type="text" inputmode="numeric" data-price-input autocomplete="off" placeholder="No maximum" value="${esc(priceMax)}"${noPrice ? " disabled" : ""}>
       </div>`);
+      bodyEl.querySelectorAll("[data-price-input]").forEach((input) => bindPriceInput(input));
       if (!noPrice) requestAnimationFrame(() => bodyEl.querySelector("#fsMin")?.focus());
     }
 
@@ -1979,8 +1981,8 @@ async function renderGallery(view, caps, opts = {}) {
     let priceTimer;
     const applyDebounced = () => { clearTimeout(priceTimer); priceTimer = setTimeout(apply, 200); };
     bodyEl.addEventListener("input", (e) => {
-      if (e.target.id === "fsMin") { priceMin = e.target.value.trim(); applyDebounced(); }
-      else if (e.target.id === "fsMax") { priceMax = e.target.value.trim(); applyDebounced(); }
+      if (e.target.id === "fsMin") { priceMin = stripPriceGrouping(e.target.value); applyDebounced(); }
+      else if (e.target.id === "fsMax") { priceMax = stripPriceGrouping(e.target.value); applyDebounced(); }
       else if (e.target.classList.contains("facet-filter") && curFacet) {
         facetFilter[curFacet.key] = e.target.value.trim().toLowerCase();
         renderFacet();
@@ -2036,8 +2038,8 @@ async function renderGallery(view, caps, opts = {}) {
       <input id="be-brand" list="dl-brand" placeholder="${UNCH}">
       <datalist id="dl-brand">${vocabSuggestions("brand").map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
       <div class="cm-label">Retail price</div>
-      <input id="be-price" type="number" inputmode="decimal" placeholder="${UNCH}">
-      ${canCost ? `<div class="cm-label">Cost price</div><input id="be-cost" type="number" inputmode="decimal" placeholder="${UNCH}">` : ""}
+      <input id="be-price" type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="${UNCH}">
+      ${canCost ? `<div class="cm-label">Cost price</div><input id="be-cost" type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="${UNCH}">` : ""}
       <div class="cm-label">Stock quantity</div>
       <input id="be-stock" type="number" inputmode="numeric" placeholder="${UNCH}">
       <div class="cm-label">Reorder level</div>
@@ -2062,20 +2064,26 @@ async function renderGallery(view, caps, opts = {}) {
     body += `<button class="primary up-go" id="be-apply">Apply to ${ids.length} item${ids.length === 1 ? "" : "s"}</button>`;
 
     const sh = openBottomSheet("Edit selected", body);
+    sh.body.querySelectorAll("[data-price-input]").forEach((input) => bindPriceInput(input));
     sh.body.querySelector("#be-apply").onclick = async () => {
       const col = {};
       const st = sh.body.querySelector("#be-status").value;
       if (st) col.status = st;
       const brand = sh.body.querySelector("#be-brand").value.trim();
       if (brand) col.brand = normalizeValue("brand", brand);
-      const price = sh.body.querySelector("#be-price").value.trim();
-      if (price !== "") col.price = Number(price);
+      const priceRaw = sh.body.querySelector("#be-price").value.trim();
+      const price = parsePrice(priceRaw);
+      if (priceRaw !== "" && price === null) { toast("Enter a valid retail price."); return; }
+      if (price !== null) col.price = price;
       const stock = sh.body.querySelector("#be-stock").value.trim();
       if (stock !== "") col.stock_quantity = Number(stock);
       const reorder = sh.body.querySelector("#be-reorder").value.trim();
       if (reorder !== "") col.reorder_level = Number(reorder);
       const costEl = sh.body.querySelector("#be-cost");
-      const costVal = costEl && costEl.value.trim() !== "" ? Number(costEl.value.trim()) : undefined;
+      const costRaw = costEl?.value.trim() || "";
+      const costParsed = parsePrice(costRaw);
+      if (costRaw !== "" && costParsed === null) { toast("Enter a valid cost price."); return; }
+      const costVal = costRaw !== "" ? costParsed : undefined;
 
       const attrChanges = {};
       sh.body.querySelectorAll(".be-attr").forEach((el) => {
