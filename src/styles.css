@@ -5,6 +5,7 @@
    app shell (top bar, scroll area, bottom nav) and an auth screen.
 ---------------------------------------------------------------------------- */
 :root {
+  color-scheme:dark;
   /* Dark theme built as an elevation ladder so layers read clearly instead of
      blending into one black mass: bg (deepest) < panel (cards/bars) < elevated
      (sheets/menus). Controls sit just above bg and are defined by a crisp line.
@@ -132,6 +133,7 @@
    contrast. theme.js sets data-theme="light" on <html>.
 ---------------------------------------------------------------------------- */
 :root[data-theme="light"] {
+  color-scheme:light;
   --bg:#f4f6f9;        /* soft cool off-white, never glaring */
   --panel:#ffffff;     /* cards / bars sit crisp and bright above the bg */
   --elevated:#ffffff;  /* sheets — separated from panels by shadow, not color */
@@ -918,7 +920,9 @@ body { overflow:hidden; overscroll-behavior:none; }
 /* Shop filters: search + brand select on one line, category chips below. */
 .shop-filterbar { display:flex; gap:var(--space-md); }
 .shop-filterbar .fb-search { flex:1 1 auto; min-width:0; }
-.shop-brandsel { flex:0 1 40%; min-width:0; max-width:160px; }
+.shop-brandsel { flex:0 1 40%; min-width:0; max-width:160px;
+  background:var(--control); color:var(--txt); border-color:var(--line); color-scheme:dark; }
+:root[data-theme="light"] .shop-brandsel { color-scheme:light; }
 .shop-chips { display:flex; gap:var(--space-sm); flex-wrap:wrap; }
 .shop-chip { font-size:var(--text-sm); padding:5px 11px; border-radius:var(--radius-xl); border:1px solid var(--line);
   background:var(--control); color:var(--txt); }
