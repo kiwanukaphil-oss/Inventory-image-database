@@ -3,7 +3,7 @@ import { loadRefData, loadPosMirror, getSetting, categoryPath } from "./data.js"
 import { openEditor } from "./editor.js";
 import { openSyncCenter } from "./synccenter.js";
 import { syncCountsFromItems } from "./syncstate.js";
-import { esc, ICON } from "./ui.js";
+import { esc, ICON, openBottomSheet } from "./ui.js";
 
 // The Shop tab — answers, not analytics. Each card is a question floor staff
 // actually ask, answered with photos and plain words over the read-only POS
@@ -208,15 +208,32 @@ export async function renderShop(view, caps, onChanged) {
       </span>`;
 
     const filtered = state.q || state.top || state.brand;
+    const openBrandPicker = () => {
+      const options = [{ label: "All brands", value: "" }, ...brands.map((b) => ({ label: b, value: b }))];
+      const sheet = openBottomSheet("Brand", `
+        <div class="shop-brandlist">
+          ${options.map((opt) => `<button type="button" class="shop-brandrow${state.brand === opt.value ? " on" : ""}" data-brand="${esc(opt.value)}">
+            <span>${esc(opt.label)}</span>
+            <span class="shop-brandmark">${state.brand === opt.value ? ICON.tick : ""}</span>
+          </button>`).join("")}
+        </div>`);
+      sheet.body.querySelectorAll("[data-brand]").forEach((btn) => {
+        btn.onclick = () => {
+          state.brand = btn.dataset.brand || "";
+          sheet.close();
+          draw();
+        };
+      });
+    };
 
     view.innerHTML = `
       <div class="shop-wrap">
         <div class="shop-filterbar">
           <input id="shopQ" class="fb-search" type="search" placeholder="Search the shop…" value="${esc(state.q)}">
-          <select id="shopBrand" class="shop-brandsel" aria-label="Brand">
-            <option value="">All brands</option>
-            ${brands.map((b) => `<option value="${esc(b)}"${state.brand === b ? " selected" : ""}>${esc(b)}</option>`).join("")}
-          </select>
+          <button id="shopBrand" type="button" class="shop-brandbtn" aria-label="Brand filter" aria-haspopup="dialog">
+            <span>${esc(state.brand || "All brands")}</span>
+            <span class="shop-brandchev" aria-hidden="true">v</span>
+          </button>
         </div>
         ${tops.length > 1 ? `<div class="shop-chips">
           <button class="shop-chip${!state.top ? " on" : ""}" data-top="">All</button>
@@ -295,7 +312,7 @@ export async function renderShop(view, caps, onChanged) {
       clearTimeout(qTimer);
       qTimer = setTimeout(() => { state.q = e.target.value.trim().toLowerCase(); draw(); keepSearchFocus(); }, 200);
     });
-    wrap.querySelector("#shopBrand").onchange = (e) => { state.brand = e.target.value; draw(); };
+    wrap.querySelector("#shopBrand")?.addEventListener("click", openBrandPicker);
     wrap.querySelector("#shopRefresh").onclick = () => renderShop(view, caps, onChanged);
     function keepSearchFocus() {
       const q = view.querySelector("#shopQ");
