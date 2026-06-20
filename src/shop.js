@@ -211,19 +211,35 @@ export async function renderShop(view, caps, onChanged) {
     const openBrandPicker = () => {
       const options = [{ label: "All brands", value: "" }, ...brands.map((b) => ({ label: b, value: b }))];
       const sheet = openBottomSheet("Brand", `
-        <div class="shop-brandlist">
-          ${options.map((opt) => `<button type="button" class="shop-brandrow${state.brand === opt.value ? " on" : ""}" data-brand="${esc(opt.value)}">
-            <span>${esc(opt.label)}</span>
-            <span class="shop-brandmark">${state.brand === opt.value ? ICON.tick : ""}</span>
-          </button>`).join("")}
+        <div class="shop-brandpick">
+          <input class="shop-brandsearch" type="search" placeholder="Search brands" aria-label="Search brands">
+          <div class="shop-brandlist" data-brandlist></div>
         </div>`);
-      sheet.body.querySelectorAll("[data-brand]").forEach((btn) => {
-        btn.onclick = () => {
-          state.brand = btn.dataset.brand || "";
-          sheet.close();
-          draw();
-        };
-      });
+      const list = sheet.body.querySelector("[data-brandlist]");
+      const search = sheet.body.querySelector(".shop-brandsearch");
+      const rowHtml = (opt) => `<button type="button" class="shop-brandrow${state.brand === opt.value ? " on" : ""}" data-brand="${esc(opt.value)}">
+        <span>${esc(opt.label)}</span>
+        <span class="shop-brandmark">${state.brand === opt.value ? ICON.tick : ""}</span>
+      </button>`;
+      const wireRows = () => {
+        list.querySelectorAll("[data-brand]").forEach((btn) => {
+          btn.onclick = () => {
+            state.brand = btn.dataset.brand || "";
+            sheet.close();
+            draw();
+          };
+        });
+      };
+      const renderRows = () => {
+        const q = search.value.trim().toLowerCase();
+        const matches = q ? options.filter((opt) => opt.label.toLowerCase().includes(q)) : options;
+        list.innerHTML = matches.length
+          ? matches.map(rowHtml).join("")
+          : `<div class="shop-brandempty">No brands found.</div>`;
+        wireRows();
+      };
+      search.addEventListener("input", renderRows);
+      renderRows();
     };
 
     view.innerHTML = `

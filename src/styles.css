@@ -925,6 +925,9 @@ body { overflow:hidden; overscroll-behavior:none; }
   border-color:var(--line); text-align:left; }
 .shop-brandbtn span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .shop-brandchev { flex:0 0 auto; color:var(--muted); font-size:var(--text-xs); }
+.shop-brandpick { display:flex; flex-direction:column; gap:var(--space-md); }
+.shop-brandsearch { width:100%; background:var(--control); color:var(--txt); border:1px solid var(--line);
+  border-radius:var(--radius-md); padding:10px 12px; font-size:var(--text-base); }
 .shop-brandlist { display:flex; flex-direction:column; gap:var(--space-sm); }
 .shop-brandrow { width:100%; display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg);
   padding:12px; border:1px solid var(--line); border-radius:var(--radius-md); background:var(--control);
@@ -932,6 +935,8 @@ body { overflow:hidden; overscroll-behavior:none; }
 .shop-brandrow.on { border-color:var(--accent); color:var(--accent); background:var(--accent-soft); }
 .shop-brandrow span:first-child { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .shop-brandmark { flex:0 0 auto; color:var(--accent); font-weight:800; }
+.shop-brandmark svg { display:block; }
+.shop-brandempty { padding:14px 4px; color:var(--muted); font-size:var(--text-sm); text-align:center; }
 .shop-chips { display:flex; gap:var(--space-sm); flex-wrap:wrap; }
 .shop-chip { font-size:var(--text-sm); padding:5px 11px; border-radius:var(--radius-xl); border:1px solid var(--line);
   background:var(--control); color:var(--txt); }
