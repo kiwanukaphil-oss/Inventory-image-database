@@ -41,7 +41,10 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
   - Status: implemented.
   - Done: Settings reorganized into Device & app, Shop settings, Data tools, and Admin; AI quality check and Catalog health check language applied; Recent activity source filters added; Users permission matrix safety notes added; Categories/Fields dependency context and delete warnings strengthened; Export CSV caps and scope made visible.
   - Outstanding: final block-review admin workflow checks for create/deactivate/reactivate users, capability edits, category/field edits, reference-data refresh, and export caps.
-- [ ] Phase 8: Intelligence layer
+- [x] Phase 8: Intelligence layer
+  - Status: implemented.
+  - Done: non-blocking Add photo quality checks, Review AI issue grouping for failed/unread/field-confidence work, AI quality evidence-size reporting, and stock-intake session language reinforced in Add.
+  - Outstanding: final block-review checks that AI suggestions do not overwrite protected values and Review remains the approval authority.
 
 ## Current Working Todo
 
@@ -73,4 +76,7 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Commit and push Phase 6 slice.
 - [x] Implement Phase 7 Settings and admin/data tool polish.
 - [x] Validate Phase 7 slice with unit tests and production build.
-- [ ] Commit and push Phase 7 slice.
+- [x] Commit and push Phase 7 slice.
+- [x] Implement Phase 8 intelligence layer polish.
+- [x] Validate Phase 8 slice with unit tests and production build.
+- [ ] Commit and push Phase 8 slice.

@@ -226,6 +226,7 @@ export async function openCalibration(caps, onClose) {
     const byLevel = Object.fromEntries(LEVELS.map((l) => [l, { total: 0, correct: 0 }]));
     const allCorrectItems = []; // all-correct AND priced — eligible to approve
     let noPriceHeld = 0;        // all-correct but unpriced, so can't be approved
+    let markedItems = 0, totalMarks = 0;
     for (const { it, fields } of items) {
       const verdicts = marks.get(it.id);
       if (!verdicts) continue;
@@ -234,9 +235,11 @@ export async function openCalibration(caps, onClose) {
         const v = verdicts[f.key];
         if (!v) { everyCorrect = false; continue; }
         anyMarked = true;
+        totalMarks++;
         byLevel[f.level].total++;
         if (v === "correct") byLevel[f.level].correct++; else everyCorrect = false;
       }
+      if (anyMarked) markedItems++;
       if (anyMarked && everyCorrect && it.status !== "approved") {
         if (it.price != null) allCorrectItems.push(it.id);
         else noPriceHeld++;
@@ -264,6 +267,10 @@ export async function openCalibration(caps, onClose) {
       <div class="calib-head"><span>AI quality results</span>
         <button class="iconbtn" id="cX" aria-label="Close">${ICON.x}</button></div>
       <div class="calib-body">
+        <div class="cs-evidence">
+          <b>${markedItems} item${markedItems === 1 ? "" : "s"} marked</b>
+          <span>${totalMarks} field verdict${totalMarks === 1 ? "" : "s"} recorded. Trust guidance is only shown as strong after enough marked evidence.</span>
+        </div>
         <div class="cs-card">${levelRows}</div>
         <div class="calib-hint">${esc(verdict)}</div>
         ${allCorrectItems.length

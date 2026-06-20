@@ -301,13 +301,50 @@ export async function renderUpload(view, caps, onDone) {
 
   // ---- selection ----
   const keyOf = (f) => `${f.name}|${f.size}|${f.lastModified}`;
+  async function imageDimensions(file, url) {
+    if ("createImageBitmap" in window) {
+      const bmp = await createImageBitmap(file);
+      const dims = { width: bmp.width, height: bmp.height };
+      bmp.close?.();
+      return dims;
+    }
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+  async function inspectPhotoQuality(entry) {
+    entry.quality = { state: "checking", label: "Checking" };
+    try {
+      const { width, height } = await imageDimensions(entry.file, entry.url);
+      const ratio = width && height ? width / height : 1;
+      const issues = [];
+      if (Math.min(width, height) < 900) issues.push("Low resolution");
+      if (ratio > 2.2 || ratio < 0.45) issues.push("Extreme crop");
+      if (entry.file.size < 80_000) issues.push("Tiny file");
+      if (entry.file.size > 8_000_000) issues.push("Large file will compress");
+      entry.quality = issues.length
+        ? { state: "warn", label: issues[0], detail: `${width}x${height} · ${issues.join(" · ")}` }
+        : { state: "ok", label: "Looks ok", detail: `${width}x${height}` };
+    } catch {
+      entry.quality = { state: "warn", label: "Check photo", detail: "Could not inspect this file before upload." };
+    }
+    if (entries.some((e) => e.key === entry.key)) {
+      renderPicked();
+      renderGrid();
+    }
+  }
   function addFiles(list, opts = {}) {
     let added = 0;
     for (const f of list) {
       const key = keyOf(f);
       if (seen.has(key)) continue; // de-dupe
       seen.add(key);
-      entries.push({ key, file: f, url: URL.createObjectURL(f) });
+      const entry = { key, file: f, url: URL.createObjectURL(f), quality: { state: "checking", label: "Checking" } };
+      entries.push(entry);
+      inspectPhotoQuality(entry);
       added++;
     }
     if (opts.source === "share" && added) { sharedImportCount += added; renderSharedBanner(); }
@@ -337,8 +374,15 @@ export async function renderUpload(view, caps, onDone) {
     refreshEnabled();
   }
   function renderPicked() {
+    const checking = entries.filter((e) => !e.quality || e.quality.state === "checking").length;
+    const warnings = entries.filter((e) => e.quality?.state === "warn").length;
+    const qualityText = warnings
+      ? `${warnings} photo${warnings === 1 ? "" : "s"} need a capture check`
+      : checking
+        ? "checking photo quality"
+        : entries.length ? "photo quality checked" : "";
     pickedEl.innerHTML = entries.length
-      ? `${entries.length} photo${entries.length === 1 ? "" : "s"} selected · <a href="#" id="clearPick">clear all</a>`
+      ? `${entries.length} photo${entries.length === 1 ? "" : "s"} selected${qualityText ? ` · ${qualityText}` : ""} · <a href="#" id="clearPick">clear all</a>`
       : "";
     const c = $("#clearPick");
     if (c) c.onclick = (e) => { e.preventDefault(); clearAll(); };
@@ -346,10 +390,15 @@ export async function renderUpload(view, caps, onDone) {
   }
   function renderGrid() {
     gridEl.innerHTML = entries
-      .map((e) => `<div class="up-thumb" data-key="${esc(e.key)}">
+      .map((e) => {
+        const q = e.quality || { state: "checking", label: "Checking" };
+        const qState = q.state === "ok" ? "ok" : q.state === "warn" ? "warn" : "checking";
+        return `<div class="up-thumb" data-key="${esc(e.key)}">
         <img loading="lazy" src="${e.url}" alt="">
+        <span class="up-quality upq-${qState}" title="${esc(q.detail || q.label)}">${esc(q.label)}</span>
         <button class="up-x" data-rm="${esc(e.key)}" aria-label="Remove">${ICON.x}</button>
-      </div>`).join("");
+      </div>`;
+      }).join("");
     gridEl.querySelectorAll("[data-rm]").forEach((b) =>
       (b.onclick = () => removeFile(b.dataset.rm)));
   }

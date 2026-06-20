@@ -10,6 +10,7 @@ import {
   approvalSummary,
   aiDoubtFields,
   getItemReadiness,
+  hasAiSignal,
   hasAiDoubt,
   issueState,
   missingCoreFields,
@@ -1215,6 +1216,7 @@ async function renderGallery(view, caps, opts = {}) {
     else if (issue === "ready" && canEdit && rows.length) actions.push(["approveall", `Approve ${rows.length}`]);
     if (rows.length) actions.push(["openfirst", "Open first"]);
     if (canEdit && rows.length > 1) actions.push(["swipe", `Swipe ${rows.length}`]);
+    const aiBreakdown = (issue === "ai" || issue === "doubt") ? aiIssueBreakdown(rows, failedAiShown) : "";
     reviewBriefEl.hidden = false;
     reviewBriefEl.innerHTML = `
       <div class="review-brief-copy">
@@ -1224,10 +1226,25 @@ async function renderGallery(view, caps, opts = {}) {
           <span>${esc(Number(rows.length || 0).toLocaleString())}</span>
         </div>
         <p>${esc(guide.detail)}</p>
+        ${aiBreakdown}
       </div>
       <div class="review-brief-actions">
         ${actions.map(([cta, label], i) => `<button class="${i === 0 ? "primary" : "ghost"}" data-cta="${esc(cta)}">${esc(label)}</button>`).join("")}
       </div>`;
+  }
+
+  function aiIssueBreakdown(rows, failedAiShown = 0) {
+    const failed = failedAiShown || rows.filter((it) => it.latest_ai_job?.status === "failed").length;
+    const unread = rows.filter((it) => it.image_path && !hasAiSignal(it) && it.latest_ai_job?.status !== "failed").length;
+    const fieldChecks = rows.reduce((n, it) => n + aiDoubtFields(it).length, 0);
+    const parts = [
+      failed ? `${failed} failed AI job${failed === 1 ? "" : "s"}` : "",
+      unread ? `${unread} unread photo${unread === 1 ? "" : "s"}` : "",
+      fieldChecks ? `${fieldChecks} field confidence check${fieldChecks === 1 ? "" : "s"}` : "",
+    ].filter(Boolean);
+    return parts.length
+      ? `<div class="review-ai-breakdown">${parts.map((p) => `<span>${esc(p)}</span>`).join("")}</div>`
+      : "";
   }
 
   function isPreviewPaneActive() {
