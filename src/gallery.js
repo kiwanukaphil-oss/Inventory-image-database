@@ -1059,16 +1059,17 @@ async function renderGallery(view, caps, opts = {}) {
     return `<div class="card" data-id="${it.id}">
       ${thumb}
       <div class="body">
-        <div class="cardtop">
-          <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
+        <div class="card-head">
+          <div class="card-titleblock">
+            <div class="cbrand">${esc(brand)}</div>
+            ${cat ? `<div class="ccat">${esc(cat)}</div>` : ""}
+          </div>
           <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
         </div>
-        <div class="issue-line">${issueBadgesHtml(it)}${activityBadgesHtml(it)}</div>
-        <div class="cbrand">${esc(brand)}</div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
+        <div class="issue-line">${issueBadgesHtml(it)}${activityBadgesHtml(it)}${posChipHtml(it)}</div>
         <div class="cmeta">
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
-          ${posChipHtml(it)}
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
       </div>
@@ -1094,15 +1095,12 @@ async function renderGallery(view, caps, opts = {}) {
       ${thumb}
       <div class="row-main">
         <div class="row-top">
-          <span class="row-brand">${esc(brand)}</span>
-          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}${activityBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span></span>
-        </div>
-        <div class="row-sub">
-          ${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}${variant ? `<span class="row-attr">${variant}</span>` : ""}
-        </div>
-        <div class="row-meta">
+          <span class="row-title"><span class="row-brand">${esc(brand)}</span>${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}</span>
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
-          ${posChipHtml(it)}
+        </div>
+        ${variant ? `<div class="row-sub"><span class="row-attr">${variant}</span></div>` : ""}
+        <div class="row-meta">
+          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}${activityBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>${posChipHtml(it)}</span>
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
       </div>
