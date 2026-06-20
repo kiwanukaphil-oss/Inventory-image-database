@@ -37,7 +37,10 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
   - Status: implemented.
   - Done: Shop recovery callout for stale/no-mirror/queued/sending/dirty/error/drift states, visible POS-only read-only rows, Today shop-sync bridge includes stale/missing mirror work, Sync Center renamed to Shop recovery, Health/Queue/Problems/Drift/Actions layout, manager-only sync actions, manual drift-check action.
   - Outstanding: final block-review state regression for queued, sending, dirty, error, in-shop, stale mirror, no mirror, and drift findings.
-- [ ] Phase 7: Admin and data tools
+- [x] Phase 7: Admin and data tools
+  - Status: implemented.
+  - Done: Settings reorganized into Device & app, Shop settings, Data tools, and Admin; AI quality check and Catalog health check language applied; Recent activity source filters added; Users permission matrix safety notes added; Categories/Fields dependency context and delete warnings strengthened; Export CSV caps and scope made visible.
+  - Outstanding: final block-review admin workflow checks for create/deactivate/reactivate users, capability edits, category/field edits, reference-data refresh, and export caps.
 - [ ] Phase 8: Intelligence layer
 
 ## Current Working Todo
@@ -67,4 +70,7 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Commit and push Phase 5 slice.
 - [x] Implement Phase 6 Shop floor report and Sync Center recovery polish.
 - [x] Validate Phase 6 slice with unit tests and production build.
-- [ ] Commit and push Phase 6 slice.
+- [x] Commit and push Phase 6 slice.
+- [x] Implement Phase 7 Settings and admin/data tool polish.
+- [x] Validate Phase 7 slice with unit tests and production build.
+- [ ] Commit and push Phase 7 slice.

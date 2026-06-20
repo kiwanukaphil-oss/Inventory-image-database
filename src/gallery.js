@@ -210,7 +210,7 @@ export function renderApp(mount, profile, onSignOut) {
     else renderComingSoon(view, id);
   }
 
-  // Currency editor (the one shop-wide setting), opened from Settings → General.
+  // Currency editor (the one shop-wide setting), opened from Settings → Shop.
   function openCurrencyEditor() {
     const cur = getSetting("currency", "");
     const sh = openBottomSheet("Currency", `
@@ -235,23 +235,24 @@ export function renderApp(mount, profile, onSignOut) {
   function openSettings() {
     const install = installAvailable() ? `<button class="menu-item" data-s="install">Install app</button>` : "";
     const currencyRow = caps.can_manage_users
-      ? `<button class="menu-item" data-s="currency">Currency<span class="menu-val">${esc(getSetting("currency", "") || "not set")}</span></button>`
+      ? `<button class="menu-item settings-row" data-s="currency"><span><b>Currency</b><small>Prefix shown before shop prices</small></span><span class="menu-val">${esc(getSetting("currency", "") || "not set")}</span></button>`
       : "";
     const dataTools = [
-      `<button class="menu-item" data-s="activity">Recent activity</button>`,
-      `<button class="menu-item" data-s="export">Export CSV</button>`,
-      caps.can_edit ? `<button class="menu-item" data-s="calib">Calibration check</button>` : "",
-      caps.can_edit ? `<button class="menu-item" data-s="audit">AI consistency audit</button>` : "",
+      `<button class="menu-item settings-row" data-s="activity"><span><b>Recent activity</b><small>Human, AI, pricing, approval, undo, and shop events</small></span></button>`,
+      `<button class="menu-item settings-row" data-s="export"><span><b>Export CSV</b><small>Catalog snapshot and audit log downloads</small></span></button>`,
+      caps.can_edit ? `<button class="menu-item settings-row" data-s="calib"><span><b>AI quality check</b><small>Mark AI fields correct or wrong from photos</small></span></button>` : "",
+      caps.can_edit ? `<button class="menu-item settings-row" data-s="audit"><span><b>Catalog health check</b><small>Find variants, missing details, duplicates, and outliers</small></span></button>` : "",
     ].filter(Boolean).join("");
     const adminTools = caps.can_manage_users
-      ? `<button class="menu-item" data-s="users">Users & permissions</button>
-         <button class="menu-item" data-s="cats">Categories & fields</button>
-         <button class="menu-item" data-s="sync">Shop sync</button>`
+      ? `<button class="menu-item settings-row" data-s="users"><span><b>Users & permissions</b><small>Roles, capability matrix, active accounts</small></span></button>
+         <button class="menu-item settings-row" data-s="cats"><span><b>Categories & fields</b><small>Reference data that drives forms, AI, and SKUs</small></span></button>
+         <button class="menu-item settings-row" data-s="sync"><span><b>Shop recovery</b><small>Send to shop, refresh numbers, and check drift</small></span></button>`
       : "";
     const sh = openBottomSheet("Settings", `
-      <div class="sheet-sec">General</div>
+      <div class="sheet-sec">Device & app</div>
       <button class="menu-item" data-s="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
-      ${currencyRow}${install}
+      ${install}
+      ${currencyRow ? `<div class="sheet-sec">Shop settings</div>${currencyRow}` : ""}
       ${dataTools ? `<div class="sheet-sec">Data tools</div>${dataTools}` : ""}
       ${adminTools ? `<div class="sheet-sec">Admin</div>${adminTools}` : ""}`);
     sh.body.addEventListener("click", (e) => {
@@ -281,7 +282,7 @@ export function renderApp(mount, profile, onSignOut) {
       { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
       { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
       { id: "pricing", label: "Build price rule", sub: "Open guided pricing", icon: ICON.pencil, show: !!caps.can_edit },
-      { id: "audit", label: "AI consistency audit", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
+      { id: "audit", label: "Catalog health check", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
       { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
       { id: "shop", label: "Shop floor", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
       { id: "activity", label: "Recent activity", sub: "Who changed what, lately", icon: ICON.refresh, show: true },

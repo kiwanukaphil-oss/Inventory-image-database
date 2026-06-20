@@ -679,6 +679,11 @@ body { overflow:hidden; overscroll-behavior:none; }
 .user-off { font-size:var(--text-2xs); color:var(--flag-txt); border:1px solid var(--flag-border); border-radius:var(--radius-md); padding:0 6px; margin-left:4px; }
 .user-actions { margin-top:8px; display:flex; justify-content:flex-end; }
 .user-actions .user-deact { font-size:var(--text-sm); padding:6px 10px; }
+.user-admin-note, .user-lock-note { border:1px solid var(--review-border); border-radius:var(--radius-sm);
+  background:var(--control); color:var(--review-txt); font-size:var(--text-sm); line-height:1.35; }
+.user-admin-note { padding:8px 10px; margin-bottom:12px; display:flex; flex-direction:column; gap:2px; }
+.user-admin-note span, .user-lock-note { font-size:var(--text-xs); }
+.user-lock-note { margin-top:8px; padding:7px 9px; }
 
 /* add-user form */
 .user-add { border:1px solid var(--line); border-radius:var(--radius-md); padding:10px; margin-bottom:12px; display:flex; flex-direction:column; gap:var(--space-sm); }
@@ -1111,6 +1116,10 @@ body { overflow:hidden; overscroll-behavior:none; }
 /* Right-aligned current-value hint on a settings-style menu row (e.g. Appearance → "System"). */
 .menu-item:has(.menu-val) { display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg); }
 .menu-val { color:var(--muted); font-size:var(--text-sm); }
+.settings-row { display:flex; align-items:center; justify-content:space-between; gap:var(--space-lg); }
+.settings-row > span:first-child { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.settings-row b { font-size:var(--text-base); line-height:1.2; }
+.settings-row small { color:var(--muted); font-size:var(--text-xs); line-height:1.25; }
 .cmd-list { display:flex; flex-direction:column; gap:var(--space-md); }
 .cmd-row { display:flex; align-items:center; gap:11px; }
 .cmd-ico { flex:0 0 auto; display:inline-flex; color:var(--muted); }
@@ -1119,6 +1128,10 @@ body { overflow:hidden; overscroll-behavior:none; }
 .cmd-copy span { color:var(--muted); font-size:var(--text-xs); line-height:1.25; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
 /* Recent-activity feed rows: source pill · item + change · relative time. */
+.act-filters { display:flex; gap:var(--space-sm); overflow-x:auto; padding-bottom:2px; }
+.act-filter { flex:0 0 auto; padding:5px 10px; border:1px solid var(--line); border-radius:var(--radius-xl);
+  background:var(--control); color:var(--txt); font-size:var(--text-xs); }
+.act-filter.on { border-color:var(--accent); color:var(--accent); font-weight:650; }
 .act-day { margin-top:14px; }
 .act-row { display:flex; align-items:center; gap:var(--space-lg); }
 .act-row .source-pill { flex:0 0 auto; }
@@ -1222,9 +1235,19 @@ body { overflow:hidden; overscroll-behavior:none; }
 .cm-label { font-size:var(--text-xs); color:var(--muted); margin:10px 0 4px; }
 .cm-check { display:flex; gap:var(--space-md); align-items:center; margin-top:10px; font-size:var(--text-base); }
 .muted { color:var(--muted); font-weight:400; font-size:var(--text-xs); }
+.cat-admin-note { padding:9px 10px; border:1px solid var(--review-border); border-radius:var(--radius-sm);
+  background:var(--control); color:var(--review-txt); font-size:var(--text-sm); line-height:1.35;
+  display:flex; flex-direction:column; gap:2px; }
+.cat-admin-note span { font-size:var(--text-xs); }
 
 /* ---------------- uploader ---------------- */
 .uploader { max-width:560px; margin:0 auto; }
+.export-tool { display:flex; flex-direction:column; gap:var(--space-md); }
+.export-note, .audit-intro { padding:9px 10px; border:1px solid var(--line); border-radius:var(--radius-sm);
+  background:var(--control); color:var(--muted); font-size:var(--text-sm); line-height:1.35; }
+.export-action { display:flex; flex-direction:column; align-items:flex-start; gap:2px; text-align:left; }
+.export-action b { font-size:var(--text-base); line-height:1.2; }
+.export-action span { font-size:var(--text-xs); line-height:1.25; opacity:.82; }
 .up-hero {
   display:flex; justify-content:space-between; align-items:flex-start; gap:var(--space-xl);
   margin:4px 0 14px;

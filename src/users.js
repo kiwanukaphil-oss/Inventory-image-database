@@ -55,6 +55,10 @@ export async function openUsers(currentCaps) {
         </div>
         <div class="muted" style="font-size:12px">Creates a login immediately; share the email + temporary password with them.</div>
       </div>
+      <div class="user-admin-note">
+        <b>Capability matrix</b>
+        <span>Deactivated accounts are blocked by active-aware RLS, not just hidden in this app. Your own Manage users access stays locked on to prevent self-lockout.</span>
+      </div>
       <div id="usersBody"><div class="spinner"></div></div>
     </div>`;
   document.body.appendChild(modal);
@@ -124,7 +128,7 @@ export async function openUsers(currentCaps) {
         if (isActive) {
           const ok = await confirmSheet({
             title: "Deactivate account?",
-            message: "They won't be able to log in until the account is reactivated.",
+            message: "They won't be able to log in, and active-aware RLS blocks database access until the account is reactivated.",
             confirmText: "Deactivate",
             danger: true,
           });
@@ -183,6 +187,7 @@ function renderRow(p, isSelf) {
         }> ${c.label}</label>`;
       }).join("")}
     </div>
+    ${isSelf ? `<div class="user-lock-note">Self-lockout protection: Manage users cannot be removed from your own account here.</div>` : ""}
     ${isSelf ? "" : `<div class="user-actions">
       <button class="ghost user-deact" data-deact="${p.id}" data-active="${!inactive}">${inactive ? "Reactivate" : "Deactivate"}</button>
     </div>`}

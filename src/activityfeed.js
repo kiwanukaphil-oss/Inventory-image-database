@@ -51,13 +51,14 @@ function rowHtml(e, items) {
 
 export function openActivityFeed(caps) {
   const sh = openBottomSheet("Recent activity", `<div class="muted" style="padding:14px">Loading…</div>`);
+  let sourceFilter = "all";
+  let cached = null;
 
   // Re-rendered on retry; reused as the editor's refresh so an edit made from the
   // feed reflects when you return to it.
   async function render() {
-    let data;
     try {
-      data = await loadRecentActivity(120);
+      cached = await loadRecentActivity(120);
     } catch {
       sh.body.innerHTML = `<div class="empty"><div class="big">⚠️</div>
         <div>Couldn't load activity — check your connection.</div>
@@ -65,19 +66,37 @@ export function openActivityFeed(caps) {
       sh.body.querySelector("#actRetry").onclick = render;
       return;
     }
+    renderContent();
+  }
+
+  function renderContent() {
+    const data = cached || { events: [], items: new Map() };
     const { events, items } = data;
     if (!events.length) {
       sh.body.innerHTML = `<div class="empty"><div class="big">🕊️</div>
         <div>No activity yet — edits, approvals and shop syncs will show up here.</div></div>`;
       return;
     }
+    const sources = [...new Set(events.map((e) => e.source || "system"))]
+      .sort((a, b) => activitySourceLabel(a).localeCompare(activitySourceLabel(b)));
+    const visible = sourceFilter === "all"
+      ? events
+      : events.filter((e) => (e.source || "system") === sourceFilter);
+    const filters = `<div class="act-filters">
+      <button class="act-filter${sourceFilter === "all" ? " on" : ""}" data-actfilter="all">All</button>
+      ${sources.map((src) => `<button class="act-filter${sourceFilter === src ? " on" : ""}" data-actfilter="${esc(src)}">${esc(activitySourceLabel(src))}</button>`).join("")}
+    </div>`;
     let html = "", lastDay = null;
-    for (const e of events) {
+    for (const e of visible) {
       const day = dayLabel(e.created_at);
       if (day !== lastDay) { html += `<div class="sheet-sec act-day">${esc(day)}</div>`; lastDay = day; }
       html += rowHtml(e, items);
     }
-    sh.body.innerHTML = html;
+    sh.body.innerHTML = filters + (html || `<div class="sync-empty">No ${esc(activitySourceLabel(sourceFilter).toLowerCase())} activity in the latest ${events.length} events.</div>`);
+    sh.body.querySelectorAll("[data-actfilter]").forEach((b) => (b.onclick = () => {
+      sourceFilter = b.dataset.actfilter;
+      renderContent();
+    }));
     sh.body.querySelectorAll("[data-open]").forEach((b) => (b.onclick = () => {
       sh.close();
       openEditor(b.dataset.open, caps, () => {});

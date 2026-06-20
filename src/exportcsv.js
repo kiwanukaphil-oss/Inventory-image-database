@@ -26,12 +26,19 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 export async function renderExport(view, caps) {
   await loadRefData();
+  const ITEM_EXPORT_CAP = 10000;
+  const LOG_EXPORT_CAP = 50000;
   view.innerHTML = `
-    <div class="uploader">
+    <div class="uploader export-tool">
       <h2 class="up-h">Export CSV</h2>
-      <p class="picked" style="text-align:left">Download a snapshot of the catalogue, or the change history.</p>
-      <button class="primary up-go" id="expCurrent">Catalogue (current state)</button>
-      ${caps.can_edit ? `<button class="ghost up-go" id="expAudit">Change log</button>` : ""}
+      <p class="picked" style="text-align:left">Download a catalog snapshot or audit log. Cost values are included only for users who can view cost.</p>
+      <div class="export-note">Catalog exports cap at ${ITEM_EXPORT_CAP.toLocaleString()} rows. Change-log exports cap at ${LOG_EXPORT_CAP.toLocaleString()} rows. The status line warns if a cap is hit.</div>
+      <button class="primary up-go export-action" id="expCurrent">
+        <b>Catalog snapshot</b><span>Current item fields, attributes, category path, images, and timestamps</span>
+      </button>
+      ${caps.can_edit ? `<button class="ghost up-go export-action" id="expAudit">
+        <b>Change log</b><span>Audit trail rows for edits and operational events</span>
+      </button>` : ""}
       <div class="progress" id="expStatus"></div>
     </div>`;
 
@@ -41,7 +48,6 @@ export async function renderExport(view, caps) {
   view.querySelector("#expCurrent").onclick = async () => {
     setStatus("Preparing catalogue…");
     try {
-      const ITEM_EXPORT_CAP = 10000;
       const { data: items, error } = await supabase
         .from("items")
         .select("id, category_id, name, brand, sku, status, price, stock_quantity, reorder_level, image_path, attributes, created_at, updated_at")
@@ -87,7 +93,6 @@ export async function renderExport(view, caps) {
   if (auditBtn) auditBtn.onclick = async () => {
     setStatus("Preparing change log…");
     try {
-      const LOG_EXPORT_CAP = 50000;
       const cols = ["created_at", "item_id", "change_type", "field", "before", "after", "sku_before", "sku_after", "actor", "notes"];
       const { data: log, error } = await supabase
         .from("audit_log").select(cols.join(", ")).order("created_at", { ascending: true }).limit(LOG_EXPORT_CAP);

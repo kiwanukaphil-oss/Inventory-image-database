@@ -1,5 +1,5 @@
 // ============================================================================
-//  Calibration tool — measure whether the AI's per-field confidence actually
+//  AI quality check — measure whether the AI's per-field confidence actually
 //  predicts correctness, so high-confidence uploads can be batch-approved with
 //  trust (or not).
 //
@@ -42,11 +42,11 @@ function aiFields(it) {
  * @param {Function} onClose called after the overlay closes (e.g. to refresh)
  */
 export async function openCalibration(caps, onClose) {
-  // Show the overlay + spinner immediately so tapping "Calibration check" feels
+  // Show the overlay + spinner immediately so tapping "AI quality check" feels
   // responsive while the AI-extracted items load (previously it sat blank).
   const el = document.createElement("div");
   el.className = "calib";
-  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Calibration</span></div>
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>AI quality check</span></div>
     <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add("open"));
@@ -84,7 +84,7 @@ export async function openCalibration(caps, onClose) {
 
   if (!items.length) {
     el.innerHTML = `<div class="calib-panel"><div class="calib-head">
-        <span>Calibration</span><button class="iconbtn" id="cX" aria-label="Close">${ICON.x}</button></div>
+        <span>AI quality check</span><button class="iconbtn" id="cX" aria-label="Close">${ICON.x}</button></div>
       <div class="calib-empty"><div class="big">🧪</div>
         <div>No AI-extracted items to calibrate yet.</div>
         <div class="muted">Items the AI has filled (with confidence) will appear here.</div></div></div>`;
@@ -139,7 +139,7 @@ export async function openCalibration(caps, onClose) {
     el.innerHTML = `<div class="calib-panel">
       <div class="calib-head">
         <button class="iconbtn" id="cX" aria-label="Close">${ICON.x}</button>
-        <span>Calibration · ${done}/${total}</span>
+        <span>AI quality · ${done}/${total}</span>
         <button class="linkbtn" id="cAllOk">All correct</button>
       </div>
       <div class="calib-prog"><span style="width:${Math.round((done / total) * 100)}%"></span></div>
@@ -261,7 +261,7 @@ export async function openCalibration(caps, onClose) {
         : "High confidence is correcting too often to blind-approve — keep a human glance in the loop.";
 
     el.innerHTML = `<div class="calib-panel">
-      <div class="calib-head"><span>Calibration results</span>
+      <div class="calib-head"><span>AI quality results</span>
         <button class="iconbtn" id="cX" aria-label="Close">${ICON.x}</button></div>
       <div class="calib-body">
         <div class="cs-card">${levelRows}</div>

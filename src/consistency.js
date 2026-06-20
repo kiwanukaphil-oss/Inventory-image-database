@@ -29,7 +29,7 @@ function fmtNumber(v) {
 }
 
 export async function openConsistencyAudit(_caps, openReviewQueue) {
-  const sh = openBottomSheet("AI consistency audit", `<div class="muted" style="padding:14px">Checking catalog...</div>`);
+  const sh = openBottomSheet("Catalog health check", `<div class="muted" style="padding:14px">Checking catalog...</div>`);
   await loadRefData();
 
   const { data, error } = await supabase
@@ -143,6 +143,7 @@ export async function openConsistencyAudit(_caps, openReviewQueue) {
     !missingDetails.length && !duplicateSkus.length && !priceOutliers.length;
 
   sh.body.innerHTML = `
+    <div class="audit-intro">Read-only checks for brand variants, size normalization, missing details, AI checks, duplicate SKUs, and price outliers.</div>
     <div class="audit-summary">
       ${row("Brand variants", brandIssues.length, "Same brand written in different ways.")}
       ${row("Size normalization", sizeIssues.length, "Values that would normalize on the next save.")}
