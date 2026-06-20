@@ -21,7 +21,10 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
   - Status: implemented.
   - Done: visible Catalog smart-view shelves, saved-view shelf promotion, filter-sheet smart-view parity, shelf styling, refreshed tile and dense-row hierarchy, active Review queue brief and contextual actions, desktop preview pane, bulk-selection regression pass.
   - Outstanding: none.
-- [ ] Phase 3: Add and camera experience
+- [x] Phase 3: Add and camera experience
+  - Status: implemented.
+  - Done: Add workbench intake summary, visible batch/category/AI state, shared-photo import banner, clearer upload progress and recovery actions, burst filmstrip AI-issue state, failed-AI routing into Review.
+  - Outstanding: final real-device camera/share-target verification during block review.
 - [ ] Phase 4: Editor, readiness, and AI evidence
 - [ ] Phase 5: Pricing
 - [ ] Phase 6: Shop and Sync
@@ -44,3 +47,6 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Implement Phase 2 desktop preview pane.
 - [x] Validate preview pane and bulk-selection paths with unit tests and production build.
 - [x] Commit and push Phase 2 completion slice.
+- [x] Implement Phase 3 Add/camera workbench polish.
+- [x] Validate Phase 3 slice with unit tests and production build.
+- [x] Commit and push Phase 3 slice.
