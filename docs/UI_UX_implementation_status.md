@@ -34,4 +34,4 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Commit and push Phase 1 implementation.
 - [x] Implement Phase 2 Catalog/Review smart-view shelves.
 - [x] Validate with unit tests and production build.
-- [ ] Commit and push Phase 2 slice.
+- [x] Commit and push Phase 2 slice.
