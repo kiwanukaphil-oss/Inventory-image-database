@@ -17,10 +17,10 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
   - Status: implemented.
   - Done: Today default landing surface, Catalog nav rename, five-tab nav, Today work counts, intake strip, shop pulse, activity bridge.
   - Outstanding: long-press work-card previews and permission-specific cost readiness counts.
-- [ ] Phase 2: Catalog and Review refresh
-  - Status: in progress; three slices implemented.
-  - Done: visible Catalog smart-view shelves, saved-view shelf promotion, filter-sheet smart-view parity, shelf styling, refreshed tile and dense-row hierarchy, active Review queue brief and contextual actions.
-  - Outstanding: desktop preview-pane exploration, manual bulk-selection regression pass.
+- [x] Phase 2: Catalog and Review refresh
+  - Status: implemented.
+  - Done: visible Catalog smart-view shelves, saved-view shelf promotion, filter-sheet smart-view parity, shelf styling, refreshed tile and dense-row hierarchy, active Review queue brief and contextual actions, desktop preview pane, bulk-selection regression pass.
+  - Outstanding: none.
 - [ ] Phase 3: Add and camera experience
 - [ ] Phase 4: Editor, readiness, and AI evidence
 - [ ] Phase 5: Pricing
@@ -41,3 +41,6 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
 - [x] Implement Phase 2 Review queue polish.
 - [x] Validate Review queue polish with unit tests and production build.
 - [x] Commit and push Review queue polish slice.
+- [x] Implement Phase 2 desktop preview pane.
+- [x] Validate preview pane and bulk-selection paths with unit tests and production build.
+- [x] Commit and push Phase 2 completion slice.

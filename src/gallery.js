@@ -8,6 +8,7 @@ import {
   REVIEW_QUEUE,
   STATUS_OPTIONS,
   approvalSummary,
+  aiDoubtFields,
   getItemReadiness,
   hasAiDoubt,
   issueState,
@@ -613,8 +614,8 @@ const SORTS = [
 // `density` is the card-grid vs scan-list view mode. Both surfaces default to
 // tile/grid; reviewers can still switch to the dense list when skimming.
 const browseState = {
-  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", itemIds: [] },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", seg: "work", issue: "work", itemIds: [] },
+  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", itemIds: [], previewId: "" },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", seg: "work", issue: "work", itemIds: [], previewId: "" },
 };
 
 function issueBadgesHtml(it, { compact = false } = {}) {
@@ -791,6 +792,8 @@ async function renderGallery(view, caps, opts = {}) {
   let filtered = []; // current filtered+sorted rows, for bulk actions
   let smartShelvesEl = null;
   let reviewBriefEl = null;
+  let previewEl = null;
+  let previewSelectedId = state.previewId || "";
 
   function reviewQueueGuide(key) {
     return ({
@@ -902,7 +905,10 @@ async function renderGallery(view, caps, opts = {}) {
       <div class="active-pills" id="pills"></div>
       <div class="count" id="count"></div>
     </div>
-    <div class="results" id="grid"></div>
+    <div class="browse-layout" id="browseLayout">
+      <div class="results" id="grid"></div>
+      <aside class="item-preview" id="itemPreview" aria-label="${review ? "Review item preview" : "Catalog item preview"}"></aside>
+    </div>
     ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
       <button class="ab-btn ab-approve" id="abApprove"><span class="ab-ico">${ICON.tick}</span>Approve</button>
       <button class="ab-btn" id="abAi"><span class="ab-ico">${ICON.sparkle}</span>AI-fill</button>
@@ -920,6 +926,7 @@ async function renderGallery(view, caps, opts = {}) {
   const actionbar = view.querySelector("#actionbar");
   smartShelvesEl = view.querySelector("#smartShelves");
   reviewBriefEl = view.querySelector("#reviewBrief");
+  previewEl = view.querySelector("#itemPreview");
 
   // Persist the current view state for this surface (so tab switches keep place).
   const saveState = () => {
@@ -927,6 +934,7 @@ async function renderGallery(view, caps, opts = {}) {
     state.priceMin = priceMin; state.priceMax = priceMax; state.noPrice = noPrice;
     state.datePreset = datePreset; state.density = density;
     state.itemIds = [...itemIds];
+    state.previewId = previewSelectedId;
     if (review) { state.issue = issue; state.seg = issue === "ready" ? "ready" : "work"; }
     state.active = {};
     for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
@@ -1221,6 +1229,119 @@ async function renderGallery(view, caps, opts = {}) {
       </div>`;
   }
 
+  function isPreviewPaneActive() {
+    if (!previewEl || previewEl.hidden) return false;
+    return window.matchMedia
+      ? window.matchMedia("(min-width: 980px)").matches
+      : (window.innerWidth || 0) >= 980;
+  }
+
+  function cardElFor(id) {
+    return [...grid.querySelectorAll(".card[data-id]")].find((c) => c.dataset.id === id) || null;
+  }
+
+  function markPreviewCard() {
+    grid.querySelectorAll(".card.previewing").forEach((c) => c.classList.remove("previewing"));
+    const card = cardElFor(previewSelectedId);
+    if (card) card.classList.add("previewing");
+  }
+
+  function openPhotoLightbox(id) {
+    const imgRows = filtered.filter((it) => it.image_path);
+    const slides = imgRows.map((it) => {
+      const brand = it.brand || it.name || "-";
+      const sub = density === "list" ? (it.categories?.name || "") : summarizeItem(it);
+      return { getUrl: () => signFullImage(it.image_path), caption: esc([brand, sub].filter(Boolean).join(" - ")) };
+    });
+    openLightbox(slides, Math.max(0, imgRows.findIndex((it) => it.id === id)));
+  }
+
+  function setPreviewItem(id) {
+    if (!id || !filtered.some((it) => it.id === id)) return;
+    previewSelectedId = id;
+    state.previewId = id;
+    renderPreviewPane(filtered);
+  }
+
+  function previewIssueList(readiness) {
+    const issues = [...readiness.blockers, ...readiness.warnings].slice(0, 4);
+    if (!issues.length) return `<li>Ready for approval when the photo and selling details look right.</li>`;
+    return issues.map((x) => `<li><b>${esc(x.label)}</b>${x.detail ? ` <span>${esc(x.detail)}</span>` : ""}</li>`).join("");
+  }
+
+  function previewAiDoubts(it) {
+    const doubts = aiDoubtFields(it).slice(0, 5);
+    if (!doubts.length) return "";
+    return `<div class="preview-section">
+      <div class="preview-section-title">AI checks</div>
+      <div class="preview-chipline">
+        ${doubts.map((d) => `<span class="issue-pill iss-doubt">${esc(fieldLabel(d.key))}: ${esc(d.level)}</span>`).join("")}
+      </div>
+    </div>`;
+  }
+
+  function renderPreviewPane(rows) {
+    if (!previewEl) return;
+    if (!rows.length) {
+      previewSelectedId = "";
+      state.previewId = "";
+      previewEl.hidden = true;
+      previewEl.innerHTML = "";
+      return;
+    }
+    if (!previewSelectedId || !rows.some((it) => it.id === previewSelectedId)) previewSelectedId = rows[0].id;
+    const it = rows.find((row) => row.id === previewSelectedId) || rows[0];
+    previewSelectedId = it.id;
+    state.previewId = it.id;
+    markPreviewCard();
+
+    const brand = it.brand || it.name || "-";
+    const cat = it.categories?.name || "";
+    const variant = summarizeItem(it);
+    const readiness = getItemReadiness(it, { canViewCost: !!caps.can_view_cost });
+    const tone = readiness.blockers.length ? "blocked" : readiness.warnings.length ? "warn" : "ready";
+    const title = readiness.blockers.length
+      ? "Blocked"
+      : readiness.warnings.length
+        ? "Check before approval"
+        : it.status === "approved"
+          ? "Approved"
+          : "Ready to approve";
+    const img = it.image_path
+      ? `<button class="thumb preview-photo" data-preview-photo data-img aria-label="Inspect photo">
+          <img class="cardthumb" data-thumb="${esc(it.image_path)}" alt="${esc(brand)}">
+        </button>`
+      : `<div class="preview-photo preview-noimage">No image</div>`;
+    previewEl.hidden = false;
+    previewEl.innerHTML = `
+      ${img}
+      <div class="preview-body">
+        <div class="preview-kicker">${esc(review ? "Review preview" : "Catalog preview")}</div>
+        <h3>${esc(brand)}</h3>
+        ${cat ? `<div class="preview-sub">${esc(cat)}</div>` : ""}
+        ${variant ? `<div class="preview-attrs">${esc(variant)}</div>` : ""}
+        <div class="preview-chipline">
+          <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
+          ${issueBadgesHtml(it)}
+          ${activityBadgesHtml(it)}
+          ${posChipHtml(it)}
+        </div>
+        <div class="preview-price">${it.price != null ? fmtPrice(it.price) : "Missing price"}</div>
+        <div class="preview-readiness ${tone}">
+          <div><b>${esc(title)}</b><span>${esc(readiness.primary?.action || "Review item")}</span></div>
+          <ul>${previewIssueList(readiness)}</ul>
+        </div>
+        ${previewAiDoubts(it)}
+        <div class="preview-actions">
+          <button class="primary" data-preview-open>Open editor</button>
+          ${it.image_path ? `<button class="ghost" data-preview-photo>Inspect photo</button>` : ""}
+          ${canEdit ? `<button class="ghost" data-preview-select>Select item</button>` : ""}
+        </div>
+      </div>`;
+    observeThumbs(previewEl);
+    fadeInImages(previewEl);
+  }
+
   function draw() {
     const rows = applySort(data.filter((it) => matches(it, null)));
     filtered = rows;          // expose current filtered+sorted set for bulk actions
@@ -1302,6 +1423,7 @@ async function renderGallery(view, caps, opts = {}) {
             : `No ${ISSUE_META[issue]?.empty || "review"} items right now.`)
           : "No items match your search or filters."}</div>
         ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
+      renderPreviewPane([]);
       gridInner = null; cardCache.clear();   // next non-empty draw rebuilds the container
       const cf = grid.querySelector("#clearFiltersBtn");
       if (cf) cf.onclick = clearAllFilters;
@@ -1309,6 +1431,7 @@ async function renderGallery(view, caps, opts = {}) {
     }
 
     reconcileGrid(rows);
+    renderPreviewPane(rows);
     countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${openFirstCta}${approveCta}${swipeCta}${freshnessNote()}`;
   }
 
@@ -1392,19 +1515,35 @@ async function renderGallery(view, caps, opts = {}) {
     if (tip) { toast(tip.dataset.tip); return; }
     const thumb = e.target.closest(".thumb[data-img]");
     if (thumb) {
-      // Build the lightbox slide list from the current filtered rows on demand,
-      // so it always matches what's on screen regardless of render caching.
       const id = thumb.closest(".card[data-id]")?.dataset.id;
-      const imgRows = filtered.filter((it) => it.image_path);
-      const slides = imgRows.map((it) => {
-        const brand = it.brand || it.name || "—";
-        const sub = density === "list" ? (it.categories?.name || "") : summarizeItem(it);
-        return { getUrl: () => signFullImage(it.image_path), caption: esc([brand, sub].filter(Boolean).join(" · ")) };
-      });
-      openLightbox(slides, Math.max(0, imgRows.findIndex((it) => it.id === id)));
+      openPhotoLightbox(id);
       return;
     }
-    if (card) openItemEditor(card.dataset.id);
+    if (card) {
+      if (isPreviewPaneActive()) { setPreviewItem(card.dataset.id); return; }
+      openItemEditor(card.dataset.id);
+    }
+  });
+
+  grid.addEventListener("dblclick", (e) => {
+    if (selectionMode || !isPreviewPaneActive()) return;
+    const card = e.target.closest(".card[data-id]");
+    if (card && !e.target.closest(".thumb")) openItemEditor(card.dataset.id);
+  });
+
+  if (previewEl) previewEl.addEventListener("click", (e) => {
+    const tip = e.target.closest("[data-tip]");
+    if (tip) { toast(tip.dataset.tip); return; }
+    if (!previewSelectedId) return;
+    if (e.target.closest("[data-preview-open]")) openItemEditor(previewSelectedId);
+    else if (e.target.closest("[data-preview-photo]")) openPhotoLightbox(previewSelectedId);
+    else if (e.target.closest("[data-preview-select]") && canEdit) {
+      enterSelection();
+      const card = cardElFor(previewSelectedId);
+      if (card) setSelected(card, true);
+      else selected.add(previewSelectedId);
+      updateSelBar();
+    }
   });
 
   let lpStart = null;

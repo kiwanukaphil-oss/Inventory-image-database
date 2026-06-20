@@ -538,8 +538,22 @@ body { overflow:hidden; overscroll-behavior:none; }
   background:var(--control); border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px; }
 
 /* ---------------- card grid (ported from review.html) ---------------- */
+.browse-layout { display:block; }
+.item-preview { display:none; }
 .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:var(--space-xl); }
 @media (min-width:700px) { .grid { grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); } }
+@media (min-width:980px) {
+  .browse-layout {
+    display:grid; grid-template-columns:minmax(0,1fr) 320px;
+    gap:var(--space-xl); align-items:start;
+  }
+  .browse-layout .results { min-width:0; }
+  .item-preview {
+    display:block; position:sticky; top:12px; max-height:calc(100dvh - 148px);
+    overflow:auto; border:1px solid var(--line); border-radius:var(--radius-sm);
+    background:var(--panel); box-shadow:var(--shadow-card);
+  }
+}
 .card {
   background:var(--panel); border:1px solid var(--line); border-radius:var(--radius-sm);
   overflow:hidden; display:flex; flex-direction:column; box-shadow:var(--shadow-card);
@@ -574,6 +588,7 @@ body { overflow:hidden; overscroll-behavior:none; }
 .selecting .card .selcheck { display:flex; }
 .selecting .card { cursor:pointer; }
 .card.selected { outline:2px solid var(--accent); outline-offset:-2px; }
+.card.previewing { outline:2px solid var(--accent); outline-offset:-2px; }
 .card.selected .selcheck { background:var(--accent); border-color:var(--accent); color:#fff; }
 /* low-confidence triage dot */
 .card .lowdot { position:absolute; top:6px; right:6px; width:11px; height:11px; border-radius:50%;
@@ -594,6 +609,40 @@ body { overflow:hidden; overscroll-behavior:none; }
 .card .thumb img { width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity .3s; }
 .card .thumb.loaded img { opacity:1; }
 .card .body { padding:10px 11px; display:flex; flex-direction:column; gap:6px; }
+.preview-photo {
+  width:100%; aspect-ratio:1/1; border:0; border-bottom:1px solid var(--line);
+  border-radius:0; padding:0; display:flex; align-items:center; justify-content:center;
+  overflow:hidden; background:var(--thumb-bg); color:var(--muted); cursor:zoom-in;
+}
+.preview-photo img { width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity .3s; }
+.preview-photo.loaded img { opacity:1; }
+.preview-noimage { cursor:default; font-size:var(--text-sm); }
+.preview-body { padding:12px; display:flex; flex-direction:column; gap:var(--space-md); }
+.preview-kicker {
+  color:var(--muted); font-size:var(--text-2xs); text-transform:uppercase; letter-spacing:0;
+}
+.preview-body h3 { margin:0; font-size:var(--text-xl); line-height:1.15; }
+.preview-sub, .preview-attrs { color:var(--muted); font-size:var(--text-sm); line-height:1.35; }
+.preview-chipline { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-xs); }
+.preview-price { color:var(--accent-soft-txt); font-size:var(--text-lg); font-weight:750; }
+.preview-readiness {
+  border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px;
+  background:var(--control); font-size:var(--text-sm);
+}
+.preview-readiness.ready { border-color:var(--ok-border); }
+.preview-readiness.warn { border-color:var(--review-border); }
+.preview-readiness.blocked { border-color:var(--flag-border); }
+.preview-readiness > div { display:flex; justify-content:space-between; gap:var(--space-md); margin-bottom:6px; }
+.preview-readiness b { color:var(--txt); }
+.preview-readiness span { color:var(--muted); }
+.preview-readiness ul { margin:0; padding-left:17px; color:var(--muted); line-height:1.4; }
+.preview-readiness li + li { margin-top:4px; }
+.preview-section { display:flex; flex-direction:column; gap:var(--space-sm); }
+.preview-section-title {
+  color:var(--muted); font-size:var(--text-2xs); text-transform:uppercase; letter-spacing:0;
+}
+.preview-actions { display:grid; grid-template-columns:1fr; gap:var(--space-sm); }
+.preview-actions button { min-height:38px; border-radius:var(--radius-sm); }
 
 /* ---------------- search input ---------------- */
 .fb-search { width:100%; }
