@@ -45,6 +45,10 @@ Tracking file for the roadmap in `docs/UI_UX_reimagined.md`.
   - Status: implemented.
   - Done: non-blocking Add photo quality checks, Review AI issue grouping for failed/unread/field-confidence work, AI quality evidence-size reporting, and stock-intake session language reinforced in Add.
   - Outstanding: final block-review checks that AI suggestions do not overwrite protected values and Review remains the approval authority.
+- [x] Phase 9: Review continuity and workflow simplification
+  - Status: implemented locally.
+  - Done: persistent URL/session navigation, controlled PWA update prompt, mutation-aware refresh callbacks, Fix/Verify/Approve Review stages, Save & next, lazy Swipe photos, nested-overlay ownership, risk-tiered bulk verification, and focused navigation/overlay regression tests.
+  - Outstanding: authenticated phone and desktop acceptance pass before publishing.
 
 ## Current Working Todo
 

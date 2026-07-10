@@ -33,11 +33,22 @@ import { openCategoryManager } from "./categories_admin.js";
 import { loadCostPresence } from "./costs.js";
 import { loadLatestFailedJobs } from "./joblog.js";
 import { openConsistencyAudit } from "./consistency.js";
+import { approvalReasonText, confirmApprovalSummaryWarnings } from "./approval.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
 import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, bindPriceInput, ICON } from "./ui.js";
 import { sortItems } from "./lib/itemsort.js";
 import { shopState as libShopState, facetValue, buildFacets, searchText, matchesItem } from "./lib/facets.js";
 import { parsePrice, stripPriceGrouping } from "./lib/price.js";
+import { classifyVerificationRisk, verificationRiskRank } from "./lib/review-risk.js";
+import {
+  APP_VIEWS,
+  REVIEW_FILTERS,
+  REVIEW_STAGES,
+  buildAppUrl,
+  defaultFilterForStage,
+  parseAppRoute,
+  reviewStageForFilter,
+} from "./lib/navigation-state.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
 
@@ -112,6 +123,12 @@ const NAV = [
   { id: "shop", label: "Shop", ico: "navShop", badge: true },
 ];
 
+const REVIEW_STAGE_META = {
+  fix: { label: "Fix", detail: "Clear the blockers that stop items from moving forward." },
+  verify: { label: "Verify", detail: "Check AI uncertainty and recently changed items." },
+  approve: { label: "Approve", detail: "Give ready items their final inspection." },
+};
+
 // Update a bottom-nav count badge. `animate` count-ups give the Review badge a
 // premium "numbers move" feel; the Shop attention badge stays steady.
 function setNavBadge(id, count, animate = false) {
@@ -148,6 +165,7 @@ export function renderApp(mount, profile, onSignOut) {
   // the database independently enforces the same via RLS.
   const caps = profile || {};
   const role = caps.role || "viewer";
+  restoreAppSession(caps);
   mount.innerHTML = `
     <div class="shell">
       <div class="topwrap">
@@ -177,39 +195,71 @@ export function renderApp(mount, profile, onSignOut) {
     }</button>`
   ).join("");
 
-  let currentViewId = "today";
-  const refreshCurrent = () => setView(currentViewId);
+  let currentViewId = APP_VIEWS.includes(appSession.view) ? appSession.view : "today";
+  const refreshCurrent = () => setView(currentViewId, { historyMode: "replace", restoreScroll: true });
   function openReviewQueue(issueKey = "work", ids = []) {
-    const next = REVIEW_QUEUE.includes(issueKey) ? issueKey : "work";
+    const next = REVIEW_FILTERS.includes(issueKey) ? issueKey : "work";
     browseState.review.itemIds = Array.isArray(ids) ? ids : [];
     browseState.review.issue = next;
-    browseState.review.seg = next === "ready" ? "ready" : "work";
-    setView("review");
+    browseState.review.stage = reviewStageForFilter(next);
+    persistAppSession("review");
+    setView("review", {
+      historyMode: currentViewId === "review" ? "replace" : "push",
+      restoreScroll: false,
+    });
   }
 
-  function setView(id) {
+  function syncRoute(historyMode = "replace") {
+    if (historyMode === "none") return;
+    const nextUrl = buildAppUrl(window.location.href, {
+      view: currentViewId,
+      reviewFilter: browseState.review.issue,
+    });
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl === currentUrl) return;
+    const routeState = { klineView: currentViewId, reviewFilter: browseState.review.issue };
+    if (historyMode === "push") window.history.pushState(routeState, "", nextUrl);
+    else window.history.replaceState(routeState, "", nextUrl);
+  }
+
+  async function setView(id, { historyMode = "push", restoreScroll = true } = {}) {
+    if (!APP_VIEWS.includes(id)) id = "today";
+    if (currentViewId && view.childElementCount && document.body.contains(view)) {
+      appSession.scroll[currentViewId] = view.scrollTop;
+    }
     currentViewId = id;
+    appSession.view = id;
+    persistAppSession(id);
     renderGallerySeq++;
     renderTodaySeq++;
+    const targetScroll = restoreScroll ? Number(appSession.scroll[id] || 0) : 0;
     view.scrollTo(0, 0); // .content is the app's only scroller (app-shell layout)
     nav.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === id)
     );
-    if (id === "today") renderToday(view, caps, { setView, openReviewQueue, refreshCurrent });
-    else if (id === "catalog") renderGallery(view, caps);
+    syncRoute(historyMode);
+    if (id === "today") await renderToday(view, caps, { setView, openReviewQueue, refreshCurrent });
+    else if (id === "catalog") await renderGallery(view, caps);
     else if (id === "add")
-      renderUpload(view, caps, (result = {}) => {
+      await renderUpload(view, caps, (result = {}) => {
         if (result.view === "review" && result.itemIds?.length) {
           openReviewQueue(result.issue, result.itemIds);
         } else {
           browseState.gallery.itemIds = [];
-          setView("catalog");
+          setView("catalog", { restoreScroll: false });
         }
       });
     else if (id === "export") renderExport(view, caps); // routed from the ⋮ menu
-    else if (id === "shop") renderShop(view, caps, refreshCurrent);
-    else if (id === "review") renderReview(view, caps);
+    else if (id === "shop") await renderShop(view, caps, refreshCurrent);
+    else if (id === "review") await renderReview(view, caps);
     else renderComingSoon(view, id);
+    if (currentViewId !== id) return;
+    requestAnimationFrame(() => {
+      if (currentViewId !== id) return;
+      view.scrollTo(0, targetScroll);
+      appSession.scroll[id] = view.scrollTop;
+      persistAppSession(id);
+    });
   }
 
   // Currency editor (the one shop-wide setting), opened from Settings → Shop.
@@ -283,7 +333,7 @@ export function renderApp(mount, profile, onSignOut) {
       { id: "review-ai", label: "Needs AI fill", sub: "Find photos that need AI fill or retry", icon: ICON.sparkle, show: true },
       { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
       { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
-      { id: "pricing", label: "Build price rule", sub: "Open guided pricing", icon: ICON.pencil, show: !!caps.can_edit },
+      { id: "pricing", label: "Price items", sub: "Set prices in bulk", icon: ICON.pencil, show: !!caps.can_edit },
       { id: "audit", label: "Catalog health check", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
       { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
       { id: "shop", label: "Shop floor", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
@@ -387,7 +437,11 @@ export function renderApp(mount, profile, onSignOut) {
     const btn = e.target.closest("button[data-view]");
     if (!btn) return;
     // Tapping the already-active tab scrolls back to top (mobile convention).
-    if (btn.dataset.view === currentViewId) view.scrollTo({ top: 0, behavior: "smooth" });
+    if (btn.dataset.view === currentViewId) {
+      view.scrollTo({ top: 0, behavior: "smooth" });
+      appSession.scroll[currentViewId] = 0;
+      persistAppSession(currentViewId);
+    }
     else setView(btn.dataset.view);
   });
 
@@ -410,20 +464,47 @@ export function renderApp(mount, profile, onSignOut) {
   // Back-to-top: appears once you've scrolled down a bit. Watches the content
   // scroller (the document never scrolls in the app-shell layout).
   const fab = mount.querySelector("#fabTop");
-  const onScroll = () => { fab.hidden = view.scrollTop < 500; };
+  let scrollSaveTimer;
+  const onScroll = () => {
+    fab.hidden = view.scrollTop < 500;
+    appSession.scroll[currentViewId] = view.scrollTop;
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = setTimeout(() => persistAppSession(currentViewId), 120);
+  };
   view.addEventListener("scroll", onScroll, { passive: true });
   fab.onclick = () => view.scrollTo({ top: 0, behavior: "smooth" });
   onScroll();
 
-  // Honour PWA shortcuts / share-target deep links on first paint, then clean the
-  // URL so a later refresh doesn't re-trigger them.
-  const params = new URLSearchParams(location.search);
-  const validView = new Set(["today", "catalog", "gallery", "add", "review", "shop"]);
-  const wantView = params.get("view");
-  const requestedView = wantView === "gallery" ? "catalog" : wantView;
-  const initialView = params.get("share") === "1" ? "add" : (validView.has(requestedView) ? requestedView : "today");
-  if (params.has("view") || params.has("share")) history.replaceState(null, "", location.pathname);
-  setView(initialView);
+  // Restore the exact working surface after a reload/update. PWA shortcuts and
+  // share-target links still override the saved session on their first paint.
+  const initialRoute = parseAppRoute(location.search, {
+    view: appSession.view,
+    reviewFilter: browseState.review.issue,
+  });
+  if (initialRoute.shared) initialRoute.view = "add";
+  browseState.review.issue = initialRoute.reviewFilter;
+  browseState.review.stage = reviewStageForFilter(initialRoute.reviewFilter);
+
+  if (_appPopState) window.removeEventListener("popstate", _appPopState);
+  _appPopState = () => {
+    const route = parseAppRoute(location.search, {
+      view: currentViewId,
+      reviewFilter: browseState.review.issue,
+    });
+    const sameView = route.view === currentViewId;
+    const sameQueue = route.view !== "review" || route.reviewFilter === browseState.review.issue;
+    if (sameView && sameQueue) return;
+    browseState.review.issue = route.reviewFilter;
+    browseState.review.stage = reviewStageForFilter(route.reviewFilter);
+    setView(route.view, { historyMode: "none", restoreScroll: true });
+  };
+  window.addEventListener("popstate", _appPopState);
+  setView(initialRoute.view, { historyMode: "replace", restoreScroll: true }).then(() => {
+    if (!initialRoute.itemId) return;
+    openEditor(initialRoute.itemId, caps, refreshCurrent).catch((error) => {
+      toast(`Couldn't restore item: ${error.message || error}`);
+    });
+  });
 }
 
 // Appearance options shown in the account menu's "Appearance" picker. "system"
@@ -616,15 +697,56 @@ const SORTS = [
 // facet selections serialised as arrays (rehydrated to Sets on render).
 // `density` is the card-grid vs scan-list view mode. Both surfaces default to
 // tile/grid; reviewers can still switch to the dense list when skimming.
-const browseState = {
+const defaultBrowseState = () => ({
   gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", itemIds: [], previewId: "" },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", seg: "work", issue: "work", itemIds: [], previewId: "" },
-};
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", stage: "fix", issue: "work", itemIds: [], previewId: "" },
+});
+let browseState = defaultBrowseState();
+let appSession = { view: "today", scroll: {} };
+let appSessionKey = "kline.ops.session.v2";
+
+function restoreAppSession(caps = {}) {
+  appSessionKey = `kline.ops.session.v2:${caps.id || caps.email || "user"}`;
+  let stored = {};
+  try { stored = JSON.parse(sessionStorage.getItem(appSessionKey) || "{}"); } catch {}
+  const defaults = defaultBrowseState();
+  browseState = {
+    gallery: { ...defaults.gallery, ...(stored.browse?.gallery || {}) },
+    review: { ...defaults.review, ...(stored.browse?.review || {}) },
+  };
+  if (!REVIEW_FILTERS.includes(browseState.review.issue)) browseState.review.issue = "work";
+  browseState.review.stage = reviewStageForFilter(browseState.review.issue);
+  appSession = {
+    view: APP_VIEWS.includes(stored.view) ? stored.view : "today",
+    scroll: stored.scroll && typeof stored.scroll === "object" ? stored.scroll : {},
+  };
+}
+
+function persistAppSession(view = appSession.view) {
+  appSession.view = APP_VIEWS.includes(view) ? view : "today";
+  try {
+    sessionStorage.setItem(appSessionKey, JSON.stringify({
+      view: appSession.view,
+      scroll: appSession.scroll,
+      browse: browseState,
+    }));
+  } catch {}
+}
 
 function issueBadgesHtml(it, { compact = false } = {}) {
   const readiness = getItemReadiness(it);
   const st = readiness.issue;
   if (!st) return "";
+  if (st === "doubt") {
+    const risk = classifyVerificationRisk(aiDoubtFields(it));
+    const label = risk.level === "critical"
+      ? (compact ? "Critical" : `Critical check · ${risk.count} field${risk.count === 1 ? "" : "s"}`)
+      : (compact ? "Quick" : `Quick check · ${risk.count} field${risk.count === 1 ? "" : "s"}`);
+    const detail = risk.level === "critical"
+      ? "Contains a Low-confidence field or several uncertain fields. Review individually."
+      : "One or two Medium-confidence fields. Eligible for scan-and-batch verification.";
+    return `<span class="issue-pill iss-${risk.level}" title="${esc(detail)}">${esc(label)}</span>`;
+  }
   const meta = ISSUE_META[st] || ISSUE_META.work;
   const title = readiness.primary?.detail || meta.label;
   const label = compact ? meta.short : meta.label;
@@ -648,6 +770,7 @@ function activityBadgesHtml(it, { compact = false } = {}) {
 }
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 let _appCmdKey = null; // current Ctrl/Cmd+K handler for the signed-in shell
+let _appPopState = null; // current browser-history listener for the signed-in shell
 
 // Fade each thumbnail in over its shimmer once the image has loaded, so the
 // grid layout never jumps as photos arrive.
@@ -781,9 +904,9 @@ async function renderGallery(view, caps, opts = {}) {
   let q = state.q;
   let needsReview = review ? true : state.needsReview; // Review tab forces it on
   let issue = review
-    ? (REVIEW_QUEUE.includes(state.issue) ? state.issue : (state.seg === "ready" ? "ready" : "work"))
+    ? (REVIEW_FILTERS.includes(state.issue) ? state.issue : "work")
     : null;
-  let seg = issue === "ready" ? "ready" : "work";
+  let reviewStage = review ? reviewStageForFilter(issue) : null;
   let density = state.density === "list" ? "list" : "grid";
   let sortBy = state.sortBy;
   let priceMin = state.priceMin, priceMax = state.priceMax, datePreset = state.datePreset;
@@ -800,7 +923,8 @@ async function renderGallery(view, caps, opts = {}) {
 
   function reviewQueueGuide(key) {
     return ({
-      work: { title: "Needs work", detail: "Start here when you want every blocked item cleared or deliberately flagged." },
+      work: { title: "Fix blockers", detail: REVIEW_STAGE_META.fix.detail },
+      verify: { title: "Verify changes", detail: REVIEW_STAGE_META.verify.detail },
       edited: { title: "Recently edited", detail: "Recheck changed items before they disappear into the approved catalog." },
       ai: { title: "Needs AI fill", detail: "Run AI fill or retry failed jobs before manual review takes over." },
       price: { title: "Missing price", detail: "Price these items before approval or shop sync can be trusted." },
@@ -812,12 +936,42 @@ async function renderGallery(view, caps, opts = {}) {
     })[key] || { title: "Review", detail: "Turn uncertainty into decisions." };
   }
 
+  function reviewStageMatches(it, stage) {
+    const state = issueState(it);
+    if (stage === "approve") return state === "ready";
+    if (stage === "verify") {
+      const recentlyEdited = queueMatches(it, "edited");
+      return state === "doubt" || (recentlyEdited && (!state || state === "doubt"));
+    }
+    return !!state && state !== "ready" && state !== "doubt";
+  }
+
+  function reviewFilterMatches(it) {
+    if (issue === "work") return reviewStageMatches(it, "fix");
+    if (issue === "verify") return reviewStageMatches(it, "verify");
+    return queueMatches(it, issue);
+  }
+
+  const verificationRiskOf = (it) => classifyVerificationRisk(aiDoubtFields(it), {
+    recentlyEdited: queueMatches(it, "edited"),
+  });
+
   function smartViewDefs() {
     const todayCut = dateCutoff("today");
     const issueCount = (key) => data.filter((it) => queueMatches(it, key)).length;
     const issueOn = (key) => review
       ? issue === key
       : !!active.issue?.has(ISSUE_META[key]?.label);
+    if (review) return [
+      { id: "ai", label: "Needs AI fill", count: issueCount("ai"), on: issueOn("ai"), tone: "ai" },
+      { id: "price", label: "Missing price", count: issueCount("price"), on: issueOn("price"), tone: "price" },
+      { id: "missing", label: "Missing details", count: issueCount("missing"), on: issueOn("missing"), tone: "price" },
+      { id: "flag", label: "Problem items", count: issueCount("flag"), on: issueOn("flag"), tone: "sync" },
+      { id: "sync", label: "Shop issues", count: issueCount("sync"), on: issueOn("sync"), tone: "sync" },
+      { id: "doubt", label: "Check AI", count: issueCount("doubt"), on: issueOn("doubt"), tone: "ai" },
+      { id: "edited", label: "Recently edited", count: issueCount("edited"), on: issueOn("edited"), tone: "edited" },
+      { id: "ready", label: "Ready to approve", count: issueCount("ready"), on: issueOn("ready"), tone: "ready" },
+    ];
     return [
       { id: "price", label: "Missing price", count: data.filter((it) => it.price == null).length, on: noPrice, tone: "price" },
       { id: "doubt", label: "AI doubt", count: issueCount("doubt"), on: issueOn("doubt"), tone: "ai" },
@@ -839,14 +993,16 @@ async function renderGallery(view, caps, opts = {}) {
 
   function applySmartView(id) {
     resetSmartBase();
+    if (review && REVIEW_QUEUE.includes(id)) {
+      if (id === issue) draw();
+      else setReviewIssue(id);
+      pills();
+      return;
+    }
     if (id === "today") datePreset = "today";
     else if (id === "price") noPrice = true;
     else if (id === "in-shop") active.shop = new Set(["In shop"]);
-    else if (review && REVIEW_QUEUE.includes(id)) {
-      issue = id;
-      seg = id === "ready" ? "ready" : "work";
-      view.querySelectorAll("#segRow .seg").forEach((s) => s.classList.toggle("on", s.dataset.issue === issue));
-    } else if (ISSUE_META[id]) {
+    else if (ISSUE_META[id]) {
       active.issue = new Set([ISSUE_META[id].label]);
     }
     draw();
@@ -899,9 +1055,9 @@ async function renderGallery(view, caps, opts = {}) {
         <span class="spacer"></span>
         <button class="linkbtn" id="selAll">Select all</button>
       </div>
-      ${review ? `<div class="seg-row review-queues" id="segRow" aria-label="Review queues">
-        ${REVIEW_QUEUE.map((k) => `<button class="seg${issue === k ? " on" : ""} ${ISSUE_META[k].cls}" data-issue="${k}">
-          ${esc(ISSUE_META[k].label)}<span class="seg-n" id="segN-${k}"></span></button>`).join("")}
+      ${review ? `<div class="seg-row review-queues review-stages" id="segRow" aria-label="Review stages">
+        ${REVIEW_STAGES.map((stage) => `<button class="seg${reviewStage === stage ? " on" : ""}" data-stage="${stage}">
+          ${esc(REVIEW_STAGE_META[stage].label)}<span class="seg-n" id="stageN-${stage}"></span></button>`).join("")}
       </div>` : ""}
       ${review ? `<div class="review-brief" id="reviewBrief"></div>` : ""}
       <div class="smart-shelves" id="smartShelves"></div>
@@ -913,7 +1069,7 @@ async function renderGallery(view, caps, opts = {}) {
       <aside class="item-preview" id="itemPreview" aria-label="${review ? "Review item preview" : "Catalog item preview"}"></aside>
     </div>
     ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
-      <button class="ab-btn ab-approve" id="abApprove"><span class="ab-ico">${ICON.tick}</span>Approve</button>
+      <button class="ab-btn ${review && reviewStage === "verify" ? "ab-verify" : "ab-approve"}" id="abApprove"><span class="ab-ico">${ICON.tick}</span>${review && reviewStage === "verify" ? "Verify" : "Approve"}</button>
       <button class="ab-btn" id="abAi"><span class="ab-ico">${ICON.sparkle}</span>AI-fill</button>
       <button class="ab-btn" id="abEdit"><span class="ab-ico">${ICON.pencil}</span>Edit</button>
       <button class="ab-btn" id="abMore"><span class="ab-ico">${ICON.more}</span>More</button>
@@ -938,9 +1094,10 @@ async function renderGallery(view, caps, opts = {}) {
     state.datePreset = datePreset; state.density = density;
     state.itemIds = [...itemIds];
     state.previewId = previewSelectedId;
-    if (review) { state.issue = issue; state.seg = issue === "ready" ? "ready" : "work"; }
+    if (review) { state.issue = issue; state.stage = reviewStage; }
     state.active = {};
     for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
+    persistAppSession(appSession.view);
   };
 
   // Re-render after an edit/bulk action without losing the user's scroll place.
@@ -1052,7 +1209,7 @@ async function renderGallery(view, caps, opts = {}) {
   // resolvers (search haystack, facet value, review-queue predicate) here. The
   // review queue partitions Ready vs Needs-work (no overlap, no gaps).
   const passesQueue = (it) =>
-    review ? queueMatches(it, issue) : (!needsReview || needsReviewItem(it));
+    review ? reviewFilterMatches(it) : (!needsReview || needsReviewItem(it));
   const matchCtx = {
     textOf: (it) => searchText(it, facetResolvers),
     valueOf,
@@ -1067,7 +1224,37 @@ async function renderGallery(view, caps, opts = {}) {
   // Sort comparators that always push blank (null) numbers to the end.
   // Pure sort lives in src/lib/itemsort.js (tested); this thin wrapper binds the
   // current sortBy so existing call sites are unchanged. (Q1)
-  const applySort = (rows) => sortItems(rows, sortBy);
+  const applySort = (rows) => {
+    const sorted = sortItems(rows, sortBy);
+    if (!review || sortBy !== "new") return sorted;
+    if (reviewStage === "verify") {
+      return sorted.sort((a, b) => verificationRiskRank(verificationRiskOf(a)) - verificationRiskRank(verificationRiskOf(b)));
+    }
+    if (reviewStage === "fix" && issue === "missing") {
+      const manualRank = (it) => (it.image_path && it.category_id ? 1 : 0);
+      return sorted.sort((a, b) => manualRank(a) - manualRank(b));
+    }
+    return sorted;
+  };
+
+  function verificationDetailsHtml(it) {
+    if (!review || reviewStage !== "verify") return "";
+    const doubts = aiDoubtFields(it);
+    if (!doubts.length) return "";
+    return `<div class="verify-fields">${doubts.slice(0, 4).map(({ key, level }) => {
+      const value = it[key] ?? it.attributes?.[key] ?? "not set";
+      return `<span class="${level === "Low" ? "low" : "medium"}"><b>${esc(fieldLabel(key))}</b>${esc(String(value))}</span>`;
+    }).join("")}${doubts.length > 4 ? `<span>+${doubts.length - 4} more</span>` : ""}</div>`;
+  }
+
+  function missingDetailsHtml(it) {
+    if (!review || reviewStage !== "fix" || issueState(it) !== "missing") return "";
+    const missing = missingCoreFields(it);
+    if (!missing.length) return "";
+    return `<div class="verify-fields missing-fields">${missing.slice(0, 5).map((field) =>
+      `<span><b>Missing</b>${esc(field)}</span>`
+    ).join("")}${missing.length > 5 ? `<span>+${missing.length - 5} more</span>` : ""}</div>`;
+  }
 
   // One product card.
   function cardHtml(it) {
@@ -1096,6 +1283,8 @@ async function renderGallery(view, caps, opts = {}) {
         </div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
         <div class="issue-line">${issueBadgesHtml(it)}${activityBadgesHtml(it)}${posChipHtml(it)}</div>
+        ${verificationDetailsHtml(it)}
+        ${missingDetailsHtml(it)}
         <div class="cmeta">
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
           <span class="cdate">${fmtDate(it.created_at)}</span>
@@ -1127,6 +1316,8 @@ async function renderGallery(view, caps, opts = {}) {
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
         </div>
         ${variant ? `<div class="row-sub"><span class="row-attr">${variant}</span></div>` : ""}
+        ${verificationDetailsHtml(it)}
+        ${missingDetailsHtml(it)}
         <div class="row-meta">
           <span class="row-badges">${issueBadgesHtml(it, { compact: true })}${activityBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>${posChipHtml(it)}</span>
           <span class="cdate">${fmtDate(it.created_at)}</span>
@@ -1211,41 +1402,72 @@ async function renderGallery(view, caps, opts = {}) {
     if (!review) { reviewBriefEl.hidden = true; return; }
     const guide = reviewQueueGuide(issue);
     const actions = [];
-    if (issue === "price" && canEdit && rows.length) actions.push(["setprices", "Build rule"]);
+    if (issue === "price" && canEdit && rows.length) actions.push(["setprices", "Price items"]);
     else if (issue === "ai" && canEdit && rows.length) actions.push([failedAiShown ? "retryai" : "aifill", failedAiShown ? `Retry ${failedAiShown}` : "AI-fill"]);
+    else if (issue === "missing" && canEdit && rows.length) {
+      const recoverable = rows.filter((it) => it.image_path && it.category_id).length;
+      if (recoverable) actions.push(["fillmissing", `AI-fill ${recoverable}`]);
+      actions.push(["selectmissing", "Bulk edit by category"]);
+    }
     else if (issue === "sync" && canEdit && rows.length) actions.push(["sync", "Open sync"]);
     else if (issue === "ready" && canEdit && rows.length) actions.push(["approveall", `Approve ${rows.length}`]);
-    if (rows.length) actions.push(["openfirst", "Open first"]);
-    if (canEdit && rows.length > 1) actions.push(["swipe", `Swipe ${rows.length}`]);
-    const aiBreakdown = (issue === "ai" || issue === "doubt") ? aiIssueBreakdown(rows, failedAiShown) : "";
+    if (reviewStage === "verify" && canEdit) {
+      const quickCount = rows.filter((it) => verificationRiskOf(it).bulkEligible).length;
+      if (quickCount) actions.push(["selectquick", `Select ${quickCount} quick checks`]);
+    }
+    if (canEdit && reviewStage === "approve" && rows.length > 1) actions.push(["swipe", `Focus mode ${rows.length}`]);
+    const defaultFilter = defaultFilterForStage(reviewStage);
+    if (issue !== defaultFilter) actions.push(["allstage", `All ${REVIEW_STAGE_META[reviewStage].label.toLowerCase()}`]);
+    const breakdown = reviewStageBreakdown(rows);
     reviewBriefEl.hidden = false;
     reviewBriefEl.innerHTML = `
       <div class="review-brief-copy">
-        <div class="review-brief-kicker">Review queue</div>
+        <div class="review-brief-kicker">${esc(REVIEW_STAGE_META[reviewStage].label)} stage</div>
         <div class="review-brief-title">
           <b>${esc(guide.title)}</b>
           <span>${esc(Number(rows.length || 0).toLocaleString())}</span>
         </div>
         <p>${esc(guide.detail)}</p>
-        ${aiBreakdown}
+        ${breakdown}
       </div>
       <div class="review-brief-actions">
         ${actions.map(([cta, label], i) => `<button class="${i === 0 ? "primary" : "ghost"}" data-cta="${esc(cta)}">${esc(label)}</button>`).join("")}
       </div>`;
   }
 
-  function aiIssueBreakdown(rows, failedAiShown = 0) {
-    const failed = failedAiShown || rows.filter((it) => it.latest_ai_job?.status === "failed").length;
-    const unread = rows.filter((it) => it.image_path && !hasAiSignal(it) && it.latest_ai_job?.status !== "failed").length;
-    const fieldChecks = rows.reduce((n, it) => n + aiDoubtFields(it).length, 0);
-    const parts = [
-      failed ? `${failed} failed AI job${failed === 1 ? "" : "s"}` : "",
-      unread ? `${unread} unread photo${unread === 1 ? "" : "s"}` : "",
-      fieldChecks ? `${fieldChecks} field confidence check${fieldChecks === 1 ? "" : "s"}` : "",
-    ].filter(Boolean);
-    return parts.length
-      ? `<div class="review-ai-breakdown">${parts.map((p) => `<span>${esc(p)}</span>`).join("")}</div>`
-      : "";
+  function reviewStageBreakdown(rows) {
+    if (!rows.length) return "";
+    if (reviewStage === "fix") {
+      if (issue === "missing") {
+        const recoverable = rows.filter((it) => it.image_path && it.category_id).length;
+        const manual = rows.length - recoverable;
+        const parts = [
+          recoverable ? `${recoverable} AI-recoverable` : "",
+          manual ? `${manual} need photo or category` : "",
+        ].filter(Boolean);
+        return parts.length ? `<div class="review-ai-breakdown">${parts.map((part) => `<span>${esc(part)}</span>`).join("")}</div>` : "";
+      }
+      const labels = { ai: "AI fill", price: "price", missing: "details", flag: "problem", sync: "shop" };
+      const counts = {};
+      rows.forEach((it) => { const key = issueState(it); if (labels[key]) counts[key] = (counts[key] || 0) + 1; });
+      const parts = Object.entries(counts).map(([key, count]) => `${count} ${labels[key]}`);
+      return parts.length ? `<div class="review-ai-breakdown">${Object.entries(counts).map(([key, count]) =>
+        `<button type="button" class="review-break-chip" data-cta="filterissue" data-issue="${esc(key)}">${esc(`${count} ${labels[key]}`)}</button>`
+      ).join("")}</div>` : "";
+    }
+    if (reviewStage === "verify") {
+      const risks = rows.map(verificationRiskOf);
+      const critical = risks.filter((risk) => risk.level === "critical").length;
+      const quick = risks.filter((risk) => risk.level === "quick").length;
+      const recent = risks.filter((risk) => risk.level === "recent").length;
+      const parts = [
+        critical ? `${critical} critical` : "",
+        quick ? `${quick} quick checks` : "",
+        recent ? `${recent} recent edits` : "",
+      ].filter(Boolean);
+      return parts.length ? `<div class="review-ai-breakdown">${parts.map((part) => `<span>${esc(part)}</span>`).join("")}</div>` : "";
+    }
+    return `<div class="review-ai-breakdown"><span>${rows.length} ready for final inspection</span></div>`;
   }
 
   function isPreviewPaneActive() {
@@ -1371,41 +1593,24 @@ async function renderGallery(view, caps, opts = {}) {
 
     // Pricing is the gate to approval, so the count line doubles as its
     // doorway: a tap on "N without a price" applies the no-price filter, and
-    // once you're looking at the unpriced, "Build rule" is right there.
+    // once you're looking at the unpriced, "Price items" is right there.
     const unpricedShown = rows.filter((it) => it.price == null).length;
-    const priceCta = review && issue === "price" ? "" : noPrice
-      ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Build rule ›</button>` : "")
+    const priceCta = review ? "" : noPrice
+      ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Price items ›</button>` : "")
       : unpricedShown
         ? ` · <button class="count-cta" data-cta="noprice">${unpricedShown} without a price</button>`
         : "";
-    // Ready segment: the whole point is glance → approve, so the action sits
-    // right on the count line (same immediate-with-Undo semantics as bulk).
-    const approveCta = review && seg === "ready" && canEdit && rows.length
-      ? ` · <button class="count-cta" data-cta="approveall">Approve all ${rows.length} ›</button>` : "";
-    // Swipe-review the current pile: full-screen one-card-at-a-time triage.
-    const swipeCta = review && canEdit && rows.length > 1
-      ? ` · <button class="count-cta" data-cta="swipe">Swipe ${rows.length} ›</button>` : "";
-    const openFirstCta = review && rows.length
-      ? ` &middot; <button class="count-cta" data-cta="openfirst">Open first &rsaquo;</button>` : "";
-    const issueCta = review && canEdit && rows.length
-      ? issue === "ai"
-        ? failedAiShown
-          ? ` · <button class="count-cta" data-cta="retryai">Retry ${failedAiShown} failed ›</button>`
-          : ` · <button class="count-cta" data-cta="aifill">AI-fill ${rows.length} ›</button>`
-        : issue === "price"
-          ? ` · <button class="count-cta" data-cta="setprices">Build rule ›</button>`
-          : issue === "sync"
-            ? ` · <button class="count-cta" data-cta="sync">Open shop sync ›</button>`
-            : ""
-      : "";
+    // Review actions live in the stage brief above. Keep the count line quiet so
+    // mobile users see the inventory sooner and never meet duplicate CTAs.
+    const approveCta = "";
+    const swipeCta = "";
+    const openFirstCta = "";
+    const issueCta = "";
     // Keep the segment counts live (they partition `data`, not the filtered rows).
     if (review) {
-      const wn = view.querySelector("#segWorkN"), rn = view.querySelector("#segReadyN");
-      if (wn) wn.textContent = data.filter((it) => needsReviewItem(it) && !readyItem(it)).length;
-      if (rn) rn.textContent = data.filter(readyItem).length;
-      for (const k of REVIEW_QUEUE) {
-        const n = data.filter((it) => queueMatches(it, k)).length;
-        const el = view.querySelector(`#segN-${k}`);
+      for (const stage of REVIEW_STAGES) {
+        const n = data.filter((it) => reviewStageMatches(it, stage)).length;
+        const el = view.querySelector(`#stageN-${stage}`);
         if (el) el.textContent = n ? n : "";
       }
     }
@@ -1418,6 +1623,7 @@ async function renderGallery(view, caps, opts = {}) {
     // review queue — say what it is instead.
     const reviewCountText = (n) => {
       if (issue === "work") return `${n} need${n === 1 ? "s" : ""} work`;
+      if (issue === "verify") return `${n} to verify`;
       if (issue === "edited") return `${n} recently edited`;
       if (issue === "ai") return `${n} need${n === 1 ? "s" : ""} AI fill`;
       if (issue === "price") return `${n} without a price`;
@@ -1437,7 +1643,7 @@ async function renderGallery(view, caps, opts = {}) {
       countEl.innerHTML = `${countText(0)}${countNote}${freshnessNote()}`;
       grid.innerHTML = `<div class="empty"><div class="big">${review ? "✓" : "🔍"}</div>
         <div>${review
-          ? (seg === "ready"
+          ? (reviewStage === "approve"
             ? "Nothing is ready to approve yet — items land here once they're priced and the AI has no doubts."
             : `No ${ISSUE_META[issue]?.empty || "review"} items right now.`)
           : "No items match your search or filters."}</div>
@@ -1466,12 +1672,26 @@ async function renderGallery(view, caps, opts = {}) {
     if (st === "price" && it?.price != null && it?.has_cost_price === false) return "cost";
     return st;
   };
-  const openItemEditor = (id, focusIssue) => openEditor(
-    id,
-    caps,
-    () => refresh([id]), // targeted refresh: re-fetch only the edited item (Q1 step 6b)
-    review ? { focusIssue: focusIssue || reviewFocusIssue(byId[id]) } : {}
-  );
+  const openItemEditor = (id, focusIssue) => {
+    const currentIndex = filtered.findIndex((it) => it.id === id);
+    const nextId = review && currentIndex >= 0 ? filtered[currentIndex + 1]?.id : "";
+    let saved = false;
+    return openEditor(
+      id,
+      caps,
+      async () => {
+        saved = true;
+        await refresh([id]);
+      },
+      review ? {
+        focusIssue: focusIssue || reviewFocusIssue(byId[id]),
+        saveNext: !!nextId,
+        onClose: () => {
+          if (saved && nextId && byId[nextId]) openItemEditor(nextId, reviewFocusIssue(byId[nextId]));
+        },
+      } : {}
+    );
+  };
 
   function setSelected(card, on) {
     const id = card.dataset.id;
@@ -1630,6 +1850,40 @@ async function renderGallery(view, caps, opts = {}) {
   }
   // Count-line shortcuts (countEl is created fresh each renderGallery, so one
   // listener per render — no accumulation).
+  function selectMissingGroup(items) {
+    if (!items.length) return;
+    enterSelection();
+    items.forEach((it) => {
+      selected.add(it.id);
+      cardElFor(it.id)?.classList.add("selected");
+    });
+    updateSelBar();
+    toast(`${items.length} item${items.length === 1 ? "" : "s"} selected. Tap Edit to apply shared missing values.`);
+  }
+
+  function chooseMissingBulkGroup() {
+    const groups = new Map();
+    filtered.forEach((it) => {
+      const key = it.category_id || "__none__";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    });
+    if (groups.size <= 1) { selectMissingGroup(filtered); return; }
+    const rows = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+    const sh = openBottomSheet("Bulk edit missing details", `
+      <div class="menu-sub">Choose one category so the bulk editor can show its shared fields.</div>
+      ${rows.map(([key, items]) => `<button class="menu-item settings-row" data-missing-category="${esc(key)}">
+        <span><b>${esc(key === "__none__" ? "No category" : categoryPath(key))}</b><small>${items.length} item${items.length === 1 ? "" : "s"}</small></span>
+      </button>`).join("")}`);
+    sh.body.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-missing-category]");
+      if (!button) return;
+      const items = groups.get(button.dataset.missingCategory) || [];
+      sh.close();
+      selectMissingGroup(items);
+    });
+  }
+
   function handleCtaClick(e) {
     const cta = e.target.closest("[data-cta]");
     if (!cta) return;
@@ -1637,7 +1891,7 @@ async function renderGallery(view, caps, opts = {}) {
     else if (cta.dataset.cta === "setprices") {
       // One model everywhere: guided pricing. In Review it opens scoped to the
       // items on screen (selection mode); elsewhere it starts at the category
-      // picker. The pivot tool stays reachable as "Group table" inside guided.
+      // picker. The table tool stays reachable inside guided.
       if (review) openGuidedPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
       else openGuidedPricing(caps, refresh);
     }
@@ -1648,9 +1902,28 @@ async function renderGallery(view, caps, opts = {}) {
       else toast("No failed AI jobs in this view.");
     }
     else if (cta.dataset.cta === "aifill") openBulkAi(filtered, caps, refresh);
+    else if (cta.dataset.cta === "fillmissing") {
+      const recoverable = filtered.filter((it) => it.image_path && it.category_id);
+      if (recoverable.length) openBulkAi(recoverable, caps, refresh);
+      else toast("These items need a photo or category before AI can fill details.");
+    }
+    else if (cta.dataset.cta === "selectmissing") chooseMissingBulkGroup();
     else if (cta.dataset.cta === "sync") openSyncCenter(caps, refresh, { focus: "errors" });
     else if (cta.dataset.cta === "approveall") approveItems(filtered.map((it) => it.id));
     else if (cta.dataset.cta === "openfirst" && filtered[0]) openItemEditor(filtered[0].id, reviewFocusIssue(filtered[0]));
+    else if (cta.dataset.cta === "allstage") setReviewIssue(defaultFilterForStage(reviewStage));
+    else if (cta.dataset.cta === "filterissue" && cta.dataset.issue) setReviewIssue(cta.dataset.issue);
+    else if (cta.dataset.cta === "selectquick") {
+      const quick = filtered.filter((it) => verificationRiskOf(it).bulkEligible);
+      if (!quick.length) { toast("No quick checks in this view."); return; }
+      enterSelection();
+      quick.forEach((it) => {
+        selected.add(it.id);
+        cardElFor(it.id)?.classList.add("selected");
+      });
+      updateSelBar();
+      toast(`${quick.length} quick checks selected. Scan them, then tap Verify.`);
+    }
   }
   countEl.addEventListener("click", handleCtaClick);
   if (reviewBriefEl) reviewBriefEl.addEventListener("click", handleCtaClick);
@@ -1658,22 +1931,30 @@ async function renderGallery(view, caps, opts = {}) {
   // Review-tab segment switch (Needs work ⇄ Ready to approve).
   const segRow = view.querySelector("#segRow");
   function setReviewIssue(next, announce = false) {
-    if (!REVIEW_QUEUE.includes(next) || next === issue) return;
+    if (!REVIEW_FILTERS.includes(next) || next === issue) return;
     issue = next;
-    seg = issue === "ready" ? "ready" : "work";
+    reviewStage = reviewStageForFilter(issue);
     if (segRow) {
-      segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.issue === issue));
+      segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.stage === reviewStage));
     }
+    state.issue = issue;
+    state.stage = reviewStage;
+    persistAppSession("review");
+    window.history.replaceState(
+      { klineView: "review", reviewFilter: issue },
+      "",
+      buildAppUrl(window.location.href, { view: "review", reviewFilter: issue })
+    );
     draw();
     if (announce) {
-      toast(ISSUE_META[issue]?.label || "Review queue");
+      toast(ISSUE_META[issue]?.label || REVIEW_STAGE_META[reviewStage].label);
       navigator.vibrate?.(8);
     }
   }
   if (segRow) segRow.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-issue]");
-    if (!btn || btn.dataset.issue === issue) return;
-    setReviewIssue(btn.dataset.issue);
+    const btn = e.target.closest("[data-stage]");
+    if (!btn || btn.dataset.stage === reviewStage) return;
+    setReviewIssue(defaultFilterForStage(btn.dataset.stage));
   });
   function bindReviewSwipe(el) {
     if (!review || !el) return;
@@ -1689,9 +1970,9 @@ async function renderGallery(view, caps, opts = {}) {
       const dy = e.clientY - start.y;
       start = null;
       if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.45) return;
-      const i = REVIEW_QUEUE.indexOf(issue);
-      const next = REVIEW_QUEUE[Math.max(0, Math.min(REVIEW_QUEUE.length - 1, i + (dx < 0 ? 1 : -1)))];
-      setReviewIssue(next, true);
+      const i = REVIEW_STAGES.indexOf(reviewStage);
+      const nextStage = REVIEW_STAGES[Math.max(0, Math.min(REVIEW_STAGES.length - 1, i + (dx < 0 ? 1 : -1)))];
+      setReviewIssue(defaultFilterForStage(nextStage), true);
     }, { passive: true });
     el.addEventListener("pointercancel", () => { start = null; }, { passive: true });
   }
@@ -2199,26 +2480,95 @@ async function renderGallery(view, caps, opts = {}) {
     if (!selected.size) return;
     await approveItems([...selected]);
   }
-  // The shared approve core — used by the selection bar AND the Ready
-  // segment's "Approve all" (identical guard/Undo semantics either way).
-  function approvalReasonText(entries, key = "blockers") {
-    const counts = {};
-    for (const entry of entries) {
-      for (const issue of entry.readiness[key] || []) {
-        counts[issue.label] = (counts[issue.label] || 0) + 1;
+
+  async function writeConfidenceRows(rows, valueKey) {
+    let cursor = 0;
+    const successful = [];
+    const failed = [];
+    const workers = Array.from({ length: Math.min(6, rows.length) }, async () => {
+      while (cursor < rows.length) {
+        const row = rows[cursor++];
+        const { error } = await supabase.from("items").update({ confidence: row[valueKey] }).eq("id", row.id);
+        if (error) failed.push({ row, error });
+        else successful.push(row);
       }
-    }
-    return Object.entries(counts)
-      .map(([label, n]) => `${n} ${label.toLowerCase()}`)
-      .join(", ");
+    });
+    await Promise.all(workers);
+    return { successful, failed };
   }
 
+  async function verifySelected() {
+    if (!selected.size) return;
+    const chosen = [...selected].map((id) => byId[id]).filter(Boolean);
+    const eligible = chosen.filter((it) => verificationRiskOf(it).bulkEligible);
+    const skipped = chosen.length - eligible.length;
+    if (!eligible.length) {
+      toast("No selected items are quick checks. Critical and recent-edit items need an individual decision.");
+      return;
+    }
+    const ok = await confirmSheet({
+      title: `Verify ${eligible.length} quick check${eligible.length === 1 ? "" : "s"}?`,
+      message: `Use this after scanning the photos and highlighted values. Only items with one or two Medium-confidence fields will move forward.${skipped ? ` ${skipped} critical or recent-edit item${skipped === 1 ? " is" : "s are"} excluded.` : ""} This does not approve anything.`,
+      confirmText: `Verify ${eligible.length}`,
+      cancelText: "Keep reviewing",
+    });
+    if (!ok) return;
+
+    const rows = eligible.map((it) => {
+      const before = { ...(it.confidence || {}) };
+      const after = { ...before };
+      aiDoubtFields(it).forEach(({ key }) => { after[key] = "High"; });
+      return { id: it.id, before, after };
+    });
+    const { successful, failed } = await writeConfidenceRows(rows, "after");
+    if (!successful.length) {
+      toast(`Bulk verify failed: ${failed[0]?.error?.message || "check connection"}`);
+      return;
+    }
+
+    const changes = new Map();
+    successful.forEach((row) => {
+      if (byId[row.id]) byId[row.id].confidence = row.after;
+      changes.set(row.id, Object.keys(row.after)
+        .filter((key) => row.before[key] !== row.after[key])
+        .map((key) => ({ field_path: `confidence.${key}`, before: row.before[key] || null, after: row.after[key] })));
+    });
+    await logManyItemActivities(
+      successful.map((row) => row.id),
+      "verification",
+      "manual",
+      changes,
+      "Bulk verified Medium-confidence fields"
+    );
+    if (selectionMode) exitSelection();
+    draw();
+    navigator.vibrate?.([12, 40, 12]);
+    const failureNote = failed.length ? `; ${failed.length} failed` : "";
+    toast(`Verified ${successful.length} quick check${successful.length === 1 ? "" : "s"}${failureNote}`, {
+      label: "Undo",
+      onClick: async () => {
+        const undo = await writeConfidenceRows(successful, "before");
+        undo.successful.forEach((row) => { if (byId[row.id]) byId[row.id].confidence = row.before; });
+        await logManyItemActivities(
+          undo.successful.map((row) => row.id),
+          "undo",
+          "undo",
+          new Map(),
+          "Undid bulk verification"
+        );
+        draw();
+        toast(undo.failed.length ? `Undo restored ${undo.successful.length}; ${undo.failed.length} failed` : "Bulk verification undone");
+      },
+    });
+  }
+  // The shared approve core — used by the selection bar AND the Ready
+  // segment's "Approve all" (identical guard/Undo semantics either way).
   async function approveItems(ids) {
     if (!ids.length) return;
     // No price ⇒ not sellable ⇒ can't be approved. Approve the priced ones and
     // report how many were skipped, rather than blocking the whole batch.
     const items = ids.map((id) => byId[id]).filter(Boolean);
-    const summary = approvalSummary(items);
+    const summary = approvalSummary(items, { canViewCost: !!caps.can_view_cost });
     const approveIds = summary.approvable.map(({ item }) => item.id);
     const blockedN = summary.blocked.length;
     if (!approveIds.length) {
@@ -2227,7 +2577,7 @@ async function renderGallery(view, caps, opts = {}) {
         readiness.blockers.some((b) => b.issue === "price")
       );
       const action = hasPriceBlocker
-        ? { label: "Build rule", onClick: () => { if (selectionMode) exitSelection(); openGuidedPricing(caps, refresh, { itemIds: ids }); } }
+        ? { label: "Price items", onClick: () => { if (selectionMode) exitSelection(); openGuidedPricing(caps, refresh, { itemIds: ids }); } }
         : null;
       toast(`Can't approve: ${reasons}.`, action);
       return;
@@ -2243,16 +2593,7 @@ async function renderGallery(view, caps, opts = {}) {
       if (!ok) return;
     }
 
-    if (summary.warned.length) {
-      const reasons = approvalReasonText(summary.warned, "warnings") || "AI fields need a check";
-      const ok = await confirmSheet({
-        title: "Approve with AI checks?",
-        message: `${summary.warned.length} item${summary.warned.length === 1 ? " has" : "s have"} warnings: ${reasons}. Approve only if you have checked them.`,
-        confirmText: "Approve",
-        cancelText: "Review first",
-      });
-      if (!ok) return;
-    }
+    if (!(await confirmApprovalSummaryWarnings(summary))) return;
 
     const prior = approveIds.map((id) => ({ id, status: byId[id]?.status }));
     const { error } = await supabase.from("items").update({ status: "approved" }).in("id", approveIds);
@@ -2308,7 +2649,7 @@ async function renderGallery(view, caps, opts = {}) {
       grid.querySelectorAll(".card[data-id]").forEach((c) => c.classList.add("selected"));
       updateSelBar();
     };
-    view.querySelector("#abApprove").onclick = approveSelected;
+    view.querySelector("#abApprove").onclick = review && reviewStage === "verify" ? verifySelected : approveSelected;
     view.querySelector("#abAi").onclick = () => {
       if (!selected.size) return;
       const items = [...selected].map((id) => byId[id]).filter(Boolean);
@@ -2318,7 +2659,7 @@ async function renderGallery(view, caps, opts = {}) {
     view.querySelector("#abMore").onclick = () => {
       if (!selected.size) return;
       const body = `
-        <button class="menu-item" data-pricesel>Build price rule for ${selected.size} item(s)…</button>
+        <button class="menu-item" data-pricesel>Price ${selected.size} selected item${selected.size === 1 ? "" : "s"}…</button>
         <button class="menu-item" data-clearsel>Clear selection</button>
         ${canDelete ? `<button class="menu-item danger" data-del>Delete ${selected.size} item(s)</button>` : ""}`;
       const sh = openBottomSheet("More actions", body);

@@ -9,8 +9,33 @@ import { initTheme } from "./theme.js";
 // listening for OS appearance changes.
 initTheme();
 
-// Register the service worker (auto-updates on new deploys). No-op in dev.
-registerSW({ immediate: true });
+// Register the service worker without allowing it to reload an active task.
+// A persistent prompt lets the user choose a safe moment to restart instead.
+let applyAppUpdate = () => Promise.resolve();
+applyAppUpdate = registerSW({
+  immediate: true,
+  onNeedRefresh() {
+    if (document.getElementById("appUpdatePrompt")) return;
+    const prompt = document.createElement("div");
+    prompt.id = "appUpdatePrompt";
+    prompt.className = "app-update";
+    prompt.setAttribute("role", "status");
+    prompt.innerHTML = `<span><b>Update ready</b><small>Finish any open task, then restart safely.</small></span>
+      <button type="button">Restart app</button>`;
+    prompt.querySelector("button").onclick = async (event) => {
+      const openTask = document.querySelector(".sheet, .swipe, .screen, .bulkai, .burst, .msheet");
+      if (openTask) {
+        event.currentTarget.textContent = "Close task first";
+        setTimeout(() => { event.currentTarget.textContent = "Restart app"; }, 1800);
+        return;
+      }
+      event.currentTarget.disabled = true;
+      event.currentTarget.textContent = "Restarting...";
+      await applyAppUpdate(true);
+    };
+    document.body.appendChild(prompt);
+  },
+});
 import "./install.js"; // capture beforeinstallprompt early (side-effect import)
 import { onAuthChange, getMyProfile, signOut } from "./auth.js";
 import { renderLogin } from "./login.js";

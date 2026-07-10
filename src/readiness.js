@@ -59,13 +59,13 @@ export function readyItem(it) {
   return issueState(it) === "ready";
 }
 
-export function approvalSummary(items) {
+export function approvalSummary(items, { canViewCost = true } = {}) {
   const blocked = [];
   const warned = [];
   const approvable = [];
 
   for (const it of items) {
-    const readiness = getItemReadiness(it, { forApproval: true });
+    const readiness = getItemReadiness(it, { forApproval: true, canViewCost });
     if (readiness.blockers.length) blocked.push({ item: it, readiness });
     else {
       approvable.push({ item: it, readiness });

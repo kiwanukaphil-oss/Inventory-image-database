@@ -72,11 +72,15 @@ export async function openCalibration(caps, onClose) {
   const items = (rows || []).map((it) => ({ it, fields: aiFields(it) })).filter((x) => x.fields.length);
 
   const release = trapFocus(el);
+  const changedIds = new Set();
   const close = () => {
     document.removeEventListener("keydown", onKey);
     release();
     el.classList.remove("open");
-    setTimeout(() => { el.remove(); onClose?.(); }, 180);
+    setTimeout(() => {
+      el.remove();
+      if (changedIds.size) onClose?.([...changedIds]);
+    }, 180);
   };
   // While the photo is zoomed the lightbox owns Esc — don't also close the tool.
   const onKey = (e) => { if (e.key === "Escape" && !lightboxOpen()) close(); };
@@ -293,6 +297,7 @@ export async function openCalibration(caps, onClose) {
       const priorById = new Map(items.map(({ it }) => [it.id, it.status]));
       const { error } = await supabase.from("items").update({ status: "approved" }).in("id", allCorrectItems);
       if (error) { toast("Approve failed: " + error.message); ap.disabled = false; return; }
+      allCorrectItems.forEach((id) => changedIds.add(id));
       navigator.vibrate?.([12, 40, 12]);
       ap.textContent = "Approved ✓";
       toast(`Approved ${allCorrectItems.length} item${allCorrectItems.length === 1 ? "" : "s"}`, {

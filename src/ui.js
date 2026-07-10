@@ -88,7 +88,7 @@ export const ICON = {
 // so the LAST one in document order is the top-most. Esc handlers use this so
 // that, when dialogs are stacked (e.g. a confirm over the category screen),
 // only the top dialog reacts — the ones beneath stay put.
-const OVERLAY_SEL = ".msheet, .sheet, .screen, .bulkai, .burst";
+const OVERLAY_SEL = ".msheet, .sheet, .screen, .bulkai, .burst, .swipe";
 // The lightbox element persists in the DOM after closing (it's reused), so it
 // can't take part in the document-order check above — it's tracked by its
 // `.open` class instead, and while open it is always the top-most layer.

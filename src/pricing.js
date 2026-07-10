@@ -50,12 +50,12 @@ function valueOf(it, key) {
  * @param {object} [opts]    { itemIds } to price only a selected subset
  */
 export async function openPricing(caps, onClose, opts = {}) {
-  // Show the overlay immediately with a spinner so tapping "Group pricing table" feels
+  // Show the overlay immediately with a spinner so tapping "Price table" feels
   // responsive — loading the catalogue (up to 5000 rows) can take a moment.
   // The real content replaces this innerHTML once the data + groups are ready.
   const el = document.createElement("div");
   el.className = "calib pricing";
-  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Group pricing table</span></div>
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Price table</span></div>
     <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add("open"));
@@ -140,11 +140,15 @@ export async function openPricing(caps, onClose, opts = {}) {
   // ---- overlay shell (reuses the calibration overlay layout) --------------
   // el is already created + shown (with a loading spinner) at the top of openPricing.
   const release = trapFocus(el);
+  const changedIds = new Set(opts.initialChangedIds || []);
   const close = () => {
     document.removeEventListener("keydown", onKey);
     release();
     el.classList.remove("open");
-    setTimeout(() => { el.remove(); onClose?.(); }, 180);
+    setTimeout(() => {
+      el.remove();
+      if (changedIds.size) onClose?.([...changedIds]);
+    }, 180);
   };
   // Don't steal Esc from a sheet opened on top (the scope picker closes itself).
   // Esc backs out one level at a time: leave select mode first, then close. Never
@@ -318,7 +322,7 @@ export async function openPricing(caps, onClose, opts = {}) {
     // The collapsed controls show just a one-line summary of the grouping/scope.
     const groupSummary = (groupKeys.length ? groupKeys.map(groupLabelFor).join(" · ") : "All items")
       + (scope.length ? ` · ${scope.length} scope${scope.length > 1 ? "s" : ""}` : "");
-    const titleText = idset ? `Group pricing table · ${items.length} selected` : "Group pricing table";
+    const titleText = idset ? `Price table · ${items.length} selected` : "Price table";
     const posSkipNote = posSkipped
       ? `<div class="pg-posskip">${posSkipped} POS-owned item${posSkipped === 1 ? "" : "s"} skipped. Change synced shop prices in the POS.</div>`
       : "";
@@ -795,6 +799,7 @@ export async function openPricing(caps, onClose, opts = {}) {
     const prior = ids.map((id) => ({ id, value: mode === "cost" ? byId[id].cost ?? null : byId[id].price ?? null }));
     const { error } = await writePrice(ids, value, mode);
     if (error) { toast("Couldn't set price: " + error.message); return; }
+    ids.forEach((id) => changedIds.add(id));
     const fieldPath = mode === "cost" ? "cost_price" : "price";
     await logManyItemActivities(
       ids,

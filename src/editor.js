@@ -12,6 +12,7 @@ import { loadCostPresence } from "./costs.js";
 import { parsePrice } from "./lib/price.js";
 import { clearItemJobFailures, loadLatestFailedJobs, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
+import { approvalBlockerText, confirmApprovalWarnings } from "./approval.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, fieldKeyFromPath, loadItemActivity, logItemActivity } from "./activity.js";
 import { esc, toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, bindPriceInput, ICON } from "./ui.js";
 
@@ -185,6 +186,17 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const readiness = getItemReadiness(item, { canViewCost });
   const fixPlan = buildEditorFixPlan(item, fields, conf, { canViewCost });
   const aiSuggestedKeys = new Set();
+  const saveLabel = opts.saveNext ? "Save & next" : "Save";
+  const verificationKeys = Object.entries(conf)
+    .filter(([key, level]) => (level === "Low" || level === "Medium") && !AI_BLIND_FIELDS.has(key))
+    .map(([key]) => key);
+  const verificationTransitionHtml = canEdit && opts.focusIssue === "doubt" && verificationKeys.length
+    ? `<div class="verify-transition" id="verifyTransition">
+        <div><b>${verificationKeys.length} AI field${verificationKeys.length === 1 ? "" : "s"} to check</b>
+          <span>After comparing them with the photo, mark them checked. Saving moves the item to Approve if nothing else blocks it; it does not approve it.</span></div>
+        <button class="ghost" id="markVerifiedBtn" type="button">I checked these</button>
+      </div>`
+    : "";
 
   // ---- build the sheet ----
   const sheet = document.createElement("div");
@@ -196,7 +208,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       <header class="sheet-head">
         <button class="ghost" id="cancelBtn">Cancel</button>
         <div class="sheet-title">${esc(categoryPath(item.category_id))}</div>
-        <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>Save</button>
+        <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>${saveLabel}</button>
       </header>
       <div class="sheet-body">
         <section class="ed-section ed-verify" data-ed-section="verify" aria-label="Verify item">
@@ -209,6 +221,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         ${readinessPanelHtml(readiness)}
         ${fixModeHtml(fixPlan)}
         ${aiEvidenceHtml(item, fields, conf)}
+        ${verificationTransitionHtml}
 
         <div class="status-row" id="statusRow" role="group" aria-label="Status">
           ${STATUS_OPTIONS
@@ -272,7 +285,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         </section>
       </div>
       ${canEdit ? `<div class="sheet-foot">
-        <button class="ghost" id="saveFootBtn" type="button">Save</button>
+        <button class="ghost" id="saveFootBtn" type="button">${saveLabel}</button>
         ${item.status === "approved" ? "" : `<button class="primary" id="saveApproveBtn" type="button">Save &amp; approve</button>`}
       </div>` : ""}
     </div>`;
@@ -321,7 +334,10 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     }
     releaseFocus();
     sheet.classList.remove("open");
-    setTimeout(() => sheet.remove(), 200);
+    setTimeout(() => {
+      sheet.remove();
+      opts.onClose?.({ saved: savedOk, itemId });
+    }, 200);
   };
   // Are there unsaved edits? (status changed, any highlighted field, or a
   // confidence pill the user touched). Used to guard accidental dismissal.
@@ -348,7 +364,16 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const armBrowserBackClose = () => {
     if (editorHistoryArmed || !window.history?.pushState) return;
     try {
-      window.history.pushState({ klineOverlay: "editor", itemId }, "", window.location.href);
+      const overlayUrl = new URL(window.location.href);
+      // If this editor was restored from an item URL, first create a safe base
+      // entry for Back to return to instead of leaving the app.
+      if (overlayUrl.searchParams.get("item") === String(itemId)) {
+        const baseUrl = new URL(overlayUrl);
+        baseUrl.searchParams.delete("item");
+        window.history.replaceState({ klineView: baseUrl.searchParams.get("view") || "today" }, "", baseUrl);
+      }
+      overlayUrl.searchParams.set("item", itemId);
+      window.history.pushState({ klineOverlay: "editor", itemId }, "", overlayUrl);
       editorHistoryArmed = true;
       window.addEventListener("popstate", onBrowserBack);
     } catch {}
@@ -385,8 +410,6 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     const candidate = formItemForReadiness(sheet, item, fields, conf, status);
     return getItemReadiness(candidate, { forApproval: status === "approved", canViewCost });
   };
-  const approvalBlockerText = (readiness) =>
-    (readiness.blockers || []).slice(0, 3).map((b) => b.detail || b.label).join(" ");
   const paintCurrentReadiness = () => {
     const panel = sheet.querySelector("#readyPanel");
     if (panel) panel.outerHTML = readinessPanelHtml(currentReadinessFor());
@@ -429,8 +452,8 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     saving = busy;
     const off = !navigator.onLine;
     saveControls.forEach((btn) => { btn.disabled = busy || off || !canEdit; });
-    if (headerSaveBtn) headerSaveBtn.textContent = busy ? "Saving..." : (off ? "Offline" : "Save");
-    if (footerSaveBtn) footerSaveBtn.textContent = busy ? "Saving..." : "Save";
+    if (headerSaveBtn) headerSaveBtn.textContent = busy ? "Saving..." : (off ? "Offline" : saveLabel);
+    if (footerSaveBtn) footerSaveBtn.textContent = busy ? "Saving..." : saveLabel;
     paintApprovalAffordance();
   };
   const reflectOnline = () => {
@@ -531,6 +554,26 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       paintApprovalAffordance();
     });
   });
+
+  const markVerifiedBtn = sheet.querySelector("#markVerifiedBtn");
+  if (markVerifiedBtn) {
+    markVerifiedBtn.onclick = () => {
+      const keys = Object.entries(conf)
+        .filter(([key, level]) => (level === "Low" || level === "Medium") && !AI_BLIND_FIELDS.has(key))
+        .map(([key]) => key);
+      keys.forEach((key) => {
+        conf[key] = "High";
+        const pill = sheet.querySelector(`[data-conf="${key}"]`);
+        if (pill) paintConfPill(pill, "High");
+      });
+      confDirty = true;
+      markVerifiedBtn.disabled = true;
+      markVerifiedBtn.textContent = "Checked — save to continue";
+      sheet.querySelector("#verifyTransition")?.classList.add("checked");
+      paintAiEvidence();
+      paintApprovalAffordance();
+    };
+  }
 
   sheet.querySelectorAll("[data-price-input]").forEach((el) => bindPriceInput(el));
 
@@ -647,12 +690,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       return false;
     }
     if (readiness.warnings.length) {
-      const ok = await confirmSheet({
-        title: "Approve with AI checks?",
-        message: readiness.warnings.map((w) => w.detail || w.label).join(" "),
-        confirmText: "I checked, approve",
-        cancelText: "Review first",
-      });
+      const ok = await confirmApprovalWarnings(readiness);
       if (!ok) return false;
     }
     return true;
@@ -712,7 +750,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         : `Saved · SKU ${newSku}`);
       navigator.vibrate?.([12, 40, 12]); // affirmative "done" buzz
       savedOk = true; // don't prompt "discard changes?" on the post-save close
-      onSaved?.();
+      await onSaved?.();
       close();
       return true;
     } catch (err) {
@@ -761,7 +799,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         toast("Item deleted");
         navigator.vibrate?.(20);
         savedOk = true; // it's gone — no discard prompt
-        onSaved?.();
+        await onSaved?.();
         close();
       } catch (err) {
         toast(err.message || "Delete failed");
