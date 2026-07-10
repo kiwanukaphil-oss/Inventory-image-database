@@ -1,3 +1,5 @@
+import { formatPriceInput } from "./lib/price.js";
+
 // =============================================================================
 // ui.js — shared, app-styled UI primitives
 //
@@ -7,7 +9,7 @@
 // theme — native dialogs broke all three and made an installed PWA feel like a
 // raw web page.
 //
-// Exports: esc, toast, openBottomSheet, confirmSheet, promptSheet.
+// Exports: esc, toast, bindPriceInput, openBottomSheet, confirmSheet, promptSheet.
 // =============================================================================
 
 // HTML-escape any value before interpolating it into markup.
@@ -15,6 +17,34 @@ export function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
   );
+}
+
+export function bindPriceInput(input, onInput) {
+  if (!input) return null;
+  const placeCaret = (raw, formatted, oldPos) => {
+    const logical = raw.slice(0, oldPos ?? raw.length).replace(/,/g, "").length;
+    let pos = 0;
+    let seen = 0;
+    while (pos < formatted.length && seen < logical) {
+      if (formatted[pos] !== ",") seen++;
+      pos++;
+    }
+    try { input.setSelectionRange(pos, pos); } catch {}
+  };
+  const sync = () => {
+    const raw = input.value;
+    const oldPos = input.selectionStart ?? raw.length;
+    const formatted = formatPriceInput(raw);
+    if (formatted !== raw) {
+      input.value = formatted;
+      placeCaret(raw, formatted, oldPos);
+    }
+    onInput?.(input.value);
+  };
+  const initial = formatPriceInput(input.value);
+  if (initial !== input.value) input.value = initial;
+  input.addEventListener("input", sync);
+  return sync;
 }
 
 // --- Icons ---------------------------------------------------------------
@@ -44,6 +74,7 @@ export const ICON = {
   moon: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4 7.2 7.2 0 1 0 20 14.5z"/></svg>`,
   auto: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>`,
   // ---- bottom-nav glyphs (one consistent line-icon set, replacing emoji) ----
+  navToday: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M8 2.5v3M16 2.5v3M3.5 9h17"/><path d="M8 14h3v3H8z"/><path d="M14.5 13.5h2M14.5 17h2"/></svg>`,
   navGallery: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>`,
   navAdd: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`,
   navReview: `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V4"/><path d="M5 4h12l-2.5 4L17 12H5"/></svg>`,
@@ -57,7 +88,7 @@ export const ICON = {
 // so the LAST one in document order is the top-most. Esc handlers use this so
 // that, when dialogs are stacked (e.g. a confirm over the category screen),
 // only the top dialog reacts — the ones beneath stay put.
-const OVERLAY_SEL = ".msheet, .sheet, .screen, .bulkai, .burst";
+const OVERLAY_SEL = ".msheet, .sheet, .screen, .bulkai, .burst, .swipe";
 // The lightbox element persists in the DOM after closing (it's reused), so it
 // can't take part in the document-order check above — it's tracked by its
 // `.open` class instead, and while open it is always the top-most layer.

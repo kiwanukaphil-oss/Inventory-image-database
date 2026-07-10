@@ -12,8 +12,9 @@ import { loadCostPresence } from "./costs.js";
 import { parsePrice } from "./lib/price.js";
 import { clearItemJobFailures, loadLatestFailedJobs, recordItemJobFailure } from "./joblog.js";
 import { STATUS_OPTIONS, getItemReadiness, statusLabel } from "./readiness.js";
+import { approvalBlockerText, confirmApprovalWarnings } from "./approval.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, fieldKeyFromPath, loadItemActivity, logItemActivity } from "./activity.js";
-import { esc, toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, ICON } from "./ui.js";
+import { esc, toast, confirmSheet, openBottomSheet, trapFocus, isTopOverlay, openLightbox, bindPriceInput, ICON } from "./ui.js";
 
 // The edit sheet: a full-screen panel (mobile-first) whose fields are driven by
 // the item's category. Universal columns (name/brand/price/stock) plus the
@@ -27,6 +28,10 @@ const CONF_CYCLE = ["", "High", "Medium", "Low"];
 // don't fill fields (which would defeat the only-fill-empty workflow).
 const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
 
+function cleanAiVisibleText(value) {
+  const text = String(value || "").trim();
+  return text && !AI_PLACEHOLDER.has(text.toLowerCase()) ? text : "";
+}
 
 function hasValue(v) {
   return v !== null && v !== undefined && v !== "";
@@ -162,6 +167,13 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     return "";
   }
 
+  function posOwnedNoticeHtml() {
+    if (item.pos_sync_status !== "synced") return "";
+    return `<div class="pos-owned-note">
+      Shop price and live stock are owned by the POS. This editor keeps the original catalog receipt visible for reference.
+    </div>`;
+  }
+
   const [{ data: signed }] = await Promise.all([
     item.image_path
       ? supabase.storage.from("product-images").createSignedUrl(item.image_path, 3600)
@@ -174,6 +186,17 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const readiness = getItemReadiness(item, { canViewCost });
   const fixPlan = buildEditorFixPlan(item, fields, conf, { canViewCost });
   const aiSuggestedKeys = new Set();
+  const saveLabel = opts.saveNext ? "Save & next" : "Save";
+  const verificationKeys = Object.entries(conf)
+    .filter(([key, level]) => (level === "Low" || level === "Medium") && !AI_BLIND_FIELDS.has(key))
+    .map(([key]) => key);
+  const verificationTransitionHtml = canEdit && opts.focusIssue === "doubt" && verificationKeys.length
+    ? `<div class="verify-transition" id="verifyTransition">
+        <div><b>${verificationKeys.length} AI field${verificationKeys.length === 1 ? "" : "s"} to check</b>
+          <span>After comparing them with the photo, mark them checked. Saving moves the item to Approve if nothing else blocks it; it does not approve it.</span></div>
+        <button class="ghost" id="markVerifiedBtn" type="button">I checked these</button>
+      </div>`
+    : "";
 
   // ---- build the sheet ----
   const sheet = document.createElement("div");
@@ -185,7 +208,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       <header class="sheet-head">
         <button class="ghost" id="cancelBtn">Cancel</button>
         <div class="sheet-title">${esc(categoryPath(item.category_id))}</div>
-        <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>Save</button>
+        <button class="primary" id="saveBtn" ${canEdit ? "" : "disabled"}>${saveLabel}</button>
       </header>
       <div class="sheet-body">
         <section class="ed-section ed-verify" data-ed-section="verify" aria-label="Verify item">
@@ -197,6 +220,8 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
         ${readinessPanelHtml(readiness)}
         ${fixModeHtml(fixPlan)}
+        ${aiEvidenceHtml(item, fields, conf)}
+        ${verificationTransitionHtml}
 
         <div class="status-row" id="statusRow" role="group" aria-label="Status">
           ${STATUS_OPTIONS
@@ -226,6 +251,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         <section class="ed-section ed-selling" data-ed-section="selling" aria-label="Selling">
           <div class="ed-section-title">Selling</div>
         ${shopLineHtml()}
+        ${posOwnedNoticeHtml()}
         ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
         ${fieldRow(
           { key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Units received (live stock lives in the POS)" : "Units in this batch (1 photo = 1 unit)", type: "number", inputmode: "numeric" },
@@ -259,7 +285,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         </section>
       </div>
       ${canEdit ? `<div class="sheet-foot">
-        <button class="ghost" id="saveFootBtn" type="button">Save</button>
+        <button class="ghost" id="saveFootBtn" type="button">${saveLabel}</button>
         ${item.status === "approved" ? "" : `<button class="primary" id="saveApproveBtn" type="button">Save &amp; approve</button>`}
       </div>` : ""}
     </div>`;
@@ -308,7 +334,10 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     }
     releaseFocus();
     sheet.classList.remove("open");
-    setTimeout(() => sheet.remove(), 200);
+    setTimeout(() => {
+      sheet.remove();
+      opts.onClose?.({ saved: savedOk, itemId });
+    }, 200);
   };
   // Are there unsaved edits? (status changed, any highlighted field, or a
   // confidence pill the user touched). Used to guard accidental dismissal.
@@ -335,7 +364,16 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
   const armBrowserBackClose = () => {
     if (editorHistoryArmed || !window.history?.pushState) return;
     try {
-      window.history.pushState({ klineOverlay: "editor", itemId }, "", window.location.href);
+      const overlayUrl = new URL(window.location.href);
+      // If this editor was restored from an item URL, first create a safe base
+      // entry for Back to return to instead of leaving the app.
+      if (overlayUrl.searchParams.get("item") === String(itemId)) {
+        const baseUrl = new URL(overlayUrl);
+        baseUrl.searchParams.delete("item");
+        window.history.replaceState({ klineView: baseUrl.searchParams.get("view") || "today" }, "", baseUrl);
+      }
+      overlayUrl.searchParams.set("item", itemId);
+      window.history.pushState({ klineOverlay: "editor", itemId }, "", overlayUrl);
       editorHistoryArmed = true;
       window.addEventListener("popstate", onBrowserBack);
     } catch {}
@@ -372,11 +410,13 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     const candidate = formItemForReadiness(sheet, item, fields, conf, status);
     return getItemReadiness(candidate, { forApproval: status === "approved", canViewCost });
   };
-  const approvalBlockerText = (readiness) =>
-    (readiness.blockers || []).slice(0, 3).map((b) => b.detail || b.label).join(" ");
   const paintCurrentReadiness = () => {
     const panel = sheet.querySelector("#readyPanel");
     if (panel) panel.outerHTML = readinessPanelHtml(currentReadinessFor());
+  };
+  const paintAiEvidence = () => {
+    const panel = sheet.querySelector("#aiEvidence");
+    if (panel) panel.outerHTML = aiEvidenceHtml(item, fields, conf);
   };
   const paintApprovalAffordance = () => {
     const off = !navigator.onLine;
@@ -412,8 +452,8 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     saving = busy;
     const off = !navigator.onLine;
     saveControls.forEach((btn) => { btn.disabled = busy || off || !canEdit; });
-    if (headerSaveBtn) headerSaveBtn.textContent = busy ? "Saving..." : (off ? "Offline" : "Save");
-    if (footerSaveBtn) footerSaveBtn.textContent = busy ? "Saving..." : "Save";
+    if (headerSaveBtn) headerSaveBtn.textContent = busy ? "Saving..." : (off ? "Offline" : saveLabel);
+    if (footerSaveBtn) footerSaveBtn.textContent = busy ? "Saving..." : saveLabel;
     paintApprovalAffordance();
   };
   const reflectOnline = () => {
@@ -510,9 +550,32 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       else delete conf[key];
       confDirty = true;
       paintConfPill(pill, next);
+      paintAiEvidence();
       paintApprovalAffordance();
     });
   });
+
+  const markVerifiedBtn = sheet.querySelector("#markVerifiedBtn");
+  if (markVerifiedBtn) {
+    markVerifiedBtn.onclick = () => {
+      const keys = Object.entries(conf)
+        .filter(([key, level]) => (level === "Low" || level === "Medium") && !AI_BLIND_FIELDS.has(key))
+        .map(([key]) => key);
+      keys.forEach((key) => {
+        conf[key] = "High";
+        const pill = sheet.querySelector(`[data-conf="${key}"]`);
+        if (pill) paintConfPill(pill, "High");
+      });
+      confDirty = true;
+      markVerifiedBtn.disabled = true;
+      markVerifiedBtn.textContent = "Checked — save to continue";
+      sheet.querySelector("#verifyTransition")?.classList.add("checked");
+      paintAiEvidence();
+      paintApprovalAffordance();
+    };
+  }
+
+  sheet.querySelectorAll("[data-price-input]").forEach((el) => bindPriceInput(el));
 
   // Mark changed inputs (highlight) versus their initial value.
   sheet.querySelectorAll("[data-key]").forEach((el) => {
@@ -593,15 +656,23 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
           throw new Error(detail);
         }
         if (data?.error) throw new Error(data.error);
+        const visibleText = cleanAiVisibleText(data.visible_text);
+        if (visibleText) {
+          const { error: evidenceErr } = await supabase.from("items").update({ ai_visible_text: visibleText }).eq("id", itemId);
+          if (evidenceErr) console.warn("AI evidence save failed", evidenceErr.message);
+          else item.ai_visible_text = visibleText;
+        }
         const n = applySuggestions(data.values, data.confidence);
         await clearItemJobFailures(itemId, "ai_fill");
         delete item.latest_ai_job;
         paintApprovalAffordance();
+        paintAiEvidence();
         toast(n ? `AI filled ${n} field${n === 1 ? "" : "s"} — review & Save` : "AI couldn't read any fields");
       } catch (e) {
         await recordItemJobFailure(itemId, "ai_fill", e);
         item.latest_ai_job = { status: "failed", error_message: e?.message || String(e) };
         paintApprovalAffordance();
+        paintAiEvidence();
         toast("AI failed: " + (e?.message || e));
       } finally {
         aiBtn.disabled = false;
@@ -619,12 +690,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
       return false;
     }
     if (readiness.warnings.length) {
-      const ok = await confirmSheet({
-        title: "Approve with AI checks?",
-        message: readiness.warnings.map((w) => w.detail || w.label).join(" "),
-        confirmText: "I checked, approve",
-        cancelText: "Review first",
-      });
+      const ok = await confirmApprovalWarnings(readiness);
       if (!ok) return false;
     }
     return true;
@@ -684,7 +750,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         : `Saved · SKU ${newSku}`);
       navigator.vibrate?.([12, 40, 12]); // affirmative "done" buzz
       savedOk = true; // don't prompt "discard changes?" on the post-save close
-      onSaved?.();
+      await onSaved?.();
       close();
       return true;
     } catch (err) {
@@ -733,7 +799,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         toast("Item deleted");
         navigator.vibrate?.(20);
         savedOk = true; // it's gone — no discard prompt
-        onSaved?.();
+        await onSaved?.();
         close();
       } catch (err) {
         toast(err.message || "Delete failed");
@@ -771,6 +837,33 @@ function fixModeHtml(plan) {
       Show only ${plan.keys.size} field${plan.keys.size === 1 ? "" : "s"} to fix
     </button>
     ${labels ? `<div class="fixmode-note">Focus: ${esc(labels + extra)}</div>` : ""}
+  </div>`;
+}
+
+function aiEvidenceHtml(item, fields, conf = {}) {
+  const visibleText = cleanAiVisibleText(item.ai_visible_text);
+  const failed = item.latest_ai_job?.status === "failed";
+  const confRows = Object.entries(conf || {})
+    .filter(([key, level]) => level && !AI_BLIND_FIELDS.has(key))
+    .map(([key, level]) => ({ key, level, label: fieldNameForKey(key, fields) }));
+  const hasEvidence = visibleText || confRows.length || failed;
+  const confHtml = confRows.length
+    ? `<div class="ai-evidence-conf">
+        ${confRows.slice(0, 8).map((r) => `<span class="conf-pill ${confClass(r.level)}" title="${esc(r.label)}: ${esc(r.level)}">${esc(r.level[0])}</span><span>${esc(r.label)}</span>`).join("")}
+      </div>`
+    : "";
+  const failHtml = failed
+    ? `<div class="ai-evidence-fail">${esc(item.latest_ai_job.error_message || item.latest_ai_job.error_category || "AI fill failed.")}</div>`
+    : "";
+  return `<div class="ai-evidence${hasEvidence ? "" : " empty"}" id="aiEvidence">
+    <div class="ai-evidence-head">
+      <span>${ICON.sparkle}</span>
+      <b>AI evidence</b>
+    </div>
+    ${visibleText ? `<div class="ai-evidence-text">${esc(visibleText)}</div>` : ""}
+    ${confHtml}
+    ${failHtml}
+    ${hasEvidence ? "" : `<div class="muted">No AI read has been saved for this photo yet.</div>`}
   </div>`;
 }
 
@@ -851,11 +944,13 @@ function fieldRow(def, value, conf, showConf, canEdit = true) {
     </select>`;
   } else {
     const list = def.vocab ? ` list="dl-${def.vocab}"` : "";
-    const type = def.type === "number" ? "number" : "text";
+    const isPrice = def.key === "price" || def.key === "cost_price";
+    const type = def.type === "number" && !isPrice ? "number" : "text";
     // Number fields get a numeric keypad on mobile: decimal for money/measures,
     // "numeric" (integer) for counts. Callers override via def.inputmode.
     const im = def.type === "number" ? ` inputmode="${def.inputmode || "decimal"}"` : "";
-    control = `<input id="${id}" type="${type}"${im}${list} data-key="${def.key}" data-kind="value"
+    const priceAttr = isPrice ? ` data-price-input autocomplete="off"` : "";
+    control = `<input id="${id}" type="${type}"${im}${list} data-key="${def.key}" data-kind="value"${priceAttr}
       data-vocab="${def.vocab || ""}" value="${esc(v)}"${dis}>`;
   }
 

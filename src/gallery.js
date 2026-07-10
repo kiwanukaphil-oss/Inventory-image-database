@@ -8,7 +8,9 @@ import {
   REVIEW_QUEUE,
   STATUS_OPTIONS,
   approvalSummary,
+  aiDoubtFields,
   getItemReadiness,
+  hasAiSignal,
   hasAiDoubt,
   issueState,
   missingCoreFields,
@@ -31,10 +33,22 @@ import { openCategoryManager } from "./categories_admin.js";
 import { loadCostPresence } from "./costs.js";
 import { loadLatestFailedJobs } from "./joblog.js";
 import { openConsistencyAudit } from "./consistency.js";
+import { approvalReasonText, confirmApprovalSummaryWarnings } from "./approval.js";
 import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
-import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, ICON } from "./ui.js";
+import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, bindPriceInput, ICON } from "./ui.js";
 import { sortItems } from "./lib/itemsort.js";
 import { shopState as libShopState, facetValue, buildFacets, searchText, matchesItem } from "./lib/facets.js";
+import { parsePrice, stripPriceGrouping } from "./lib/price.js";
+import { classifyVerificationRisk, verificationRiskRank } from "./lib/review-risk.js";
+import {
+  APP_VIEWS,
+  REVIEW_FILTERS,
+  REVIEW_STAGES,
+  buildAppUrl,
+  defaultFilterForStage,
+  parseAppRoute,
+  reviewStageForFilter,
+} from "./lib/navigation-state.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
 
@@ -102,11 +116,18 @@ function summarizeItemRich(it) {
 // Export moved into the ⋮ menu (admin-ish, rarely daily) to make room for
 // Shop — the floor-facing reports surface (Phase 3 of the POS integration).
 const NAV = [
-  { id: "gallery", label: "Gallery", ico: "navGallery" },
+  { id: "today", label: "Today", ico: "navToday" },
+  { id: "catalog", label: "Catalog", ico: "navGallery" },
   { id: "add", label: "Add", ico: "navAdd" },
   { id: "review", label: "Review", ico: "navReview", badge: true },
   { id: "shop", label: "Shop", ico: "navShop", badge: true },
 ];
+
+const REVIEW_STAGE_META = {
+  fix: { label: "Fix", detail: "Clear the blockers that stop items from moving forward." },
+  verify: { label: "Verify", detail: "Check AI uncertainty and recently changed items." },
+  approve: { label: "Approve", detail: "Give ready items their final inspection." },
+};
 
 // Update a bottom-nav count badge. `animate` count-ups give the Review badge a
 // premium "numbers move" feel; the Shop attention badge stays steady.
@@ -131,6 +152,7 @@ function setNavBadge(id, count, animate = false) {
 // every screen so a manager knows without opening the Shop tab.
 const setReviewBadge = (count) => setNavBadge("reviewBadge", count, true);
 const setShopBadge = (count) => setNavBadge("shopBadge", count, false);
+let renderTodaySeq = 0;
 
 /**
  * Render the full app shell for a signed-in user.
@@ -143,6 +165,7 @@ export function renderApp(mount, profile, onSignOut) {
   // the database independently enforces the same via RLS.
   const caps = profile || {};
   const role = caps.role || "viewer";
+  restoreAppSession(caps);
   mount.innerHTML = `
     <div class="shell">
       <div class="topwrap">
@@ -172,39 +195,74 @@ export function renderApp(mount, profile, onSignOut) {
     }</button>`
   ).join("");
 
-  let currentViewId = "gallery";
-  const refreshCurrent = () => setView(currentViewId);
+  let currentViewId = APP_VIEWS.includes(appSession.view) ? appSession.view : "today";
+  const refreshCurrent = () => setView(currentViewId, { historyMode: "replace", restoreScroll: true });
   function openReviewQueue(issueKey = "work", ids = []) {
-    const next = REVIEW_QUEUE.includes(issueKey) ? issueKey : "work";
+    const next = REVIEW_FILTERS.includes(issueKey) ? issueKey : "work";
     browseState.review.itemIds = Array.isArray(ids) ? ids : [];
     browseState.review.issue = next;
-    browseState.review.seg = next === "ready" ? "ready" : "work";
-    setView("review");
+    browseState.review.stage = reviewStageForFilter(next);
+    persistAppSession("review");
+    setView("review", {
+      historyMode: currentViewId === "review" ? "replace" : "push",
+      restoreScroll: false,
+    });
   }
 
-  function setView(id) {
+  function syncRoute(historyMode = "replace") {
+    if (historyMode === "none") return;
+    const nextUrl = buildAppUrl(window.location.href, {
+      view: currentViewId,
+      reviewFilter: browseState.review.issue,
+    });
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextUrl === currentUrl) return;
+    const routeState = { klineView: currentViewId, reviewFilter: browseState.review.issue };
+    if (historyMode === "push") window.history.pushState(routeState, "", nextUrl);
+    else window.history.replaceState(routeState, "", nextUrl);
+  }
+
+  async function setView(id, { historyMode = "push", restoreScroll = true } = {}) {
+    if (!APP_VIEWS.includes(id)) id = "today";
+    if (currentViewId && view.childElementCount && document.body.contains(view)) {
+      appSession.scroll[currentViewId] = view.scrollTop;
+    }
     currentViewId = id;
+    appSession.view = id;
+    persistAppSession(id);
+    renderGallerySeq++;
+    renderTodaySeq++;
+    const targetScroll = restoreScroll ? Number(appSession.scroll[id] || 0) : 0;
     view.scrollTo(0, 0); // .content is the app's only scroller (app-shell layout)
     nav.querySelectorAll("button").forEach((b) =>
       b.classList.toggle("active", b.dataset.view === id)
     );
-    if (id === "gallery") renderGallery(view, caps);
+    syncRoute(historyMode);
+    if (id === "today") await renderToday(view, caps, { setView, openReviewQueue, refreshCurrent });
+    else if (id === "catalog") await renderGallery(view, caps);
     else if (id === "add")
-      renderUpload(view, caps, (result = {}) => {
+      await renderUpload(view, caps, (result = {}) => {
         if (result.view === "review" && result.itemIds?.length) {
           openReviewQueue(result.issue, result.itemIds);
         } else {
           browseState.gallery.itemIds = [];
-          setView("gallery");
+          setView("catalog", { restoreScroll: false });
         }
       });
     else if (id === "export") renderExport(view, caps); // routed from the ⋮ menu
-    else if (id === "shop") renderShop(view, caps, refreshCurrent);
-    else if (id === "review") renderReview(view, caps);
+    else if (id === "shop") await renderShop(view, caps, refreshCurrent);
+    else if (id === "review") await renderReview(view, caps);
     else renderComingSoon(view, id);
+    if (currentViewId !== id) return;
+    requestAnimationFrame(() => {
+      if (currentViewId !== id) return;
+      view.scrollTo(0, targetScroll);
+      appSession.scroll[id] = view.scrollTop;
+      persistAppSession(id);
+    });
   }
 
-  // Currency editor (the one shop-wide setting), opened from Settings → General.
+  // Currency editor (the one shop-wide setting), opened from Settings → Shop.
   function openCurrencyEditor() {
     const cur = getSetting("currency", "");
     const sh = openBottomSheet("Currency", `
@@ -229,23 +287,24 @@ export function renderApp(mount, profile, onSignOut) {
   function openSettings() {
     const install = installAvailable() ? `<button class="menu-item" data-s="install">Install app</button>` : "";
     const currencyRow = caps.can_manage_users
-      ? `<button class="menu-item" data-s="currency">Currency<span class="menu-val">${esc(getSetting("currency", "") || "not set")}</span></button>`
+      ? `<button class="menu-item settings-row" data-s="currency"><span><b>Currency</b><small>Prefix shown before shop prices</small></span><span class="menu-val">${esc(getSetting("currency", "") || "not set")}</span></button>`
       : "";
     const dataTools = [
-      `<button class="menu-item" data-s="activity">Recent activity</button>`,
-      `<button class="menu-item" data-s="export">Export CSV</button>`,
-      caps.can_edit ? `<button class="menu-item" data-s="calib">Calibration check</button>` : "",
-      caps.can_edit ? `<button class="menu-item" data-s="audit">AI consistency audit</button>` : "",
+      `<button class="menu-item settings-row" data-s="activity"><span><b>Recent activity</b><small>Human, AI, pricing, approval, undo, and shop events</small></span></button>`,
+      `<button class="menu-item settings-row" data-s="export"><span><b>Export CSV</b><small>Catalog snapshot and audit log downloads</small></span></button>`,
+      caps.can_edit ? `<button class="menu-item settings-row" data-s="calib"><span><b>AI quality check</b><small>Mark AI fields correct or wrong from photos</small></span></button>` : "",
+      caps.can_edit ? `<button class="menu-item settings-row" data-s="audit"><span><b>Catalog health check</b><small>Find variants, missing details, duplicates, and outliers</small></span></button>` : "",
     ].filter(Boolean).join("");
     const adminTools = caps.can_manage_users
-      ? `<button class="menu-item" data-s="users">Users & permissions</button>
-         <button class="menu-item" data-s="cats">Categories & fields</button>
-         <button class="menu-item" data-s="sync">Shop sync</button>`
+      ? `<button class="menu-item settings-row" data-s="users"><span><b>Users & permissions</b><small>Roles, capability matrix, active accounts</small></span></button>
+         <button class="menu-item settings-row" data-s="cats"><span><b>Categories & fields</b><small>Reference data that drives forms, AI, and SKUs</small></span></button>
+         <button class="menu-item settings-row" data-s="sync"><span><b>Shop recovery</b><small>Send to shop, refresh numbers, and check drift</small></span></button>`
       : "";
     const sh = openBottomSheet("Settings", `
-      <div class="sheet-sec">General</div>
+      <div class="sheet-sec">Device & app</div>
       <button class="menu-item" data-s="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
-      ${currencyRow}${install}
+      ${install}
+      ${currencyRow ? `<div class="sheet-sec">Shop settings</div>${currencyRow}` : ""}
       ${dataTools ? `<div class="sheet-sec">Data tools</div>${dataTools}` : ""}
       ${adminTools ? `<div class="sheet-sec">Admin</div>${adminTools}` : ""}`);
     sh.body.addEventListener("click", (e) => {
@@ -267,16 +326,17 @@ export function renderApp(mount, profile, onSignOut) {
 
   function openQuickActions() {
     const actions = [
+      { id: "today", label: "Today", sub: "Open the operations overview", icon: ICON.navToday, show: true },
       { id: "add", label: "Add photos", sub: "Capture or upload a new batch", icon: ICON.navAdd, show: !!caps.can_upload },
       { id: "review-work", label: "Review needs work", sub: "Open all blocked items", icon: ICON.navReview, show: true },
       { id: "review-edited", label: "Recently edited", sub: "Return to items you touched", icon: ICON.pencil, show: true },
       { id: "review-ai", label: "Needs AI fill", sub: "Find photos that need AI fill or retry", icon: ICON.sparkle, show: true },
       { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
       { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
-      { id: "pricing", label: "Set prices", sub: "Open guided pricing", icon: ICON.pencil, show: !!caps.can_edit },
-      { id: "audit", label: "AI consistency audit", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
+      { id: "pricing", label: "Price items", sub: "Set prices in bulk", icon: ICON.pencil, show: !!caps.can_edit },
+      { id: "audit", label: "Catalog health check", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
       { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
-      { id: "shop", label: "Shop dashboard", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
+      { id: "shop", label: "Shop floor", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
       { id: "activity", label: "Recent activity", sub: "Who changed what, lately", icon: ICON.refresh, show: true },
       { id: "export", label: "Export CSV", sub: "Download catalog data", icon: ICON.navExport, show: true },
     ].filter((a) => a.show);
@@ -293,7 +353,8 @@ export function renderApp(mount, profile, onSignOut) {
       if (!b) return;
       sh.close();
       const cmd = b.dataset.cmd;
-      if (cmd === "add") setView("add");
+      if (cmd === "today") setView("today");
+      else if (cmd === "add") setView("add");
       else if (cmd === "review-work") openReviewQueue("work");
       else if (cmd === "review-edited") openReviewQueue("edited");
       else if (cmd === "review-ai") openReviewQueue("ai");
@@ -376,7 +437,11 @@ export function renderApp(mount, profile, onSignOut) {
     const btn = e.target.closest("button[data-view]");
     if (!btn) return;
     // Tapping the already-active tab scrolls back to top (mobile convention).
-    if (btn.dataset.view === currentViewId) view.scrollTo({ top: 0, behavior: "smooth" });
+    if (btn.dataset.view === currentViewId) {
+      view.scrollTo({ top: 0, behavior: "smooth" });
+      appSession.scroll[currentViewId] = 0;
+      persistAppSession(currentViewId);
+    }
     else setView(btn.dataset.view);
   });
 
@@ -399,19 +464,47 @@ export function renderApp(mount, profile, onSignOut) {
   // Back-to-top: appears once you've scrolled down a bit. Watches the content
   // scroller (the document never scrolls in the app-shell layout).
   const fab = mount.querySelector("#fabTop");
-  const onScroll = () => { fab.hidden = view.scrollTop < 500; };
+  let scrollSaveTimer;
+  const onScroll = () => {
+    fab.hidden = view.scrollTop < 500;
+    appSession.scroll[currentViewId] = view.scrollTop;
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = setTimeout(() => persistAppSession(currentViewId), 120);
+  };
   view.addEventListener("scroll", onScroll, { passive: true });
   fab.onclick = () => view.scrollTo({ top: 0, behavior: "smooth" });
   onScroll();
 
-  // Honour PWA shortcuts / share-target deep links on first paint, then clean the
-  // URL so a later refresh doesn't re-trigger them.
-  const params = new URLSearchParams(location.search);
-  const validView = new Set(["gallery", "add", "review", "shop"]);
-  const wantView = params.get("view");
-  const initialView = params.get("share") === "1" ? "add" : (validView.has(wantView) ? wantView : "gallery");
-  if (params.has("view") || params.has("share")) history.replaceState(null, "", location.pathname);
-  setView(initialView);
+  // Restore the exact working surface after a reload/update. PWA shortcuts and
+  // share-target links still override the saved session on their first paint.
+  const initialRoute = parseAppRoute(location.search, {
+    view: appSession.view,
+    reviewFilter: browseState.review.issue,
+  });
+  if (initialRoute.shared) initialRoute.view = "add";
+  browseState.review.issue = initialRoute.reviewFilter;
+  browseState.review.stage = reviewStageForFilter(initialRoute.reviewFilter);
+
+  if (_appPopState) window.removeEventListener("popstate", _appPopState);
+  _appPopState = () => {
+    const route = parseAppRoute(location.search, {
+      view: currentViewId,
+      reviewFilter: browseState.review.issue,
+    });
+    const sameView = route.view === currentViewId;
+    const sameQueue = route.view !== "review" || route.reviewFilter === browseState.review.issue;
+    if (sameView && sameQueue) return;
+    browseState.review.issue = route.reviewFilter;
+    browseState.review.stage = reviewStageForFilter(route.reviewFilter);
+    setView(route.view, { historyMode: "none", restoreScroll: true });
+  };
+  window.addEventListener("popstate", _appPopState);
+  setView(initialRoute.view, { historyMode: "replace", restoreScroll: true }).then(() => {
+    if (!initialRoute.itemId) return;
+    openEditor(initialRoute.itemId, caps, refreshCurrent).catch((error) => {
+      toast(`Couldn't restore item: ${error.message || error}`);
+    });
+  });
 }
 
 // Appearance options shown in the account menu's "Appearance" picker. "system"
@@ -431,7 +524,7 @@ function themeLabel() {
 
 // Format a price with thousands separators + the shop's currency prefix (if set).
 function fmtPrice(v) {
-  const n = Number(v);
+  const n = parsePrice(v);
   const s = Number.isFinite(n) ? n.toLocaleString() : esc(v);
   const cur = getSetting("currency", "");
   return cur ? `${esc(cur)} ${s}` : s;
@@ -604,15 +697,56 @@ const SORTS = [
 // facet selections serialised as arrays (rehydrated to Sets on render).
 // `density` is the card-grid vs scan-list view mode. Both surfaces default to
 // tile/grid; reviewers can still switch to the dense list when skimming.
-const browseState = {
-  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", itemIds: [] },
-  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", seg: "work", issue: "work", itemIds: [] },
-};
+const defaultBrowseState = () => ({
+  gallery: { q: "", needsReview: false, sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", itemIds: [], previewId: "" },
+  review:  { q: "", needsReview: true,  sortBy: "new", priceMin: "", priceMax: "", noPrice: false, datePreset: "all", active: {}, density: "grid", stage: "fix", issue: "work", itemIds: [], previewId: "" },
+});
+let browseState = defaultBrowseState();
+let appSession = { view: "today", scroll: {} };
+let appSessionKey = "kline.ops.session.v2";
+
+function restoreAppSession(caps = {}) {
+  appSessionKey = `kline.ops.session.v2:${caps.id || caps.email || "user"}`;
+  let stored = {};
+  try { stored = JSON.parse(sessionStorage.getItem(appSessionKey) || "{}"); } catch {}
+  const defaults = defaultBrowseState();
+  browseState = {
+    gallery: { ...defaults.gallery, ...(stored.browse?.gallery || {}) },
+    review: { ...defaults.review, ...(stored.browse?.review || {}) },
+  };
+  if (!REVIEW_FILTERS.includes(browseState.review.issue)) browseState.review.issue = "work";
+  browseState.review.stage = reviewStageForFilter(browseState.review.issue);
+  appSession = {
+    view: APP_VIEWS.includes(stored.view) ? stored.view : "today",
+    scroll: stored.scroll && typeof stored.scroll === "object" ? stored.scroll : {},
+  };
+}
+
+function persistAppSession(view = appSession.view) {
+  appSession.view = APP_VIEWS.includes(view) ? view : "today";
+  try {
+    sessionStorage.setItem(appSessionKey, JSON.stringify({
+      view: appSession.view,
+      scroll: appSession.scroll,
+      browse: browseState,
+    }));
+  } catch {}
+}
 
 function issueBadgesHtml(it, { compact = false } = {}) {
   const readiness = getItemReadiness(it);
   const st = readiness.issue;
   if (!st) return "";
+  if (st === "doubt") {
+    const risk = classifyVerificationRisk(aiDoubtFields(it));
+    const label = risk.level === "critical"
+      ? (compact ? "Critical" : `Critical check · ${risk.count} field${risk.count === 1 ? "" : "s"}`)
+      : (compact ? "Quick" : `Quick check · ${risk.count} field${risk.count === 1 ? "" : "s"}`);
+    const detail = risk.level === "critical"
+      ? "Contains a Low-confidence field or several uncertain fields. Review individually."
+      : "One or two Medium-confidence fields. Eligible for scan-and-batch verification.";
+    return `<span class="issue-pill iss-${risk.level}" title="${esc(detail)}">${esc(label)}</span>`;
+  }
   const meta = ISSUE_META[st] || ISSUE_META.work;
   const title = readiness.primary?.detail || meta.label;
   const label = compact ? meta.short : meta.label;
@@ -636,6 +770,7 @@ function activityBadgesHtml(it, { compact = false } = {}) {
 }
 let _galEsc = null; // current Esc handler, so we don't stack listeners on re-render
 let _appCmdKey = null; // current Ctrl/Cmd+K handler for the signed-in shell
+let _appPopState = null; // current browser-history listener for the signed-in shell
 
 // Fade each thumbnail in over its shimmer once the image has loaded, so the
 // grid layout never jumps as photos arrive.
@@ -769,9 +904,9 @@ async function renderGallery(view, caps, opts = {}) {
   let q = state.q;
   let needsReview = review ? true : state.needsReview; // Review tab forces it on
   let issue = review
-    ? (REVIEW_QUEUE.includes(state.issue) ? state.issue : (state.seg === "ready" ? "ready" : "work"))
+    ? (REVIEW_FILTERS.includes(state.issue) ? state.issue : "work")
     : null;
-  let seg = issue === "ready" ? "ready" : "work";
+  let reviewStage = review ? reviewStageForFilter(issue) : null;
   let density = state.density === "list" ? "list" : "grid";
   let sortBy = state.sortBy;
   let priceMin = state.priceMin, priceMax = state.priceMax, datePreset = state.datePreset;
@@ -781,6 +916,130 @@ async function renderGallery(view, caps, opts = {}) {
   let itemIds = new Set(state.itemIds || []);
   const facetFilter = {}; // facetKey -> typed text to narrow that facet's value list
   let filtered = []; // current filtered+sorted rows, for bulk actions
+  let smartShelvesEl = null;
+  let reviewBriefEl = null;
+  let previewEl = null;
+  let previewSelectedId = state.previewId || "";
+
+  function reviewQueueGuide(key) {
+    return ({
+      work: { title: "Fix blockers", detail: REVIEW_STAGE_META.fix.detail },
+      verify: { title: "Verify changes", detail: REVIEW_STAGE_META.verify.detail },
+      edited: { title: "Recently edited", detail: "Recheck changed items before they disappear into the approved catalog." },
+      ai: { title: "Needs AI fill", detail: "Run AI fill or retry failed jobs before manual review takes over." },
+      price: { title: "Missing price", detail: "Price these items before approval or shop sync can be trusted." },
+      doubt: { title: "AI checks", detail: "Verify the exact fields the model marked as uncertain." },
+      missing: { title: "Missing details", detail: "Complete required catalog facts that block approval." },
+      flag: { title: "Problem items", detail: "Resolve flagged records or leave them clearly marked for follow-up." },
+      sync: { title: "Shop issues", detail: "Repair sync errors and pending shop updates before stock goes live." },
+      ready: { title: "Ready to approve", detail: "Final inspection bench for priced items with no blockers." },
+    })[key] || { title: "Review", detail: "Turn uncertainty into decisions." };
+  }
+
+  function reviewStageMatches(it, stage) {
+    const state = issueState(it);
+    if (stage === "approve") return state === "ready";
+    if (stage === "verify") {
+      const recentlyEdited = queueMatches(it, "edited");
+      return state === "doubt" || (recentlyEdited && (!state || state === "doubt"));
+    }
+    return !!state && state !== "ready" && state !== "doubt";
+  }
+
+  function reviewFilterMatches(it) {
+    if (issue === "work") return reviewStageMatches(it, "fix");
+    if (issue === "verify") return reviewStageMatches(it, "verify");
+    return queueMatches(it, issue);
+  }
+
+  const verificationRiskOf = (it) => classifyVerificationRisk(aiDoubtFields(it), {
+    recentlyEdited: queueMatches(it, "edited"),
+  });
+
+  function smartViewDefs() {
+    const todayCut = dateCutoff("today");
+    const issueCount = (key) => data.filter((it) => queueMatches(it, key)).length;
+    const issueOn = (key) => review
+      ? issue === key
+      : !!active.issue?.has(ISSUE_META[key]?.label);
+    if (review) return [
+      { id: "ai", label: "Needs AI fill", count: issueCount("ai"), on: issueOn("ai"), tone: "ai" },
+      { id: "price", label: "Missing price", count: issueCount("price"), on: issueOn("price"), tone: "price" },
+      { id: "missing", label: "Missing details", count: issueCount("missing"), on: issueOn("missing"), tone: "price" },
+      { id: "flag", label: "Problem items", count: issueCount("flag"), on: issueOn("flag"), tone: "sync" },
+      { id: "sync", label: "Shop issues", count: issueCount("sync"), on: issueOn("sync"), tone: "sync" },
+      { id: "doubt", label: "Check AI", count: issueCount("doubt"), on: issueOn("doubt"), tone: "ai" },
+      { id: "edited", label: "Recently edited", count: issueCount("edited"), on: issueOn("edited"), tone: "edited" },
+      { id: "ready", label: "Ready to approve", count: issueCount("ready"), on: issueOn("ready"), tone: "ready" },
+    ];
+    return [
+      { id: "price", label: "Missing price", count: data.filter((it) => it.price == null).length, on: noPrice, tone: "price" },
+      { id: "doubt", label: "AI doubt", count: issueCount("doubt"), on: issueOn("doubt"), tone: "ai" },
+      { id: "ready", label: "Ready", count: issueCount("ready"), on: issueOn("ready"), tone: "ready" },
+      { id: "in-shop", label: "In shop", count: data.filter((it) => shopState(it) === "In shop").length, on: !!active.shop?.has("In shop"), tone: "shop" },
+      { id: "sync", label: "Sync error", count: issueCount("sync"), on: issueOn("sync"), tone: "sync" },
+      { id: "edited", label: "Recently edited", count: issueCount("edited"), on: issueOn("edited"), tone: "edited" },
+      { id: "today", label: "New today", count: data.filter((it) => it.created_at && new Date(it.created_at) >= todayCut).length, on: datePreset === "today", tone: "today" },
+    ];
+  }
+
+  function resetSmartBase() {
+    q = ""; if (qEl) qEl.value = "";
+    for (const k in active) delete active[k];
+    for (const k in facetFilter) delete facetFilter[k];
+    priceMin = ""; priceMax = ""; noPrice = false; datePreset = "all"; itemIds = new Set();
+    if (!review) needsReview = false;
+  }
+
+  function applySmartView(id) {
+    resetSmartBase();
+    if (review && REVIEW_QUEUE.includes(id)) {
+      if (id === issue) draw();
+      else setReviewIssue(id);
+      pills();
+      return;
+    }
+    if (id === "today") datePreset = "today";
+    else if (id === "price") noPrice = true;
+    else if (id === "in-shop") active.shop = new Set(["In shop"]);
+    else if (ISSUE_META[id]) {
+      active.issue = new Set([ISSUE_META[id].label]);
+    }
+    draw();
+    pills();
+  }
+
+  function applySavedView(v, { announce = true } = {}) {
+    if (!v) return;
+    const p = v.payload || {};
+    for (const k in active) delete active[k];
+    for (const k in (p.active || {})) if (facetByKey[k]) active[k] = new Set(p.active[k]);
+    q = p.q || ""; if (qEl) qEl.value = q;
+    sortBy = p.sortBy && SORTS.some((s) => s.v === p.sortBy) ? p.sortBy : "new";
+    priceMin = p.priceMin || ""; priceMax = p.priceMax || ""; noPrice = !!p.noPrice; datePreset = p.datePreset || "all";
+    itemIds = new Set();
+    draw();
+    pills();
+    if (announce) toast(`Applied "${v.name}"`);
+  }
+
+  function renderSmartShelves() {
+    if (!smartShelvesEl) return;
+    const smartRow = !review ? `<div class="shelf-row">
+      <div class="shelf-label">Smart views</div>
+      <div class="shelf-track">${smartViewDefs().map((v) => `<button class="shelf-chip ${esc(v.tone)}${v.on ? " on" : ""}" data-smart-shelf="${esc(v.id)}">
+        <span>${esc(v.label)}</span><b>${esc(Number(v.count || 0).toLocaleString())}</b>
+      </button>`).join("")}</div>
+    </div>` : "";
+    const savedRow = savedViews.length ? `<div class="shelf-row saved">
+      <div class="shelf-label">Saved shelves</div>
+      <div class="shelf-track">${savedViews.slice(0, 8).map((v) => `<button class="shelf-chip saved" data-saved-shelf="${esc(v.id)}">
+        <span>${esc(v.name)}</span>
+      </button>`).join("")}</div>
+    </div>` : "";
+    smartShelvesEl.hidden = !(smartRow || savedRow);
+    smartShelvesEl.innerHTML = smartRow + savedRow;
+  }
 
   view.innerHTML = `
     <div class="galtop">
@@ -796,16 +1055,21 @@ async function renderGallery(view, caps, opts = {}) {
         <span class="spacer"></span>
         <button class="linkbtn" id="selAll">Select all</button>
       </div>
-      ${review ? `<div class="seg-row review-queues" id="segRow" aria-label="Review queues">
-        ${REVIEW_QUEUE.map((k) => `<button class="seg${issue === k ? " on" : ""} ${ISSUE_META[k].cls}" data-issue="${k}">
-          ${esc(ISSUE_META[k].label)}<span class="seg-n" id="segN-${k}"></span></button>`).join("")}
+      ${review ? `<div class="seg-row review-queues review-stages" id="segRow" aria-label="Review stages">
+        ${REVIEW_STAGES.map((stage) => `<button class="seg${reviewStage === stage ? " on" : ""}" data-stage="${stage}">
+          ${esc(REVIEW_STAGE_META[stage].label)}<span class="seg-n" id="stageN-${stage}"></span></button>`).join("")}
       </div>` : ""}
+      ${review ? `<div class="review-brief" id="reviewBrief"></div>` : ""}
+      <div class="smart-shelves" id="smartShelves"></div>
       <div class="active-pills" id="pills"></div>
       <div class="count" id="count"></div>
     </div>
-    <div class="results" id="grid"></div>
+    <div class="browse-layout" id="browseLayout">
+      <div class="results" id="grid"></div>
+      <aside class="item-preview" id="itemPreview" aria-label="${review ? "Review item preview" : "Catalog item preview"}"></aside>
+    </div>
     ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
-      <button class="ab-btn ab-approve" id="abApprove"><span class="ab-ico">${ICON.tick}</span>Approve</button>
+      <button class="ab-btn ${review && reviewStage === "verify" ? "ab-verify" : "ab-approve"}" id="abApprove"><span class="ab-ico">${ICON.tick}</span>${review && reviewStage === "verify" ? "Verify" : "Approve"}</button>
       <button class="ab-btn" id="abAi"><span class="ab-ico">${ICON.sparkle}</span>AI-fill</button>
       <button class="ab-btn" id="abEdit"><span class="ab-ico">${ICON.pencil}</span>Edit</button>
       <button class="ab-btn" id="abMore"><span class="ab-ico">${ICON.more}</span>More</button>
@@ -819,6 +1083,9 @@ async function renderGallery(view, caps, opts = {}) {
   const hdrNormal = view.querySelector("#hdrNormal");
   const hdrSelect = view.querySelector("#hdrSelect");
   const actionbar = view.querySelector("#actionbar");
+  smartShelvesEl = view.querySelector("#smartShelves");
+  reviewBriefEl = view.querySelector("#reviewBrief");
+  previewEl = view.querySelector("#itemPreview");
 
   // Persist the current view state for this surface (so tab switches keep place).
   const saveState = () => {
@@ -826,9 +1093,11 @@ async function renderGallery(view, caps, opts = {}) {
     state.priceMin = priceMin; state.priceMax = priceMax; state.noPrice = noPrice;
     state.datePreset = datePreset; state.density = density;
     state.itemIds = [...itemIds];
-    if (review) { state.issue = issue; state.seg = issue === "ready" ? "ready" : "work"; }
+    state.previewId = previewSelectedId;
+    if (review) { state.issue = issue; state.stage = reviewStage; }
     state.active = {};
     for (const k in active) if (active[k]?.size) state.active[k] = [...active[k]];
+    persistAppSession(appSession.view);
   };
 
   // Re-render after an edit/bulk action without losing the user's scroll place.
@@ -940,7 +1209,7 @@ async function renderGallery(view, caps, opts = {}) {
   // resolvers (search haystack, facet value, review-queue predicate) here. The
   // review queue partitions Ready vs Needs-work (no overlap, no gaps).
   const passesQueue = (it) =>
-    review ? queueMatches(it, issue) : (!needsReview || needsReviewItem(it));
+    review ? reviewFilterMatches(it) : (!needsReview || needsReviewItem(it));
   const matchCtx = {
     textOf: (it) => searchText(it, facetResolvers),
     valueOf,
@@ -955,7 +1224,37 @@ async function renderGallery(view, caps, opts = {}) {
   // Sort comparators that always push blank (null) numbers to the end.
   // Pure sort lives in src/lib/itemsort.js (tested); this thin wrapper binds the
   // current sortBy so existing call sites are unchanged. (Q1)
-  const applySort = (rows) => sortItems(rows, sortBy);
+  const applySort = (rows) => {
+    const sorted = sortItems(rows, sortBy);
+    if (!review || sortBy !== "new") return sorted;
+    if (reviewStage === "verify") {
+      return sorted.sort((a, b) => verificationRiskRank(verificationRiskOf(a)) - verificationRiskRank(verificationRiskOf(b)));
+    }
+    if (reviewStage === "fix" && issue === "missing") {
+      const manualRank = (it) => (it.image_path && it.category_id ? 1 : 0);
+      return sorted.sort((a, b) => manualRank(a) - manualRank(b));
+    }
+    return sorted;
+  };
+
+  function verificationDetailsHtml(it) {
+    if (!review || reviewStage !== "verify") return "";
+    const doubts = aiDoubtFields(it);
+    if (!doubts.length) return "";
+    return `<div class="verify-fields">${doubts.slice(0, 4).map(({ key, level }) => {
+      const value = it[key] ?? it.attributes?.[key] ?? "not set";
+      return `<span class="${level === "Low" ? "low" : "medium"}"><b>${esc(fieldLabel(key))}</b>${esc(String(value))}</span>`;
+    }).join("")}${doubts.length > 4 ? `<span>+${doubts.length - 4} more</span>` : ""}</div>`;
+  }
+
+  function missingDetailsHtml(it) {
+    if (!review || reviewStage !== "fix" || issueState(it) !== "missing") return "";
+    const missing = missingCoreFields(it);
+    if (!missing.length) return "";
+    return `<div class="verify-fields missing-fields">${missing.slice(0, 5).map((field) =>
+      `<span><b>Missing</b>${esc(field)}</span>`
+    ).join("")}${missing.length > 5 ? `<span>+${missing.length - 5} more</span>` : ""}</div>`;
+  }
 
   // One product card.
   function cardHtml(it) {
@@ -975,16 +1274,19 @@ async function renderGallery(view, caps, opts = {}) {
     return `<div class="card" data-id="${it.id}">
       ${thumb}
       <div class="body">
-        <div class="cardtop">
-          <span style="font-size:12px;color:var(--muted)">${esc(cat)}</span>
+        <div class="card-head">
+          <div class="card-titleblock">
+            <div class="cbrand">${esc(brand)}</div>
+            ${cat ? `<div class="ccat">${esc(cat)}</div>` : ""}
+          </div>
           <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
         </div>
-        <div class="issue-line">${issueBadgesHtml(it)}${activityBadgesHtml(it)}</div>
-        <div class="cbrand">${esc(brand)}</div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
+        <div class="issue-line">${issueBadgesHtml(it)}${activityBadgesHtml(it)}${posChipHtml(it)}</div>
+        ${verificationDetailsHtml(it)}
+        ${missingDetailsHtml(it)}
         <div class="cmeta">
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
-          ${posChipHtml(it)}
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
       </div>
@@ -1010,15 +1312,14 @@ async function renderGallery(view, caps, opts = {}) {
       ${thumb}
       <div class="row-main">
         <div class="row-top">
-          <span class="row-brand">${esc(brand)}</span>
-          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}${activityBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span></span>
-        </div>
-        <div class="row-sub">
-          ${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}${variant ? `<span class="row-attr">${variant}</span>` : ""}
-        </div>
-        <div class="row-meta">
+          <span class="row-title"><span class="row-brand">${esc(brand)}</span>${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}</span>
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
-          ${posChipHtml(it)}
+        </div>
+        ${variant ? `<div class="row-sub"><span class="row-attr">${variant}</span></div>` : ""}
+        ${verificationDetailsHtml(it)}
+        ${missingDetailsHtml(it)}
+        <div class="row-meta">
+          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}${activityBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>${posChipHtml(it)}</span>
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
       </div>
@@ -1096,47 +1397,220 @@ async function renderGallery(view, caps, opts = {}) {
     observeThumbs(gridInner);
   }
 
+  function renderReviewBrief(rows, failedAiShown = 0) {
+    if (!reviewBriefEl) return;
+    if (!review) { reviewBriefEl.hidden = true; return; }
+    const guide = reviewQueueGuide(issue);
+    const actions = [];
+    if (issue === "price" && canEdit && rows.length) actions.push(["setprices", "Price items"]);
+    else if (issue === "ai" && canEdit && rows.length) actions.push([failedAiShown ? "retryai" : "aifill", failedAiShown ? `Retry ${failedAiShown}` : "AI-fill"]);
+    else if (issue === "missing" && canEdit && rows.length) {
+      const recoverable = rows.filter((it) => it.image_path && it.category_id).length;
+      if (recoverable) actions.push(["fillmissing", `AI-fill ${recoverable}`]);
+      actions.push(["selectmissing", "Bulk edit by category"]);
+    }
+    else if (issue === "sync" && canEdit && rows.length) actions.push(["sync", "Open sync"]);
+    else if (issue === "ready" && canEdit && rows.length) actions.push(["approveall", `Approve ${rows.length}`]);
+    if (reviewStage === "verify" && canEdit) {
+      const quickCount = rows.filter((it) => verificationRiskOf(it).bulkEligible).length;
+      if (quickCount) actions.push(["selectquick", `Select ${quickCount} quick checks`]);
+    }
+    if (canEdit && reviewStage === "approve" && rows.length > 1) actions.push(["swipe", `Focus mode ${rows.length}`]);
+    const defaultFilter = defaultFilterForStage(reviewStage);
+    if (issue !== defaultFilter) actions.push(["allstage", `All ${REVIEW_STAGE_META[reviewStage].label.toLowerCase()}`]);
+    const breakdown = reviewStageBreakdown(rows);
+    reviewBriefEl.hidden = false;
+    reviewBriefEl.innerHTML = `
+      <div class="review-brief-copy">
+        <div class="review-brief-kicker">${esc(REVIEW_STAGE_META[reviewStage].label)} stage</div>
+        <div class="review-brief-title">
+          <b>${esc(guide.title)}</b>
+          <span>${esc(Number(rows.length || 0).toLocaleString())}</span>
+        </div>
+        <p>${esc(guide.detail)}</p>
+        ${breakdown}
+      </div>
+      <div class="review-brief-actions">
+        ${actions.map(([cta, label], i) => `<button class="${i === 0 ? "primary" : "ghost"}" data-cta="${esc(cta)}">${esc(label)}</button>`).join("")}
+      </div>`;
+  }
+
+  function reviewStageBreakdown(rows) {
+    if (!rows.length) return "";
+    if (reviewStage === "fix") {
+      if (issue === "missing") {
+        const recoverable = rows.filter((it) => it.image_path && it.category_id).length;
+        const manual = rows.length - recoverable;
+        const parts = [
+          recoverable ? `${recoverable} AI-recoverable` : "",
+          manual ? `${manual} need photo or category` : "",
+        ].filter(Boolean);
+        return parts.length ? `<div class="review-ai-breakdown">${parts.map((part) => `<span>${esc(part)}</span>`).join("")}</div>` : "";
+      }
+      const labels = { ai: "AI fill", price: "price", missing: "details", flag: "problem", sync: "shop" };
+      const counts = {};
+      rows.forEach((it) => { const key = issueState(it); if (labels[key]) counts[key] = (counts[key] || 0) + 1; });
+      const parts = Object.entries(counts).map(([key, count]) => `${count} ${labels[key]}`);
+      return parts.length ? `<div class="review-ai-breakdown">${Object.entries(counts).map(([key, count]) =>
+        `<button type="button" class="review-break-chip" data-cta="filterissue" data-issue="${esc(key)}">${esc(`${count} ${labels[key]}`)}</button>`
+      ).join("")}</div>` : "";
+    }
+    if (reviewStage === "verify") {
+      const risks = rows.map(verificationRiskOf);
+      const critical = risks.filter((risk) => risk.level === "critical").length;
+      const quick = risks.filter((risk) => risk.level === "quick").length;
+      const recent = risks.filter((risk) => risk.level === "recent").length;
+      const parts = [
+        critical ? `${critical} critical` : "",
+        quick ? `${quick} quick checks` : "",
+        recent ? `${recent} recent edits` : "",
+      ].filter(Boolean);
+      return parts.length ? `<div class="review-ai-breakdown">${parts.map((part) => `<span>${esc(part)}</span>`).join("")}</div>` : "";
+    }
+    return `<div class="review-ai-breakdown"><span>${rows.length} ready for final inspection</span></div>`;
+  }
+
+  function isPreviewPaneActive() {
+    if (!previewEl || previewEl.hidden) return false;
+    return window.matchMedia
+      ? window.matchMedia("(min-width: 980px)").matches
+      : (window.innerWidth || 0) >= 980;
+  }
+
+  function cardElFor(id) {
+    return [...grid.querySelectorAll(".card[data-id]")].find((c) => c.dataset.id === id) || null;
+  }
+
+  function markPreviewCard() {
+    grid.querySelectorAll(".card.previewing").forEach((c) => c.classList.remove("previewing"));
+    const card = cardElFor(previewSelectedId);
+    if (card) card.classList.add("previewing");
+  }
+
+  function openPhotoLightbox(id) {
+    const imgRows = filtered.filter((it) => it.image_path);
+    const slides = imgRows.map((it) => {
+      const brand = it.brand || it.name || "-";
+      const sub = density === "list" ? (it.categories?.name || "") : summarizeItem(it);
+      return { getUrl: () => signFullImage(it.image_path), caption: esc([brand, sub].filter(Boolean).join(" - ")) };
+    });
+    openLightbox(slides, Math.max(0, imgRows.findIndex((it) => it.id === id)));
+  }
+
+  function setPreviewItem(id) {
+    if (!id || !filtered.some((it) => it.id === id)) return;
+    previewSelectedId = id;
+    state.previewId = id;
+    renderPreviewPane(filtered);
+  }
+
+  function previewIssueList(readiness) {
+    const issues = [...readiness.blockers, ...readiness.warnings].slice(0, 4);
+    if (!issues.length) return `<li>Ready for approval when the photo and selling details look right.</li>`;
+    return issues.map((x) => `<li><b>${esc(x.label)}</b>${x.detail ? ` <span>${esc(x.detail)}</span>` : ""}</li>`).join("");
+  }
+
+  function previewAiDoubts(it) {
+    const doubts = aiDoubtFields(it).slice(0, 5);
+    if (!doubts.length) return "";
+    return `<div class="preview-section">
+      <div class="preview-section-title">AI checks</div>
+      <div class="preview-chipline">
+        ${doubts.map((d) => `<span class="issue-pill iss-doubt">${esc(fieldLabel(d.key))}: ${esc(d.level)}</span>`).join("")}
+      </div>
+    </div>`;
+  }
+
+  function renderPreviewPane(rows) {
+    if (!previewEl) return;
+    if (!rows.length) {
+      previewSelectedId = "";
+      state.previewId = "";
+      previewEl.hidden = true;
+      previewEl.innerHTML = "";
+      return;
+    }
+    if (!previewSelectedId || !rows.some((it) => it.id === previewSelectedId)) previewSelectedId = rows[0].id;
+    const it = rows.find((row) => row.id === previewSelectedId) || rows[0];
+    previewSelectedId = it.id;
+    state.previewId = it.id;
+    markPreviewCard();
+
+    const brand = it.brand || it.name || "-";
+    const cat = it.categories?.name || "";
+    const variant = summarizeItem(it);
+    const readiness = getItemReadiness(it, { canViewCost: !!caps.can_view_cost });
+    const tone = readiness.blockers.length ? "blocked" : readiness.warnings.length ? "warn" : "ready";
+    const title = readiness.blockers.length
+      ? "Blocked"
+      : readiness.warnings.length
+        ? "Check before approval"
+        : it.status === "approved"
+          ? "Approved"
+          : "Ready to approve";
+    const img = it.image_path
+      ? `<button class="thumb preview-photo" data-preview-photo data-img aria-label="Inspect photo">
+          <img class="cardthumb" data-thumb="${esc(it.image_path)}" alt="${esc(brand)}">
+        </button>`
+      : `<div class="preview-photo preview-noimage">No image</div>`;
+    previewEl.hidden = false;
+    previewEl.innerHTML = `
+      ${img}
+      <div class="preview-body">
+        <div class="preview-kicker">${esc(review ? "Review preview" : "Catalog preview")}</div>
+        <h3>${esc(brand)}</h3>
+        ${cat ? `<div class="preview-sub">${esc(cat)}</div>` : ""}
+        ${variant ? `<div class="preview-attrs">${esc(variant)}</div>` : ""}
+        <div class="preview-chipline">
+          <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
+          ${issueBadgesHtml(it)}
+          ${activityBadgesHtml(it)}
+          ${posChipHtml(it)}
+        </div>
+        <div class="preview-price">${it.price != null ? fmtPrice(it.price) : "Missing price"}</div>
+        <div class="preview-readiness ${tone}">
+          <div><b>${esc(title)}</b><span>${esc(readiness.primary?.action || "Review item")}</span></div>
+          <ul>${previewIssueList(readiness)}</ul>
+        </div>
+        ${previewAiDoubts(it)}
+        <div class="preview-actions">
+          <button class="primary" data-preview-open>Open editor</button>
+          ${it.image_path ? `<button class="ghost" data-preview-photo>Inspect photo</button>` : ""}
+          ${canEdit ? `<button class="ghost" data-preview-select>Select item</button>` : ""}
+        </div>
+      </div>`;
+    observeThumbs(previewEl);
+    fadeInImages(previewEl);
+  }
+
   function draw() {
     const rows = applySort(data.filter((it) => matches(it, null)));
     filtered = rows;          // expose current filtered+sorted set for bulk actions
     saveState();
+    renderSmartShelves();
     const failedAiShown = rows.filter((it) => it.latest_ai_job?.status === "failed").length;
+    renderReviewBrief(rows, failedAiShown);
 
     // Pricing is the gate to approval, so the count line doubles as its
     // doorway: a tap on "N without a price" applies the no-price filter, and
-    // once you're looking at the unpriced, "Set prices" is right there.
+    // once you're looking at the unpriced, "Price items" is right there.
     const unpricedShown = rows.filter((it) => it.price == null).length;
-    const priceCta = review && issue === "price" ? "" : noPrice
-      ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Set prices ›</button>` : "")
+    const priceCta = review ? "" : noPrice
+      ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Price items ›</button>` : "")
       : unpricedShown
         ? ` · <button class="count-cta" data-cta="noprice">${unpricedShown} without a price</button>`
         : "";
-    // Ready segment: the whole point is glance → approve, so the action sits
-    // right on the count line (same immediate-with-Undo semantics as bulk).
-    const approveCta = review && seg === "ready" && canEdit && rows.length
-      ? ` · <button class="count-cta" data-cta="approveall">Approve all ${rows.length} ›</button>` : "";
-    // Swipe-review the current pile: full-screen one-card-at-a-time triage.
-    const swipeCta = review && canEdit && rows.length > 1
-      ? ` · <button class="count-cta" data-cta="swipe">Swipe ${rows.length} ›</button>` : "";
-    const issueCta = review && canEdit && rows.length
-      ? issue === "ai"
-        ? failedAiShown
-          ? ` · <button class="count-cta" data-cta="retryai">Retry ${failedAiShown} failed ›</button>`
-          : ` · <button class="count-cta" data-cta="aifill">AI-fill ${rows.length} ›</button>`
-        : issue === "price"
-          ? ` · <button class="count-cta" data-cta="setprices">Set prices ›</button>`
-          : issue === "sync"
-            ? ` · <button class="count-cta" data-cta="sync">Open shop sync ›</button>`
-            : ""
-      : "";
+    // Review actions live in the stage brief above. Keep the count line quiet so
+    // mobile users see the inventory sooner and never meet duplicate CTAs.
+    const approveCta = "";
+    const swipeCta = "";
+    const openFirstCta = "";
+    const issueCta = "";
     // Keep the segment counts live (they partition `data`, not the filtered rows).
     if (review) {
-      const wn = view.querySelector("#segWorkN"), rn = view.querySelector("#segReadyN");
-      if (wn) wn.textContent = data.filter((it) => needsReviewItem(it) && !readyItem(it)).length;
-      if (rn) rn.textContent = data.filter(readyItem).length;
-      for (const k of REVIEW_QUEUE) {
-        const n = data.filter((it) => queueMatches(it, k)).length;
-        const el = view.querySelector(`#segN-${k}`);
+      for (const stage of REVIEW_STAGES) {
+        const n = data.filter((it) => reviewStageMatches(it, stage)).length;
+        const el = view.querySelector(`#stageN-${stage}`);
         if (el) el.textContent = n ? n : "";
       }
     }
@@ -1149,6 +1623,7 @@ async function renderGallery(view, caps, opts = {}) {
     // review queue — say what it is instead.
     const reviewCountText = (n) => {
       if (issue === "work") return `${n} need${n === 1 ? "s" : ""} work`;
+      if (issue === "verify") return `${n} to verify`;
       if (issue === "edited") return `${n} recently edited`;
       if (issue === "ai") return `${n} need${n === 1 ? "s" : ""} AI fill`;
       if (issue === "price") return `${n} without a price`;
@@ -1168,11 +1643,12 @@ async function renderGallery(view, caps, opts = {}) {
       countEl.innerHTML = `${countText(0)}${countNote}${freshnessNote()}`;
       grid.innerHTML = `<div class="empty"><div class="big">${review ? "✓" : "🔍"}</div>
         <div>${review
-          ? (seg === "ready"
+          ? (reviewStage === "approve"
             ? "Nothing is ready to approve yet — items land here once they're priced and the AI has no doubts."
             : `No ${ISSUE_META[issue]?.empty || "review"} items right now.`)
           : "No items match your search or filters."}</div>
         ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
+      renderPreviewPane([]);
       gridInner = null; cardCache.clear();   // next non-empty draw rebuilds the container
       const cf = grid.querySelector("#clearFiltersBtn");
       if (cf) cf.onclick = clearAllFilters;
@@ -1180,7 +1656,8 @@ async function renderGallery(view, caps, opts = {}) {
     }
 
     reconcileGrid(rows);
-    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${approveCta}${swipeCta}${freshnessNote()}`;
+    renderPreviewPane(rows);
+    countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${openFirstCta}${approveCta}${swipeCta}${freshnessNote()}`;
   }
 
   // ---- selection interactions: tap, shift-click range, drag/slide sweep ----
@@ -1195,12 +1672,26 @@ async function renderGallery(view, caps, opts = {}) {
     if (st === "price" && it?.price != null && it?.has_cost_price === false) return "cost";
     return st;
   };
-  const openItemEditor = (id, focusIssue) => openEditor(
-    id,
-    caps,
-    () => refresh([id]), // targeted refresh: re-fetch only the edited item (Q1 step 6b)
-    review ? { focusIssue: focusIssue || reviewFocusIssue(byId[id]) } : {}
-  );
+  const openItemEditor = (id, focusIssue) => {
+    const currentIndex = filtered.findIndex((it) => it.id === id);
+    const nextId = review && currentIndex >= 0 ? filtered[currentIndex + 1]?.id : "";
+    let saved = false;
+    return openEditor(
+      id,
+      caps,
+      async () => {
+        saved = true;
+        await refresh([id]);
+      },
+      review ? {
+        focusIssue: focusIssue || reviewFocusIssue(byId[id]),
+        saveNext: !!nextId,
+        onClose: () => {
+          if (saved && nextId && byId[nextId]) openItemEditor(nextId, reviewFocusIssue(byId[nextId]));
+        },
+      } : {}
+    );
+  };
 
   function setSelected(card, on) {
     const id = card.dataset.id;
@@ -1263,19 +1754,35 @@ async function renderGallery(view, caps, opts = {}) {
     if (tip) { toast(tip.dataset.tip); return; }
     const thumb = e.target.closest(".thumb[data-img]");
     if (thumb) {
-      // Build the lightbox slide list from the current filtered rows on demand,
-      // so it always matches what's on screen regardless of render caching.
       const id = thumb.closest(".card[data-id]")?.dataset.id;
-      const imgRows = filtered.filter((it) => it.image_path);
-      const slides = imgRows.map((it) => {
-        const brand = it.brand || it.name || "—";
-        const sub = density === "list" ? (it.categories?.name || "") : summarizeItem(it);
-        return { getUrl: () => signFullImage(it.image_path), caption: esc([brand, sub].filter(Boolean).join(" · ")) };
-      });
-      openLightbox(slides, Math.max(0, imgRows.findIndex((it) => it.id === id)));
+      openPhotoLightbox(id);
       return;
     }
-    if (card) openItemEditor(card.dataset.id);
+    if (card) {
+      if (isPreviewPaneActive()) { setPreviewItem(card.dataset.id); return; }
+      openItemEditor(card.dataset.id);
+    }
+  });
+
+  grid.addEventListener("dblclick", (e) => {
+    if (selectionMode || !isPreviewPaneActive()) return;
+    const card = e.target.closest(".card[data-id]");
+    if (card && !e.target.closest(".thumb")) openItemEditor(card.dataset.id);
+  });
+
+  if (previewEl) previewEl.addEventListener("click", (e) => {
+    const tip = e.target.closest("[data-tip]");
+    if (tip) { toast(tip.dataset.tip); return; }
+    if (!previewSelectedId) return;
+    if (e.target.closest("[data-preview-open]")) openItemEditor(previewSelectedId);
+    else if (e.target.closest("[data-preview-photo]")) openPhotoLightbox(previewSelectedId);
+    else if (e.target.closest("[data-preview-select]") && canEdit) {
+      enterSelection();
+      const card = cardElFor(previewSelectedId);
+      if (card) setSelected(card, true);
+      else selected.add(previewSelectedId);
+      updateSelBar();
+    }
   });
 
   let lpStart = null;
@@ -1334,7 +1841,7 @@ async function renderGallery(view, caps, opts = {}) {
       out.push(`<button class="apill" data-facet="${esc(k)}" data-val="${esc(v)}">${esc(facetByKey[k]?.label || k)}: ${esc(v)} ✕</button>`);
     }
     if (noPrice) out.push(`<button class="apill" data-clear="noprice">Missing price ✕</button>`);
-    if (priceMin || priceMax) out.push(`<button class="apill" data-clear="price">Price: ${esc(priceMin || "0")}–${esc(priceMax || "∞")} ✕</button>`);
+    if (priceMin || priceMax) out.push(`<button class="apill" data-clear="price">Price: ${esc(priceMin ? fmtPrice(priceMin) : "0")}–${esc(priceMax ? fmtPrice(priceMax) : "∞")} ✕</button>`);
     if (datePreset !== "all") out.push(`<button class="apill" data-clear="dt">${esc(DATE_FILTERS.find((d) => d.v === datePreset)?.label || datePreset)} ✕</button>`);
     if (itemIds.size) out.unshift(`<button class="apill" data-clear="batch">Uploaded batch: ${itemIds.size} x</button>`);
     pillsEl.innerHTML = out.join("");
@@ -1343,6 +1850,40 @@ async function renderGallery(view, caps, opts = {}) {
   }
   // Count-line shortcuts (countEl is created fresh each renderGallery, so one
   // listener per render — no accumulation).
+  function selectMissingGroup(items) {
+    if (!items.length) return;
+    enterSelection();
+    items.forEach((it) => {
+      selected.add(it.id);
+      cardElFor(it.id)?.classList.add("selected");
+    });
+    updateSelBar();
+    toast(`${items.length} item${items.length === 1 ? "" : "s"} selected. Tap Edit to apply shared missing values.`);
+  }
+
+  function chooseMissingBulkGroup() {
+    const groups = new Map();
+    filtered.forEach((it) => {
+      const key = it.category_id || "__none__";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    });
+    if (groups.size <= 1) { selectMissingGroup(filtered); return; }
+    const rows = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+    const sh = openBottomSheet("Bulk edit missing details", `
+      <div class="menu-sub">Choose one category so the bulk editor can show its shared fields.</div>
+      ${rows.map(([key, items]) => `<button class="menu-item settings-row" data-missing-category="${esc(key)}">
+        <span><b>${esc(key === "__none__" ? "No category" : categoryPath(key))}</b><small>${items.length} item${items.length === 1 ? "" : "s"}</small></span>
+      </button>`).join("")}`);
+    sh.body.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-missing-category]");
+      if (!button) return;
+      const items = groups.get(button.dataset.missingCategory) || [];
+      sh.close();
+      selectMissingGroup(items);
+    });
+  }
+
   function handleCtaClick(e) {
     const cta = e.target.closest("[data-cta]");
     if (!cta) return;
@@ -1350,7 +1891,7 @@ async function renderGallery(view, caps, opts = {}) {
     else if (cta.dataset.cta === "setprices") {
       // One model everywhere: guided pricing. In Review it opens scoped to the
       // items on screen (selection mode); elsewhere it starts at the category
-      // picker. The pivot tool stays reachable as "Advanced" inside guided.
+      // picker. The table tool stays reachable inside guided.
       if (review) openGuidedPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
       else openGuidedPricing(caps, refresh);
     }
@@ -1361,31 +1902,59 @@ async function renderGallery(view, caps, opts = {}) {
       else toast("No failed AI jobs in this view.");
     }
     else if (cta.dataset.cta === "aifill") openBulkAi(filtered, caps, refresh);
+    else if (cta.dataset.cta === "fillmissing") {
+      const recoverable = filtered.filter((it) => it.image_path && it.category_id);
+      if (recoverable.length) openBulkAi(recoverable, caps, refresh);
+      else toast("These items need a photo or category before AI can fill details.");
+    }
+    else if (cta.dataset.cta === "selectmissing") chooseMissingBulkGroup();
     else if (cta.dataset.cta === "sync") openSyncCenter(caps, refresh, { focus: "errors" });
     else if (cta.dataset.cta === "approveall") approveItems(filtered.map((it) => it.id));
     else if (cta.dataset.cta === "openfirst" && filtered[0]) openItemEditor(filtered[0].id, reviewFocusIssue(filtered[0]));
+    else if (cta.dataset.cta === "allstage") setReviewIssue(defaultFilterForStage(reviewStage));
+    else if (cta.dataset.cta === "filterissue" && cta.dataset.issue) setReviewIssue(cta.dataset.issue);
+    else if (cta.dataset.cta === "selectquick") {
+      const quick = filtered.filter((it) => verificationRiskOf(it).bulkEligible);
+      if (!quick.length) { toast("No quick checks in this view."); return; }
+      enterSelection();
+      quick.forEach((it) => {
+        selected.add(it.id);
+        cardElFor(it.id)?.classList.add("selected");
+      });
+      updateSelBar();
+      toast(`${quick.length} quick checks selected. Scan them, then tap Verify.`);
+    }
   }
   countEl.addEventListener("click", handleCtaClick);
+  if (reviewBriefEl) reviewBriefEl.addEventListener("click", handleCtaClick);
 
   // Review-tab segment switch (Needs work ⇄ Ready to approve).
   const segRow = view.querySelector("#segRow");
   function setReviewIssue(next, announce = false) {
-    if (!REVIEW_QUEUE.includes(next) || next === issue) return;
+    if (!REVIEW_FILTERS.includes(next) || next === issue) return;
     issue = next;
-    seg = issue === "ready" ? "ready" : "work";
+    reviewStage = reviewStageForFilter(issue);
     if (segRow) {
-      segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.issue === issue));
+      segRow.querySelectorAll(".seg").forEach((s) => s.classList.toggle("on", s.dataset.stage === reviewStage));
     }
+    state.issue = issue;
+    state.stage = reviewStage;
+    persistAppSession("review");
+    window.history.replaceState(
+      { klineView: "review", reviewFilter: issue },
+      "",
+      buildAppUrl(window.location.href, { view: "review", reviewFilter: issue })
+    );
     draw();
     if (announce) {
-      toast(ISSUE_META[issue]?.label || "Review queue");
+      toast(ISSUE_META[issue]?.label || REVIEW_STAGE_META[reviewStage].label);
       navigator.vibrate?.(8);
     }
   }
   if (segRow) segRow.addEventListener("click", (e) => {
-    const btn = e.target.closest("[data-issue]");
-    if (!btn || btn.dataset.issue === issue) return;
-    setReviewIssue(btn.dataset.issue);
+    const btn = e.target.closest("[data-stage]");
+    if (!btn || btn.dataset.stage === reviewStage) return;
+    setReviewIssue(defaultFilterForStage(btn.dataset.stage));
   });
   function bindReviewSwipe(el) {
     if (!review || !el) return;
@@ -1401,9 +1970,9 @@ async function renderGallery(view, caps, opts = {}) {
       const dy = e.clientY - start.y;
       start = null;
       if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.45) return;
-      const i = REVIEW_QUEUE.indexOf(issue);
-      const next = REVIEW_QUEUE[Math.max(0, Math.min(REVIEW_QUEUE.length - 1, i + (dx < 0 ? 1 : -1)))];
-      setReviewIssue(next, true);
+      const i = REVIEW_STAGES.indexOf(reviewStage);
+      const nextStage = REVIEW_STAGES[Math.max(0, Math.min(REVIEW_STAGES.length - 1, i + (dx < 0 ? 1 : -1)))];
+      setReviewIssue(defaultFilterForStage(nextStage), true);
     }, { passive: true });
     el.addEventListener("pointercancel", () => { start = null; }, { passive: true });
   }
@@ -1425,6 +1994,13 @@ async function renderGallery(view, caps, opts = {}) {
   // picker), designed for non-technical mobile users: one consistent row idiom,
   // one decision per screen, current value shown on each row. Live-applies to
   // the grid behind it; the footer shows the live result count.
+  if (smartShelvesEl) smartShelvesEl.addEventListener("click", (e) => {
+    const smart = e.target.closest("[data-smart-shelf]");
+    if (smart) { applySmartView(smart.dataset.smartShelf); return; }
+    const saved = e.target.closest("[data-saved-shelf]");
+    if (saved) applySavedView(savedViews.find((v) => v.id === saved.dataset.savedShelf));
+  });
+
   function openFilters() {
     const matchCount = () => data.filter((it) => matches(it, null)).length;
     const PRIMARY = ["issue", "shop", "category", "brand"]; // shown directly; the rest go under "More"
@@ -1495,37 +2071,19 @@ async function renderGallery(view, caps, opts = {}) {
           : `<span class="fs-check-box${on ? " on" : ""}">${on ? "✓" : ""}</span><span class="fs-opt-label">${esc(label)}</span><span class="fs-opt-n">${n}</span>`
       }</button>`;
 
-    const smartViews = [
-      { id: "today", label: "Uploaded today" },
-      ...(review ? [{ id: "edited", label: ISSUE_META.edited.label }] : []),
-      { id: "ai", label: ISSUE_META.ai.label },
-      { id: "price", label: ISSUE_META.price.label },
-      { id: "doubt", label: ISSUE_META.doubt.label },
-      { id: "sync", label: ISSUE_META.sync.label },
-      { id: "ready", label: ISSUE_META.ready.label },
-    ];
+    const smartViews = () => smartViewDefs();
 
-    function resetSmartBase() {
-      q = ""; if (qEl) qEl.value = "";
-      for (const k in active) delete active[k];
-      priceMin = ""; priceMax = ""; noPrice = false; datePreset = "all"; itemIds = new Set();
-      if (!review) needsReview = false;
-    }
-
-    function applySmartView(id) {
-      resetSmartBase();
-      if (review && REVIEW_QUEUE.includes(id)) { issue = id; seg = id === "ready" ? "ready" : "work"; }
-      else if (id === "today") datePreset = "today";
-      else if (id === "price") noPrice = true;
-      else if (!review && ISSUE_META[id]) active.issue = new Set([ISSUE_META[id].label]);
-      apply(); showMaster();
+    function applySheetSmartView(id) {
+      applySmartView(id);
+      refreshShow();
+      showMaster();
     }
 
     // ---- MASTER list ----
     function showMaster() {
       currentBack = null; backBtn.hidden = true; titleEl.textContent = "Filters & sort";
-      let html = `<div class="sheet-sec">Smart views</div><div class="fs-list">${smartViews.map((v) =>
-        `<button class="fs-opt" data-smart="${esc(v.id)}"><span class="fs-opt-label">${esc(v.label)}</span></button>`).join("")}</div>`;
+      let html = `<div class="sheet-sec">Smart views</div><div class="fs-list">${smartViews().map((v) =>
+        `<button class="fs-opt${v.on ? " on" : ""}" data-smart="${esc(v.id)}"><span class="fs-opt-label">${esc(v.label)}</span><span class="fs-opt-n">${esc(Number(v.count || 0).toLocaleString())}</span></button>`).join("")}</div>`;
       html += `<div class="fs-list">${rowLink("sort", "Sort", SORTS.find((s) => s.v === sortBy)?.label || "Newest")}</div>`;
       html += `<div class="fs-list">`;
       for (const k of PRIMARY) if (facetByKey[k]) html += rowLink("facet:" + k, facetByKey[k].label, facetSummary(facetByKey[k]));
@@ -1554,10 +2112,11 @@ async function renderGallery(view, caps, opts = {}) {
       setFilterBody(`<div class="fs-detail">
         <div class="fs-list" style="margin-bottom:10px">${optRow("data-noprice", "Only items without a price", noPrice)}</div>
         <label class="cm-label" for="fsMin">Minimum price</label>
-        <input id="fsMin" class="rng" type="number" inputmode="numeric" placeholder="No minimum" value="${esc(priceMin)}"${noPrice ? " disabled" : ""}>
+        <input id="fsMin" class="rng" type="text" inputmode="numeric" data-price-input autocomplete="off" placeholder="No minimum" value="${esc(priceMin)}"${noPrice ? " disabled" : ""}>
         <label class="cm-label" for="fsMax">Maximum price</label>
-        <input id="fsMax" class="rng" type="number" inputmode="numeric" placeholder="No maximum" value="${esc(priceMax)}"${noPrice ? " disabled" : ""}>
+        <input id="fsMax" class="rng" type="text" inputmode="numeric" data-price-input autocomplete="off" placeholder="No maximum" value="${esc(priceMax)}"${noPrice ? " disabled" : ""}>
       </div>`);
+      bodyEl.querySelectorAll("[data-price-input]").forEach((input) => bindPriceInput(input));
       if (!noPrice) requestAnimationFrame(() => bodyEl.querySelector("#fsMin")?.focus());
     }
 
@@ -1615,7 +2174,7 @@ async function renderGallery(view, caps, opts = {}) {
     bodyEl.addEventListener("click", async (e) => {
       const nav = e.target.closest("[data-go]");
       const smart = e.target.closest("[data-smart]");
-      if (smart) { applySmartView(smart.dataset.smart); return; }
+      if (smart) { applySheetSmartView(smart.dataset.smart); return; }
       if (nav) {
         const id = nav.dataset.go;
         if (id === "sort") go(showSort, showMaster);
@@ -1666,6 +2225,7 @@ async function renderGallery(view, caps, opts = {}) {
         if (error) { toast("Couldn't delete view: " + error.message); return; }
         savedViews = savedViews.filter((x) => x.id !== del.dataset.del);
         galleryPayload.savedViews = savedViews;
+        renderSmartShelves();
         showSaved(); toast("View deleted");
         return;
       }
@@ -1692,6 +2252,7 @@ async function renderGallery(view, caps, opts = {}) {
         if (error) { toast("Couldn't save view: " + error.message); return; }
         savedViews.push(created);
         galleryPayload.savedViews = savedViews;
+        renderSmartShelves();
         showSaved(); toast("View saved");
       }
     });
@@ -1701,8 +2262,8 @@ async function renderGallery(view, caps, opts = {}) {
     let priceTimer;
     const applyDebounced = () => { clearTimeout(priceTimer); priceTimer = setTimeout(apply, 200); };
     bodyEl.addEventListener("input", (e) => {
-      if (e.target.id === "fsMin") { priceMin = e.target.value.trim(); applyDebounced(); }
-      else if (e.target.id === "fsMax") { priceMax = e.target.value.trim(); applyDebounced(); }
+      if (e.target.id === "fsMin") { priceMin = stripPriceGrouping(e.target.value); applyDebounced(); }
+      else if (e.target.id === "fsMax") { priceMax = stripPriceGrouping(e.target.value); applyDebounced(); }
       else if (e.target.classList.contains("facet-filter") && curFacet) {
         facetFilter[curFacet.key] = e.target.value.trim().toLowerCase();
         renderFacet();
@@ -1758,8 +2319,8 @@ async function renderGallery(view, caps, opts = {}) {
       <input id="be-brand" list="dl-brand" placeholder="${UNCH}">
       <datalist id="dl-brand">${vocabSuggestions("brand").map((o) => `<option value="${esc(o)}">`).join("")}</datalist>
       <div class="cm-label">Retail price</div>
-      <input id="be-price" type="number" inputmode="decimal" placeholder="${UNCH}">
-      ${canCost ? `<div class="cm-label">Cost price</div><input id="be-cost" type="number" inputmode="decimal" placeholder="${UNCH}">` : ""}
+      <input id="be-price" type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="${UNCH}">
+      ${canCost ? `<div class="cm-label">Cost price</div><input id="be-cost" type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="${UNCH}">` : ""}
       <div class="cm-label">Stock quantity</div>
       <input id="be-stock" type="number" inputmode="numeric" placeholder="${UNCH}">
       <div class="cm-label">Reorder level</div>
@@ -1784,20 +2345,26 @@ async function renderGallery(view, caps, opts = {}) {
     body += `<button class="primary up-go" id="be-apply">Apply to ${ids.length} item${ids.length === 1 ? "" : "s"}</button>`;
 
     const sh = openBottomSheet("Edit selected", body);
+    sh.body.querySelectorAll("[data-price-input]").forEach((input) => bindPriceInput(input));
     sh.body.querySelector("#be-apply").onclick = async () => {
       const col = {};
       const st = sh.body.querySelector("#be-status").value;
       if (st) col.status = st;
       const brand = sh.body.querySelector("#be-brand").value.trim();
       if (brand) col.brand = normalizeValue("brand", brand);
-      const price = sh.body.querySelector("#be-price").value.trim();
-      if (price !== "") col.price = Number(price);
+      const priceRaw = sh.body.querySelector("#be-price").value.trim();
+      const price = parsePrice(priceRaw);
+      if (priceRaw !== "" && price === null) { toast("Enter a valid retail price."); return; }
+      if (price !== null) col.price = price;
       const stock = sh.body.querySelector("#be-stock").value.trim();
       if (stock !== "") col.stock_quantity = Number(stock);
       const reorder = sh.body.querySelector("#be-reorder").value.trim();
       if (reorder !== "") col.reorder_level = Number(reorder);
       const costEl = sh.body.querySelector("#be-cost");
-      const costVal = costEl && costEl.value.trim() !== "" ? Number(costEl.value.trim()) : undefined;
+      const costRaw = costEl?.value.trim() || "";
+      const costParsed = parsePrice(costRaw);
+      if (costRaw !== "" && costParsed === null) { toast("Enter a valid cost price."); return; }
+      const costVal = costRaw !== "" ? costParsed : undefined;
 
       const attrChanges = {};
       sh.body.querySelectorAll(".be-attr").forEach((el) => {
@@ -1913,26 +2480,95 @@ async function renderGallery(view, caps, opts = {}) {
     if (!selected.size) return;
     await approveItems([...selected]);
   }
-  // The shared approve core — used by the selection bar AND the Ready
-  // segment's "Approve all" (identical guard/Undo semantics either way).
-  function approvalReasonText(entries, key = "blockers") {
-    const counts = {};
-    for (const entry of entries) {
-      for (const issue of entry.readiness[key] || []) {
-        counts[issue.label] = (counts[issue.label] || 0) + 1;
+
+  async function writeConfidenceRows(rows, valueKey) {
+    let cursor = 0;
+    const successful = [];
+    const failed = [];
+    const workers = Array.from({ length: Math.min(6, rows.length) }, async () => {
+      while (cursor < rows.length) {
+        const row = rows[cursor++];
+        const { error } = await supabase.from("items").update({ confidence: row[valueKey] }).eq("id", row.id);
+        if (error) failed.push({ row, error });
+        else successful.push(row);
       }
-    }
-    return Object.entries(counts)
-      .map(([label, n]) => `${n} ${label.toLowerCase()}`)
-      .join(", ");
+    });
+    await Promise.all(workers);
+    return { successful, failed };
   }
 
+  async function verifySelected() {
+    if (!selected.size) return;
+    const chosen = [...selected].map((id) => byId[id]).filter(Boolean);
+    const eligible = chosen.filter((it) => verificationRiskOf(it).bulkEligible);
+    const skipped = chosen.length - eligible.length;
+    if (!eligible.length) {
+      toast("No selected items are quick checks. Critical and recent-edit items need an individual decision.");
+      return;
+    }
+    const ok = await confirmSheet({
+      title: `Verify ${eligible.length} quick check${eligible.length === 1 ? "" : "s"}?`,
+      message: `Use this after scanning the photos and highlighted values. Only items with one or two Medium-confidence fields will move forward.${skipped ? ` ${skipped} critical or recent-edit item${skipped === 1 ? " is" : "s are"} excluded.` : ""} This does not approve anything.`,
+      confirmText: `Verify ${eligible.length}`,
+      cancelText: "Keep reviewing",
+    });
+    if (!ok) return;
+
+    const rows = eligible.map((it) => {
+      const before = { ...(it.confidence || {}) };
+      const after = { ...before };
+      aiDoubtFields(it).forEach(({ key }) => { after[key] = "High"; });
+      return { id: it.id, before, after };
+    });
+    const { successful, failed } = await writeConfidenceRows(rows, "after");
+    if (!successful.length) {
+      toast(`Bulk verify failed: ${failed[0]?.error?.message || "check connection"}`);
+      return;
+    }
+
+    const changes = new Map();
+    successful.forEach((row) => {
+      if (byId[row.id]) byId[row.id].confidence = row.after;
+      changes.set(row.id, Object.keys(row.after)
+        .filter((key) => row.before[key] !== row.after[key])
+        .map((key) => ({ field_path: `confidence.${key}`, before: row.before[key] || null, after: row.after[key] })));
+    });
+    await logManyItemActivities(
+      successful.map((row) => row.id),
+      "verification",
+      "manual",
+      changes,
+      "Bulk verified Medium-confidence fields"
+    );
+    if (selectionMode) exitSelection();
+    draw();
+    navigator.vibrate?.([12, 40, 12]);
+    const failureNote = failed.length ? `; ${failed.length} failed` : "";
+    toast(`Verified ${successful.length} quick check${successful.length === 1 ? "" : "s"}${failureNote}`, {
+      label: "Undo",
+      onClick: async () => {
+        const undo = await writeConfidenceRows(successful, "before");
+        undo.successful.forEach((row) => { if (byId[row.id]) byId[row.id].confidence = row.before; });
+        await logManyItemActivities(
+          undo.successful.map((row) => row.id),
+          "undo",
+          "undo",
+          new Map(),
+          "Undid bulk verification"
+        );
+        draw();
+        toast(undo.failed.length ? `Undo restored ${undo.successful.length}; ${undo.failed.length} failed` : "Bulk verification undone");
+      },
+    });
+  }
+  // The shared approve core — used by the selection bar AND the Ready
+  // segment's "Approve all" (identical guard/Undo semantics either way).
   async function approveItems(ids) {
     if (!ids.length) return;
     // No price ⇒ not sellable ⇒ can't be approved. Approve the priced ones and
     // report how many were skipped, rather than blocking the whole batch.
     const items = ids.map((id) => byId[id]).filter(Boolean);
-    const summary = approvalSummary(items);
+    const summary = approvalSummary(items, { canViewCost: !!caps.can_view_cost });
     const approveIds = summary.approvable.map(({ item }) => item.id);
     const blockedN = summary.blocked.length;
     if (!approveIds.length) {
@@ -1941,7 +2577,7 @@ async function renderGallery(view, caps, opts = {}) {
         readiness.blockers.some((b) => b.issue === "price")
       );
       const action = hasPriceBlocker
-        ? { label: "Set prices", onClick: () => { if (selectionMode) exitSelection(); openGuidedPricing(caps, refresh, { itemIds: ids }); } }
+        ? { label: "Price items", onClick: () => { if (selectionMode) exitSelection(); openGuidedPricing(caps, refresh, { itemIds: ids }); } }
         : null;
       toast(`Can't approve: ${reasons}.`, action);
       return;
@@ -1957,16 +2593,7 @@ async function renderGallery(view, caps, opts = {}) {
       if (!ok) return;
     }
 
-    if (summary.warned.length) {
-      const reasons = approvalReasonText(summary.warned, "warnings") || "AI fields need a check";
-      const ok = await confirmSheet({
-        title: "Approve with AI checks?",
-        message: `${summary.warned.length} item${summary.warned.length === 1 ? " has" : "s have"} warnings: ${reasons}. Approve only if you have checked them.`,
-        confirmText: "Approve",
-        cancelText: "Review first",
-      });
-      if (!ok) return;
-    }
+    if (!(await confirmApprovalSummaryWarnings(summary))) return;
 
     const prior = approveIds.map((id) => ({ id, status: byId[id]?.status }));
     const { error } = await supabase.from("items").update({ status: "approved" }).in("id", approveIds);
@@ -2022,7 +2649,7 @@ async function renderGallery(view, caps, opts = {}) {
       grid.querySelectorAll(".card[data-id]").forEach((c) => c.classList.add("selected"));
       updateSelBar();
     };
-    view.querySelector("#abApprove").onclick = approveSelected;
+    view.querySelector("#abApprove").onclick = review && reviewStage === "verify" ? verifySelected : approveSelected;
     view.querySelector("#abAi").onclick = () => {
       if (!selected.size) return;
       const items = [...selected].map((id) => byId[id]).filter(Boolean);
@@ -2032,7 +2659,7 @@ async function renderGallery(view, caps, opts = {}) {
     view.querySelector("#abMore").onclick = () => {
       if (!selected.size) return;
       const body = `
-        <button class="menu-item" data-pricesel>Set prices for ${selected.size} item(s)…</button>
+        <button class="menu-item" data-pricesel>Price ${selected.size} selected item${selected.size === 1 ? "" : "s"}…</button>
         <button class="menu-item" data-clearsel>Clear selection</button>
         ${canDelete ? `<button class="menu-item danger" data-del>Delete ${selected.size} item(s)</button>` : ""}`;
       const sh = openBottomSheet("More actions", body);
@@ -2096,6 +2723,318 @@ async function renderGallery(view, caps, opts = {}) {
 
   draw();
   pills();
+}
+
+async function renderToday(view, caps, actions = {}) {
+  const mySeq = ++renderTodaySeq;
+  const appNav = document.querySelector(".bottomnav");
+  if (appNav) appNav.style.display = "";
+  view.innerHTML = `
+    <div class="today-wrap">
+      <section class="today-hero">
+        <div>
+          <div class="today-kicker">Operations</div>
+          <h2>Today</h2>
+          <p>Intake, review, pricing, and shop sync in one working surface.</p>
+        </div>
+        <div class="today-loading" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+      </section>
+      <div class="today-grid">
+        <div class="today-skel"></div><div class="today-skel"></div>
+        <div class="today-skel"></div><div class="today-skel"></div>
+      </div>
+    </div>`;
+
+  let galleryPayload;
+  try {
+    galleryPayload = await loadGalleryPayload(caps);
+  } catch (error) {
+    if (mySeq !== renderTodaySeq) return;
+    view.innerHTML = `<div class="empty"><div class="big">!</div>
+      <div>Couldn't load today's overview.</div>
+      <div style="color:var(--muted);font-size:13px">${esc(error.message || error)}</div></div>`;
+    return;
+  }
+  if (mySeq !== renderTodaySeq) return;
+
+  const rows = galleryPayload.data || [];
+  const syncCounts = galleryPayload.syncCounts || {};
+  const posMirror = galleryPayload.posMirror || {};
+  const byVariant = posMirror.byVariant instanceof Map ? posMirror.byVariant : new Map();
+  const reviewCount = rows.filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length;
+  const freshness = todayFreshness(posMirror.lastMirror);
+  const freshnessNeedsWork = freshness.cls === "warn" || freshness.cls === "bad";
+  const shopIssueCount = (syncCounts.errors || 0) + (syncCounts.dirty || 0) + (freshnessNeedsWork ? 1 : 0);
+  let issueCounts = {};
+  setReviewBadge(reviewCount);
+  setShopBadge(shopIssueCount);
+
+  if (!rows.length) {
+    view.innerHTML = `
+      <div class="today-wrap">
+        <section class="today-hero">
+          <div>
+            <div class="today-kicker">Operations</div>
+            <h2>Today</h2>
+            <p>No inventory is loaded yet.</p>
+          </div>
+          <div class="today-hero-actions">
+            ${caps.can_upload ? `<button class="primary" data-today-action="add">Add photos</button>` : ""}
+            <button class="ghost" data-today-action="catalog">Open catalog</button>
+          </div>
+        </section>
+      </div>`;
+    bindTodayActions();
+    return;
+  }
+
+  issueCounts = Object.fromEntries(REVIEW_QUEUE.map((key) => [
+    key,
+    rows.filter((it) => queueMatches(it, key)).length,
+  ]));
+  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+  const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - 7);
+  const intakeToday = rows.filter((it) => it.created_at && new Date(it.created_at) >= todayStart).length;
+  const intakeWeek = rows.filter((it) => it.created_at && new Date(it.created_at) >= weekStart).length;
+  const mirrorOf = (it) => (it.pos_variant_id ? byVariant.get(it.pos_variant_id) : undefined);
+  const shopStateOf = (it) => libShopState(it, mirrorOf);
+  const shopStates = rows.map(shopStateOf);
+  const inShop = shopStates.filter((st) => ["In shop", "Low stock", "Sold out"].includes(st)).length;
+  const lowStock = shopStates.filter((st) => st === "Low stock").length;
+  const queued = shopStates.filter((st) => st === "Queued").length;
+  const syncErrors = shopStates.filter((st) => st === "Sync error").length;
+  const mirrorRows = [...byVariant.values()];
+  const soldToday = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_today || row.sold_today || 0), 0);
+  const soldWeek = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_7d || row.sold_7d || row.units_sold_week || 0), 0);
+  const aiChecks = (issueCounts.doubt || 0) + (issueCounts.ai || 0);
+  const missingRetail = rows.filter((it) => it.price == null).length;
+  const missingCost = caps.can_view_cost ? rows.filter((it) => it.has_cost_price === false).length : 0;
+  const priceSub = caps.can_view_cost && missingCost
+    ? `${missingRetail.toLocaleString()} missing retail, ${missingCost.toLocaleString()} missing cost`
+    : "Items blocked by missing prices";
+  const syncSub = freshnessNeedsWork
+    ? freshness.text
+    : `${Number(syncCounts.queued || 0).toLocaleString()} queued, ${Number(syncCounts.dirty || 0).toLocaleString()} updates, ${Number(syncCounts.errors || 0).toLocaleString()} errors`;
+
+  const photoRows = rows.filter((it) => it.image_path).slice(0, 5);
+  const photoUrls = await Promise.all(photoRows.map((it) => signThumb(it.image_path)));
+  if (mySeq !== renderTodaySeq) return;
+
+  const activityRows = rows
+    .filter((it) => it.activity?.latest_at)
+    .sort((a, b) => new Date(b.activity.latest_at) - new Date(a.activity.latest_at))
+    .slice(0, 4);
+  let suppressTodayClick = false;
+
+  view.innerHTML = `
+    <div class="today-wrap">
+      <section class="today-hero">
+        <div class="today-hero-copy">
+          <div class="today-kicker">Operations</div>
+          <h2>Today</h2>
+          <p>${esc(rows.length.toLocaleString())} catalog item${rows.length === 1 ? "" : "s"} loaded. ${esc(reviewCount.toLocaleString())} item${reviewCount === 1 ? "" : "s"} need${reviewCount === 1 ? "s" : ""} a decision.</p>
+        </div>
+        <div class="today-hero-actions">
+          ${caps.can_upload ? `<button class="primary" data-today-action="add">${ICON.navAdd}<span>New intake</span></button>` : ""}
+          <button class="ghost" data-today-action="catalog">${ICON.navGallery}<span>Catalog</span></button>
+        </div>
+      </section>
+
+      <section class="today-decision-grid" aria-label="Work queues">
+        ${todayQueueCard("price", "Price queue", issueCounts.price || 0, priceSub, "price", ICON.navShop)}
+        ${todayQueueCard("ai", "AI check", aiChecks, "Confidence, failed fill, and missing AI work", "ai-check", ICON.sparkle)}
+        ${todayQueueCard("ready", "Ready", issueCounts.ready || 0, "Priced items ready to approve", "ready", ICON.tick)}
+        ${todayQueueCard("sync", "Shop sync", shopIssueCount, syncSub, "sync", ICON.refresh)}
+      </section>
+
+      <section class="today-main">
+        <div class="today-panel today-intake">
+          <div class="today-panel-head">
+            <div>
+              <h3>Intake</h3>
+              <p>${intakeToday.toLocaleString()} today, ${intakeWeek.toLocaleString()} in the last 7 days</p>
+            </div>
+            ${caps.can_upload ? `<button class="iconbtn" data-today-action="add" aria-label="Add photos">${ICON.navAdd}</button>` : ""}
+          </div>
+          <div class="today-strip">
+            ${photoRows.length ? photoRows.map((it, i) => todayThumbHtml(it, photoUrls[i])).join("") : `<div class="today-empty-inline">No product photos yet.</div>`}
+          </div>
+        </div>
+
+        <div class="today-panel today-shop">
+          <div class="today-panel-head">
+            <div>
+              <h3>Shop floor</h3>
+              <p class="${freshness.cls}">${esc(freshness.text)}</p>
+            </div>
+            <button class="iconbtn" data-today-action="shop" aria-label="Open shop">${ICON.navShop}</button>
+          </div>
+          <div class="today-metrics">
+            ${todayMetric("In shop", inShop)}
+            ${todayMetric("Sold today", soldToday)}
+            ${todayMetric("7 day sold", soldWeek)}
+            ${todayMetric("Low stock", lowStock, lowStock ? "warn" : "")}
+            ${todayMetric("Queued", queued)}
+            ${todayMetric("Errors", Math.max(syncErrors, syncCounts.errors || 0), (syncErrors || syncCounts.errors) ? "bad" : "")}
+          </div>
+        </div>
+      </section>
+
+      <section class="today-panel today-activity">
+        <div class="today-panel-head">
+          <div>
+            <h3>Recent activity</h3>
+            <p>Latest catalog changes</p>
+          </div>
+          <button class="ghost small" data-today-action="activity">Open feed</button>
+        </div>
+        <div class="today-activity-list">
+          ${activityRows.length ? activityRows.map(todayActivityHtml).join("") : `<div class="today-empty-inline">No recent activity.</div>`}
+        </div>
+      </section>
+    </div>`;
+  bindTodayActions();
+
+  function bindTodayActions() {
+    view.onclick = handleTodayClick;
+    bindTodayPreview();
+  }
+
+  function handleTodayClick(e) {
+    const actionBtn = e.target.closest("[data-today-action]");
+    const reviewBtn = e.target.closest("[data-today-review]");
+    const openBtn = e.target.closest("[data-today-open]");
+    if (suppressTodayClick && reviewBtn) {
+      suppressTodayClick = false;
+      return;
+    }
+    if (reviewBtn) {
+      const key = reviewBtn.dataset.todayReview;
+      if (key === "ai-check") actions.openReviewQueue?.((issueCounts.doubt || 0) ? "doubt" : "ai");
+      else if (key === "sync") {
+        if (caps.can_manage_users) openSyncCenter(caps, actions.refreshCurrent, { focus: "errors" });
+        else actions.setView?.("shop");
+      } else {
+        actions.openReviewQueue?.(key);
+      }
+      return;
+    }
+    if (openBtn) {
+      const id = openBtn.dataset.todayOpen;
+      openEditor(id, caps, () => actions.refreshCurrent?.());
+      return;
+    }
+    if (!actionBtn) return;
+    const action = actionBtn.dataset.todayAction;
+    if (action === "add") actions.setView?.("add");
+    else if (action === "catalog") actions.setView?.("catalog");
+    else if (action === "shop") actions.setView?.("shop");
+    else if (action === "activity") openActivityFeed(caps);
+  }
+
+  function todayQueueCard(tone, title, count, sub, reviewKey, icon) {
+    return `<button class="today-qcard ${tone}" data-today-review="${esc(reviewKey)}"
+      data-preview-title="${esc(title)}" data-preview-count="${esc(Number(count || 0).toLocaleString())}" data-preview-detail="${esc(sub)}">
+      <span class="today-qico">${icon || ""}</span>
+      <span class="today-qcopy"><b>${esc(Number(count || 0).toLocaleString())}</b><span>${esc(title)}</span><small>${esc(sub)}</small></span>
+    </button>`;
+  }
+
+  function bindTodayPreview() {
+    let timer = null, start = null, previewed = false;
+    const clearTimer = () => { if (timer) { clearTimeout(timer); timer = null; } };
+    const openPreview = (btn, suppressClick = true) => {
+      if (!btn) return;
+      previewed = true;
+      if (suppressClick) {
+        suppressTodayClick = true;
+        setTimeout(() => { suppressTodayClick = false; }, 900);
+      }
+      const title = btn.dataset.previewTitle || "Work queue";
+      const count = btn.dataset.previewCount || "0";
+      const detail = btn.dataset.previewDetail || "";
+      const sh = openBottomSheet(title, `
+        <div class="today-preview">
+          <b>${esc(count)}</b>
+          <span>${esc(detail)}</span>
+          <button class="primary up-go" data-open-work>Open queue</button>
+        </div>`);
+      sh.body.querySelector("[data-open-work]").onclick = () => {
+        sh.close();
+        suppressTodayClick = false;
+        handleTodayClick({ target: btn });
+      };
+    };
+    view.querySelectorAll(".today-qcard").forEach((btn) => {
+      btn.addEventListener("click", (e) => {
+        if (!suppressTodayClick) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        suppressTodayClick = false;
+      }, true);
+      btn.addEventListener("contextmenu", (e) => { e.preventDefault(); openPreview(btn, false); });
+      btn.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse") return;
+        start = { x: e.clientX, y: e.clientY };
+        previewed = false;
+        timer = setTimeout(() => openPreview(btn), 520);
+      });
+      btn.addEventListener("pointermove", (e) => {
+        if (!timer || !start) return;
+        if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > 12) clearTimer();
+      });
+      btn.addEventListener("pointerup", (e) => {
+        clearTimer();
+        if (previewed) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      });
+      btn.addEventListener("pointercancel", clearTimer);
+    });
+  }
+
+  function todayThumbHtml(it, url) {
+    const title = todayItemTitle(it);
+    const sub = [it.categories?.name, it.price != null ? fmtPrice(it.price) : "Missing price"].filter(Boolean).join(" / ");
+    return `<button class="today-thumb" data-today-open="${esc(it.id)}" title="${esc(title)}">
+      ${url ? `<img src="${esc(url)}" alt="${esc(title)}">` : `<span>No image</span>`}
+      <span><b>${esc(title)}</b><small>${esc(sub)}</small></span>
+    </button>`;
+  }
+
+  function todayActivityHtml(it) {
+    const activity = it.activity || {};
+    const source = activitySourceLabel(activity.latest_source);
+    const cls = activitySourceClass(activity.latest_source);
+    const when = activity.latest_at ? new Date(activity.latest_at).toLocaleString() : "";
+    const summary = activity.latest_summary || "Updated";
+    return `<button class="today-act-row" data-today-open="${esc(it.id)}">
+      <span class="source-pill src-${esc(cls)}">${esc(source)}</span>
+      <span class="today-act-copy"><b>${esc(todayItemTitle(it))}</b><small>${esc(summary)}</small></span>
+      <time>${esc(when)}</time>
+    </button>`;
+  }
+}
+
+function todayMetric(label, value, cls = "") {
+  return `<span class="${esc(cls)}"><b>${esc(Number(value || 0).toLocaleString())}</b><small>${esc(label)}</small></span>`;
+}
+
+function todayItemTitle(it) {
+  return [it.brand, it.name].filter(Boolean).join(" ") || it.sku || "Untitled item";
+}
+
+function todayFreshness(lastMirror) {
+  if (!lastMirror?.finished_at) return { text: "Shop sync has not run", cls: "warn" };
+  const t = new Date(lastMirror.finished_at);
+  if (isNaN(t)) return { text: "Shop sync time unavailable", cls: "warn" };
+  const mins = Math.max(0, Math.round((Date.now() - t.getTime()) / 60000));
+  const age = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)} hr ago`;
+  if (lastMirror.ok === false) return { text: `Sync failed ${age}`, cls: "bad" };
+  return { text: `Shop data ${age}`, cls: mins > 30 ? "warn" : "" };
 }
 
 

@@ -1,0 +1,1454 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>K-LINE MEN Catalog - UI Direction Mockup</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --page: #eef1f3;
+      --ink: #17201f;
+      --muted: #65716f;
+      --panel: #fbfaf6;
+      --panel-2: #f3f0e7;
+      --line: #d9d5ca;
+      --line-strong: #bfb8aa;
+      --nav: #161b1b;
+      --nav-ink: #f5f0e6;
+      --petrol: #0b6e72;
+      --petrol-soft: #dcefed;
+      --petrol-ink: #08474c;
+      --green: #247248;
+      --green-soft: #def0e5;
+      --amber: #a56610;
+      --amber-soft: #f6e8c9;
+      --cranberry: #af3446;
+      --cranberry-soft: #f3dce1;
+      --violet: #6252a2;
+      --violet-soft: #e6e1f4;
+      --blue: #2d5e88;
+      --blue-soft: #dce8f2;
+      --shadow: 0 18px 50px rgba(38, 32, 22, .16);
+      --shadow-soft: 0 8px 26px rgba(38, 32, 22, .1);
+      --r: 8px;
+      --safe-bottom: 14px;
+    }
+
+    [data-theme="dark"] {
+      color-scheme: dark;
+      --page: #0d1111;
+      --ink: #edf2ed;
+      --muted: #a3afa8;
+      --panel: #191f1e;
+      --panel-2: #222927;
+      --line: #343e3b;
+      --line-strong: #4c5a55;
+      --nav: #080b0b;
+      --nav-ink: #f5f0e6;
+      --petrol: #37b9bd;
+      --petrol-soft: #113b3d;
+      --petrol-ink: #baf5f2;
+      --green: #74d397;
+      --green-soft: #173922;
+      --amber: #e4aa44;
+      --amber-soft: #46331a;
+      --cranberry: #ee8090;
+      --cranberry-soft: #452029;
+      --violet: #b4a7ff;
+      --violet-soft: #302b4c;
+      --blue: #8bc7f0;
+      --blue-soft: #203343;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .44);
+      --shadow-soft: 0 8px 26px rgba(0, 0, 0, .28);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { min-height: 100%; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      line-height: 1.4;
+      letter-spacing: 0;
+      color: var(--ink);
+      overflow-x: hidden;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .58), rgba(255, 255, 255, 0) 240px),
+        var(--page);
+    }
+    [data-theme="dark"] body {
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, .06), rgba(255, 255, 255, 0) 250px),
+        var(--page);
+    }
+    button, input, select {
+      font: inherit;
+      letter-spacing: 0;
+    }
+    button {
+      min-height: 44px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: var(--r);
+      cursor: pointer;
+    }
+    button:active { transform: translateY(1px); }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--petrol);
+      outline-offset: 2px;
+    }
+
+    .prototype {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 244px minmax(390px, 510px) minmax(360px, 1fr);
+      gap: 22px;
+      padding: 24px;
+      align-items: start;
+    }
+
+    .side {
+      position: sticky;
+      top: 24px;
+      background: var(--nav);
+      color: var(--nav-ink);
+      border: 1px solid rgba(255, 255, 255, .08);
+      border-radius: var(--r);
+      padding: 18px;
+      box-shadow: var(--shadow-soft);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      border-radius: var(--r);
+      display: grid;
+      place-items: center;
+      background: #f4d98d;
+      color: #17201f;
+      font-weight: 800;
+    }
+    .brand b { display: block; font-size: 16px; }
+    .brand span { display: block; color: #c8cec8; font-size: 12px; }
+    .screen-tabs {
+      display: grid;
+      gap: 8px;
+    }
+    .screen-tabs button, .theme-tabs button {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 12px;
+      background: rgba(255, 255, 255, .055);
+      border-color: rgba(255, 255, 255, .1);
+      color: var(--nav-ink);
+      text-align: left;
+    }
+    .screen-tabs button.on {
+      background: #f4d98d;
+      color: #17201f;
+      border-color: #f4d98d;
+      font-weight: 700;
+    }
+    .tab-count {
+      min-width: 24px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      text-align: center;
+      color: inherit;
+      background: rgba(0, 0, 0, .12);
+      font-size: 12px;
+    }
+    .side-section {
+      margin-top: 18px;
+      padding-top: 16px;
+      border-top: 1px solid rgba(255, 255, 255, .12);
+    }
+    .side-label {
+      color: #b9c3bd;
+      font-size: 12px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .theme-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .theme-tabs button.on {
+      background: rgba(244, 217, 141, .2);
+      border-color: rgba(244, 217, 141, .5);
+    }
+    .side-note {
+      color: #c8cec8;
+      font-size: 12px;
+    }
+
+    .device-wrap {
+      display: grid;
+      place-items: center;
+    }
+    .phone {
+      width: min(100%, 430px);
+      height: 884px;
+      max-height: calc(100vh - 48px);
+      min-height: 720px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      background: var(--panel);
+      border: 10px solid #0e1212;
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+    }
+    .phone-top {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 88%, var(--panel-2));
+    }
+    .app-title {
+      flex: 1;
+      min-width: 0;
+    }
+    .app-title b {
+      display: block;
+      font-size: 17px;
+      line-height: 1.1;
+    }
+    .app-title span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .role {
+      min-height: 28px;
+      display: grid;
+      place-items: center;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--amber-soft);
+      color: var(--amber);
+      border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .cmd {
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      background: var(--petrol);
+      border-color: var(--petrol);
+      color: white;
+      font-weight: 800;
+    }
+    .phone-main {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+      position: relative;
+    }
+    .screen {
+      display: none;
+      height: 100%;
+      overflow-y: auto;
+      padding: 14px 14px 92px;
+      scrollbar-width: thin;
+    }
+    .screen.active { display: block; }
+    .bottom-nav {
+      flex: 0 0 auto;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      padding-bottom: var(--safe-bottom);
+      border-top: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 90%, var(--panel-2));
+    }
+    .bottom-nav button {
+      min-height: 62px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 3px;
+      font-size: 11px;
+      position: relative;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .bottom-nav button.on { color: var(--petrol); font-weight: 800; }
+    .nav-icon {
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      border: 1px solid currentColor;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .bottom-nav .badge {
+      position: absolute;
+      top: 8px;
+      right: 20%;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--cranberry);
+      color: white;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .band {
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      border-radius: var(--r);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .band h2, .section-title {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.15;
+    }
+    .band p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .status-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 9px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 6px;
+      background: var(--green);
+    }
+    .dot.warn { background: var(--amber); }
+    .dot.bad { background: var(--cranberry); }
+    .dot.ai { background: var(--violet); }
+
+    .work-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .work-card {
+      min-height: 104px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: var(--r);
+      padding: 11px;
+      box-shadow: var(--shadow-soft);
+    }
+    .work-card strong {
+      display: block;
+      font-size: 30px;
+      line-height: 1;
+      margin-bottom: 7px;
+    }
+    .work-card b {
+      display: block;
+      font-size: 13px;
+    }
+    .work-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+    .work-card.ready strong { color: var(--green); }
+    .work-card.price strong { color: var(--amber); }
+    .work-card.ai strong { color: var(--violet); }
+    .work-card.sync strong { color: var(--cranberry); }
+
+    .photo-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .mini-photo {
+      min-width: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      overflow: hidden;
+      background: var(--panel);
+      position: relative;
+    }
+    .mini-photo img, .product-card img, .shop-thumb img, .review-photo img, .camera-feed img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+    .mini-photo .mini-state {
+      position: absolute;
+      left: 5px;
+      right: 5px;
+      bottom: 5px;
+      min-height: 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 6px;
+      background: rgba(18, 22, 21, .72);
+      color: white;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .mini-photo::before {
+      content: "";
+      display: block;
+      aspect-ratio: 1;
+    }
+    .mini-photo img {
+      position: absolute;
+      inset: 0;
+    }
+
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      padding: 10px 8px;
+      text-align: center;
+      background: var(--panel);
+    }
+    .metric b {
+      display: block;
+      font-size: 23px;
+      line-height: 1;
+    }
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 5px;
+    }
+
+    .activity-list, .shop-list, .review-list {
+      display: grid;
+      gap: 8px;
+    }
+    .activity-row, .shop-row, .review-row {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--panel);
+      padding: 8px;
+    }
+    .source {
+      min-width: 54px;
+      min-height: 26px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      border: 1px solid var(--line);
+    }
+    .source.ai { color: var(--violet); background: var(--violet-soft); border-color: color-mix(in srgb, var(--violet) 36%, transparent); }
+    .source.sync { color: var(--cranberry); background: var(--cranberry-soft); border-color: color-mix(in srgb, var(--cranberry) 36%, transparent); }
+    .source.ok { color: var(--green); background: var(--green-soft); border-color: color-mix(in srgb, var(--green) 36%, transparent); }
+    .row-copy {
+      flex: 1;
+      min-width: 0;
+    }
+    .row-copy b {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 13px;
+    }
+    .row-copy span {
+      display: block;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 12px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .toolbar input {
+      min-height: 44px;
+      min-width: 0;
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--panel-2);
+      color: var(--ink);
+      padding: 0 12px;
+    }
+    .icon-btn {
+      width: 44px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+    }
+    .shelf-row, .queue-tabs, .chip-row {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 3px;
+      margin-bottom: 10px;
+      scrollbar-width: none;
+    }
+    .shelf-row::-webkit-scrollbar, .queue-tabs::-webkit-scrollbar, .chip-row::-webkit-scrollbar { display: none; }
+    .chip, .queue-tabs button {
+      flex: 0 0 auto;
+      min-height: 36px;
+      padding: 0 12px;
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .chip.on, .queue-tabs button.on {
+      background: var(--petrol-soft);
+      color: var(--petrol-ink);
+      border-color: color-mix(in srgb, var(--petrol) 38%, transparent);
+      font-weight: 800;
+    }
+
+    .catalog-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .product-card {
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: var(--shadow-soft);
+    }
+    .product-media {
+      position: relative;
+      aspect-ratio: 1;
+      background: var(--panel-2);
+    }
+    .product-body {
+      padding: 9px;
+    }
+    .product-body b {
+      display: block;
+      font-size: 13px;
+      line-height: 1.2;
+      min-height: 32px;
+    }
+    .product-body small {
+      display: block;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 4px;
+    }
+    .card-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 8px;
+      font-size: 12px;
+    }
+    .price { color: var(--petrol); font-weight: 800; }
+    .missing { color: var(--amber); font-weight: 800; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 7px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .pill.shop { background: var(--green-soft); color: var(--green); border-color: color-mix(in srgb, var(--green) 36%, transparent); }
+    .pill.warn { background: var(--amber-soft); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 36%, transparent); }
+    .pill.bad { background: var(--cranberry-soft); color: var(--cranberry); border-color: color-mix(in srgb, var(--cranberry) 36%, transparent); }
+    .pill.ai { background: var(--violet-soft); color: var(--violet); border-color: color-mix(in srgb, var(--violet) 36%, transparent); }
+
+    .capture-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .capture-btn {
+      min-height: 126px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow-soft);
+    }
+    .capture-btn.primary {
+      background: var(--petrol);
+      color: white;
+      border-color: var(--petrol);
+    }
+    .capture-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 999px;
+      border: 2px solid currentColor;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+    }
+    .camera-feed {
+      position: relative;
+      height: 238px;
+      border-radius: var(--r);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: #111;
+      margin-bottom: 12px;
+    }
+    .camera-ui {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 12px;
+      color: white;
+      background: linear-gradient(180deg, rgba(0,0,0,.44), rgba(0,0,0,0) 35%, rgba(0,0,0,.52));
+    }
+    .camera-ui .top, .camera-ui .bottom {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .shutter {
+      width: 66px;
+      height: 66px;
+      border-radius: 50%;
+      border: 4px solid rgba(255,255,255,.75);
+      background: white;
+      box-shadow: inset 0 0 0 6px #111;
+    }
+    .batch-form {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: var(--r);
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .field-pair {
+      display: grid;
+      grid-template-columns: 96px 1fr;
+      gap: 8px;
+      align-items: center;
+      min-height: 44px;
+    }
+    .field-pair label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .fake-input {
+      min-height: 38px;
+      display: flex;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--panel-2);
+      padding: 0 10px;
+      font-size: 13px;
+    }
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 44px;
+    }
+    .switch {
+      width: 48px;
+      height: 28px;
+      padding: 3px;
+      border-radius: 999px;
+      background: var(--violet);
+    }
+    .switch::after {
+      content: "";
+      display: block;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: white;
+      margin-left: 20px;
+    }
+    .progress {
+      height: 9px;
+      border-radius: 999px;
+      overflow: hidden;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+    }
+    .progress span {
+      display: block;
+      width: 72%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--petrol), var(--green));
+    }
+
+    .review-hero {
+      display: grid;
+      grid-template-columns: 128px 1fr;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--panel);
+      padding: 10px;
+      margin-bottom: 12px;
+      box-shadow: var(--shadow-soft);
+    }
+    .review-photo {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: var(--r);
+      overflow: hidden;
+      background: var(--panel-2);
+    }
+    .review-copy {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .review-copy h3 {
+      margin: 0;
+      font-size: 16px;
+      line-height: 1.15;
+    }
+    .review-copy p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .review-actions {
+      margin-top: auto;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+    }
+    .review-actions button {
+      min-height: 38px;
+      font-size: 12px;
+      padding: 0 8px;
+    }
+    .approve { background: var(--green); color: white; border-color: var(--green); }
+    .fix { background: var(--amber-soft); color: var(--amber); border-color: color-mix(in srgb, var(--amber) 34%, transparent); }
+    .flag { background: var(--cranberry-soft); color: var(--cranberry); border-color: color-mix(in srgb, var(--cranberry) 34%, transparent); }
+    .review-row .status {
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .shop-health {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 7px;
+      margin-bottom: 12px;
+    }
+    .shop-health button, .shop-health div {
+      min-height: 62px;
+      padding: 7px 4px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      text-align: center;
+    }
+    .shop-health b {
+      display: block;
+      font-size: 18px;
+      line-height: 1;
+    }
+    .shop-health span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      margin-top: 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .shop-thumb {
+      width: 48px;
+      height: 48px;
+      flex: 0 0 auto;
+      border-radius: var(--r);
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+    .shop-metric {
+      margin-left: auto;
+      text-align: right;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .shop-metric b {
+      display: block;
+      font-size: 16px;
+    }
+    .sync-panel {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--panel);
+      padding: 11px;
+      margin-top: 12px;
+    }
+    .sync-row {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+    }
+    .sync-row:last-child { border-bottom: 0; }
+    .sync-row span { color: var(--muted); font-size: 12px; }
+    .sync-row b { font-size: 13px; }
+
+    .desktop-panel {
+      min-width: 0;
+      display: grid;
+      gap: 14px;
+    }
+    .desktop-shell {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: var(--r);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .desktop-head {
+      min-height: 62px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 0 16px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 88%, var(--panel-2));
+    }
+    .desktop-head b { font-size: 17px; }
+    .desktop-grid {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 14px;
+      padding: 14px;
+    }
+    .wide-band {
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--panel-2);
+      padding: 14px;
+    }
+    .wide-band h3 {
+      margin: 0 0 10px;
+      font-size: 15px;
+    }
+    .wide-products {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+    .wide-products .product-card { box-shadow: none; }
+    .work-list {
+      display: grid;
+      gap: 8px;
+    }
+    .work-line {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--panel);
+      padding: 9px 10px;
+    }
+    .work-line b { font-size: 13px; }
+    .work-line strong { font-size: 20px; }
+    .mini-sync {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .mini-sync div {
+      min-height: 64px;
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--panel);
+      padding: 8px;
+      text-align: center;
+    }
+    .mini-sync b { font-size: 19px; }
+    .mini-sync span { color: var(--muted); font-size: 11px; }
+
+    @media (max-width: 1100px) {
+      .prototype {
+        grid-template-columns: 220px minmax(390px, 1fr);
+      }
+      .desktop-panel {
+        grid-column: 1 / -1;
+      }
+    }
+    @media (max-width: 760px) {
+      body { background: var(--panel); }
+      .prototype {
+        display: block;
+        padding: 0;
+      }
+      .side {
+        display: none;
+      }
+      .device-wrap {
+        width: 100%;
+        max-width: 100vw;
+        overflow: hidden;
+        place-items: start;
+      }
+      .phone {
+        width: min(100vw, 390px);
+        max-width: 390px;
+        height: 100vh;
+        min-height: 100vh;
+        max-height: none;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+      .phone * {
+        min-width: 0;
+      }
+      .role,
+      .cmd,
+      .nav-icon,
+      .shop-thumb {
+        min-width: initial;
+      }
+      .screen {
+        overflow-x: hidden;
+      }
+      .bottom-nav button {
+        padding-left: 2px;
+        padding-right: 2px;
+      }
+      .bottom-nav .badge {
+        right: 8px;
+      }
+      .work-grid,
+      .catalog-grid,
+      .metric-row,
+      .photo-strip,
+      .shop-health {
+        min-width: 0;
+      }
+      .work-card,
+      .metric,
+      .mini-photo,
+      .product-card {
+        min-width: 0;
+      }
+      .desktop-panel { display: none; }
+      .review-hero { grid-template-columns: 112px 1fr; }
+      .shop-health { grid-template-columns: repeat(3, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="prototype">
+    <aside class="side">
+      <div class="brand">
+        <div class="brand-mark">KL</div>
+        <div>
+          <b>K-LINE MEN</b>
+          <span>Catalog operations</span>
+        </div>
+      </div>
+      <div class="screen-tabs" aria-label="Mockup screens">
+        <button class="on" data-go="today">Today <span class="tab-count">18</span></button>
+        <button data-go="catalog">Catalog <span class="tab-count">242</span></button>
+        <button data-go="add">Add <span class="tab-count">AI</span></button>
+        <button data-go="review">Review <span class="tab-count">24</span></button>
+        <button data-go="shop">Shop <span class="tab-count">2</span></button>
+      </div>
+      <div class="side-section">
+        <div class="side-label">Theme</div>
+        <div class="theme-tabs">
+          <button class="on" data-theme-choice="light">Light</button>
+          <button data-theme-choice="dark">Dark</button>
+        </div>
+      </div>
+      <div class="side-section side-note">
+        Photo-led operations shell with Today as the action surface, camera-first Add, and POS state visible everywhere.
+      </div>
+    </aside>
+
+    <section class="device-wrap">
+      <div class="phone" aria-label="Mobile app mockup">
+        <header class="phone-top">
+          <div class="app-title">
+            <b>K-LINE MEN</b>
+            <span id="screenKicker">Today - 09:42 shop mirror fresh</span>
+          </div>
+          <span class="role">admin</span>
+          <button class="cmd" type="button" aria-label="Quick actions">K</button>
+        </header>
+
+        <main class="phone-main">
+          <section class="screen active" data-screen="today">
+            <div class="band">
+              <h2>Today</h2>
+              <p>Work that changes what can sell today.</p>
+              <div class="status-line"><span><i class="dot"></i>Shop data fresh at 09:42</span><span>POS healthy</span></div>
+            </div>
+
+            <div class="work-grid">
+              <button class="work-card price" type="button">
+                <strong>7</strong><b>Missing price</b><span>Blocked before approval</span>
+              </button>
+              <button class="work-card ai" type="button">
+                <strong>18</strong><b>AI checks</b><span>Fields need a glance</span>
+              </button>
+              <button class="work-card ready" type="button">
+                <strong>24</strong><b>Ready</b><span>Approve and send</span>
+              </button>
+              <button class="work-card sync" type="button">
+                <strong>2</strong><b>Shop issues</b><span>Retry or fix POS sync</span>
+              </button>
+            </div>
+
+            <div class="band">
+              <div class="section-title">Intake session</div>
+              <p>16 photos added. 12 read by AI. 4 need review.</p>
+              <div class="photo-strip">
+                <div class="mini-photo"><img data-art="shirt-blue" alt="Blue formal shirt"><span class="mini-state">High</span></div>
+                <div class="mini-photo"><img data-art="perfume-gold" alt="Fragrance box"><span class="mini-state">AI read</span></div>
+                <div class="mini-photo"><img data-art="pants-charcoal" alt="Charcoal pants"><span class="mini-state">Check</span></div>
+                <div class="mini-photo"><img data-art="shoe-brown" alt="Brown shoe"><span class="mini-state">Price</span></div>
+              </div>
+            </div>
+
+            <div class="metric-row">
+              <div class="metric"><b>13</b><span>sold today</span></div>
+              <div class="metric"><b>42</b><span>sold week</span></div>
+              <div class="metric"><b>9</b><span>low stock</span></div>
+            </div>
+
+            <div class="band">
+              <div class="section-title">Recent activity</div>
+              <div class="activity-list" style="margin-top: 10px;">
+                <div class="activity-row"><span class="source ai">AI</span><span class="row-copy"><b>Ralph Lauren Polo Red</b><span>Filled concentration and volume</span></span></div>
+                <div class="activity-row"><span class="source ok">Price</span><span class="row-copy"><b>Formal shirts</b><span>Priced 18 items at UGX 120,000</span></span></div>
+                <div class="activity-row"><span class="source sync">POS</span><span class="row-copy"><b>Two shop sync errors</b><span>Missing POS category map</span></span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="catalog">
+            <div class="toolbar">
+              <input type="search" value="" placeholder="Search photos, brands, SKU">
+              <button class="icon-btn" type="button" aria-label="Filters">F</button>
+              <button class="icon-btn" type="button" aria-label="Density">G</button>
+            </div>
+            <div class="shelf-row">
+              <button class="chip on">All</button>
+              <button class="chip">Missing price</button>
+              <button class="chip">AI doubt</button>
+              <button class="chip">In shop</button>
+              <button class="chip">Edited</button>
+            </div>
+            <div class="catalog-grid">
+              <article class="product-card">
+                <div class="product-media"><img data-art="shirt-blue" alt="Blue shirt"></div>
+                <div class="product-body"><b>Charles Tyrwhitt Formal Shirt</b><small>Blue / 16.5 / Slim</small><div class="card-foot"><span class="price">UGX 120,000</span><span class="pill shop">In shop</span></div></div>
+              </article>
+              <article class="product-card">
+                <div class="product-media"><img data-art="perfume-gold" alt="Fragrance"></div>
+                <div class="product-body"><b>Dior Sauvage Elixir</b><small>Parfum / 60 ml / Men</small><div class="card-foot"><span class="missing">Missing price</span><span class="pill ai">AI</span></div></div>
+              </article>
+              <article class="product-card">
+                <div class="product-media"><img data-art="pants-charcoal" alt="Pants"></div>
+                <div class="product-body"><b>Cobb Cargo Pants</b><small>Charcoal / W34 / Regular</small><div class="card-foot"><span class="price">UGX 95,000</span><span class="pill warn">Review</span></div></div>
+              </article>
+              <article class="product-card">
+                <div class="product-media"><img data-art="shoe-brown" alt="Brown shoe"></div>
+                <div class="product-body"><b>Oxford Leather Shoes</b><small>Brown / 42 EU</small><div class="card-foot"><span class="price">UGX 180,000</span><span class="pill bad">Sync</span></div></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="add">
+            <div class="band">
+              <h2>Add stock photos</h2>
+              <p>One photo is one physical unit.</p>
+            </div>
+            <div class="capture-grid">
+              <button class="capture-btn primary" type="button"><span class="capture-icon">C</span><b>Take photo</b></button>
+              <button class="capture-btn" type="button"><span class="capture-icon">M</span><b>Choose photos</b></button>
+            </div>
+            <div class="camera-feed">
+              <img data-art="shirt-green" alt="Camera preview product">
+              <div class="camera-ui">
+                <div class="top"><span class="pill ai">Burst capture</span><span>6 captured</span></div>
+                <div class="bottom"><button class="flag" type="button">Undo</button><span class="shutter" aria-hidden="true"></span><button class="approve" type="button">Done</button></div>
+              </div>
+            </div>
+            <div class="batch-form">
+              <div class="field-pair"><label>Category</label><div class="fake-input">Clothing / Shirts / Formal</div></div>
+              <div class="field-pair"><label>Brand</label><div class="fake-input">Charles Tyrwhitt</div></div>
+              <div class="toggle-row"><span><b>AI fill after upload</b><br><small style="color: var(--muted);">Send AI-read items to Review</small></span><span class="switch"></span></div>
+              <div class="progress"><span></span></div>
+            </div>
+            <div class="photo-strip">
+              <div class="mini-photo"><img data-art="shirt-blue" alt="Captured shirt"><span class="mini-state">Saved</span></div>
+              <div class="mini-photo"><img data-art="shirt-green" alt="Captured shirt"><span class="mini-state">Reading</span></div>
+              <div class="mini-photo"><img data-art="pants-charcoal" alt="Captured pants"><span class="mini-state">Dup?</span></div>
+              <div class="mini-photo"><img data-art="perfume-gold" alt="Captured perfume"><span class="mini-state">AI issue</span></div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="review">
+            <div class="queue-tabs">
+              <button class="on">Needs work 18</button>
+              <button>AI 11</button>
+              <button>Price 7</button>
+              <button>Ready 24</button>
+              <button>Sync 2</button>
+            </div>
+            <div class="review-hero">
+              <div class="review-photo"><img data-art="perfume-gold" alt="Review fragrance"></div>
+              <div class="review-copy">
+                <h3>Dior Sauvage Elixir</h3>
+                <p>AI read brand and volume. Retail price is missing.</p>
+                <div class="chip-row" style="margin: 0;"><span class="pill ai">Medium AI</span><span class="pill warn">No price</span></div>
+                <div class="review-actions">
+                  <button class="flag" type="button">Flag</button>
+                  <button class="fix" type="button">Fix</button>
+                  <button class="approve" type="button">Approve</button>
+                </div>
+              </div>
+            </div>
+            <div class="band">
+              <div class="section-title">Ready to approve</div>
+              <p>Priced items with no blockers.</p>
+              <div class="review-list" style="margin-top: 10px;">
+                <div class="review-row"><span class="source ok">Ready</span><span class="row-copy"><b>Formal shirts</b><span>18 items checked and priced</span></span><span class="status">Approve all</span></div>
+                <div class="review-row"><span class="source ai">AI</span><span class="row-copy"><b>Polo Red</b><span>Concentration confirmed</span></span><span class="status">Open</span></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="screen" data-screen="shop">
+            <div class="band">
+              <h2>Shop</h2>
+              <p>Live floor view from the POS mirror.</p>
+              <div class="status-line"><span><i class="dot"></i>Shop data 09:42</span><span>Refresh</span></div>
+            </div>
+            <div class="shop-health">
+              <div><b>186</b><span>In shop</span></div>
+              <button type="button"><b>12</b><span>Queued</span></button>
+              <button type="button"><b>3</b><span>Sending</span></button>
+              <button type="button"><b>5</b><span>Updates</span></button>
+              <button type="button"><b style="color: var(--cranberry);">2</b><span>Issues</span></button>
+            </div>
+            <div class="metric-row">
+              <div class="metric"><b>13</b><span>sold today</span></div>
+              <div class="metric"><b>42</b><span>sold week</span></div>
+              <div class="metric"><b>121</b><span>in stock</span></div>
+            </div>
+            <div class="band">
+              <div class="section-title">Running low</div>
+              <div class="shop-list" style="margin-top: 10px;">
+                <div class="shop-row"><span class="shop-thumb"><img data-art="shirt-blue" alt="Low shirt"></span><span class="row-copy"><b>Formal Shirt</b><span>Blue / 16.5 / UGX 120,000</span></span><span class="shop-metric"><b>2 left</b><small>sells 6/wk</small></span></div>
+                <div class="shop-row"><span class="shop-thumb"><img data-art="shoe-brown" alt="Low shoe"></span><span class="row-copy"><b>Oxford Shoes</b><span>Brown / 42 EU</span></span><span class="shop-metric"><b>1 left</b><small>best seller</small></span></div>
+              </div>
+            </div>
+            <div class="sync-panel">
+              <div class="sync-row"><b>Send to shop</b><span>2 errors</span></div>
+              <div class="sync-row"><b>Shop numbers</b><span>fresh</span></div>
+              <div class="sync-row"><b>Drift check</b><span>1 oversold finding</span></div>
+            </div>
+          </section>
+        </main>
+
+        <nav class="bottom-nav" aria-label="Mock app navigation">
+          <button class="on" data-go="today"><span class="nav-icon">T</span>Today</button>
+          <button data-go="catalog"><span class="nav-icon">C</span>Catalog</button>
+          <button data-go="add"><span class="nav-icon">+</span>Add</button>
+          <button data-go="review"><span class="nav-icon">R</span>Review<span class="badge">24</span></button>
+          <button data-go="shop"><span class="nav-icon">S</span>Shop<span class="badge">2</span></button>
+        </nav>
+      </div>
+    </section>
+
+    <section class="desktop-panel" aria-label="Desktop adaptation mockup">
+      <div class="desktop-shell">
+        <div class="desktop-head">
+          <b>Desktop operations view</b>
+          <span class="pill shop">POS mirror fresh</span>
+        </div>
+        <div class="desktop-grid">
+          <div class="wide-band">
+            <h3>Today queue</h3>
+            <div class="work-list">
+              <div class="work-line"><b>Missing price</b><strong style="color: var(--amber);">7</strong></div>
+              <div class="work-line"><b>Ready to approve</b><strong style="color: var(--green);">24</strong></div>
+              <div class="work-line"><b>AI checks</b><strong style="color: var(--violet);">18</strong></div>
+            </div>
+          </div>
+          <div class="wide-band">
+            <h3>Shop health</h3>
+            <div class="mini-sync">
+              <div><b>13</b><span>sold today</span></div>
+              <div><b>9</b><span>running low</span></div>
+              <div><b>2</b><span>sync issues</span></div>
+            </div>
+          </div>
+          <div class="wide-band" style="grid-column: 1 / -1;">
+            <h3>Photo-led catalog shelf</h3>
+            <div class="wide-products">
+              <article class="product-card"><div class="product-media"><img data-art="shirt-blue" alt="Desktop shirt"></div><div class="product-body"><b>Charles Tyrwhitt Shirt</b><small>Ready / in shop</small></div></article>
+              <article class="product-card"><div class="product-media"><img data-art="perfume-gold" alt="Desktop perfume"></div><div class="product-body"><b>Dior Sauvage Elixir</b><small>Needs price</small></div></article>
+              <article class="product-card"><div class="product-media"><img data-art="pants-charcoal" alt="Desktop pants"></div><div class="product-body"><b>Cobb Cargo Pants</b><small>AI check</small></div></article>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const labels = {
+      today: "Today - 09:42 shop mirror fresh",
+      catalog: "Catalog - photo shelf",
+      add: "Add - one photo one unit",
+      review: "Review - clear blockers",
+      shop: "Shop - live POS mirror"
+    };
+
+    function setScreen(id) {
+      document.querySelectorAll("[data-screen]").forEach(el => {
+        el.classList.toggle("active", el.dataset.screen === id);
+      });
+      document.querySelectorAll("[data-go]").forEach(btn => {
+        btn.classList.toggle("on", btn.dataset.go === id);
+      });
+      document.getElementById("screenKicker").textContent = labels[id] || labels.today;
+    }
+
+    document.addEventListener("click", event => {
+      const go = event.target.closest("[data-go]");
+      if (go) setScreen(go.dataset.go);
+      const theme = event.target.closest("[data-theme-choice]");
+      if (theme) {
+        document.body.dataset.theme = theme.dataset.themeChoice;
+        document.querySelectorAll("[data-theme-choice]").forEach(btn => {
+          btn.classList.toggle("on", btn === theme);
+        });
+      }
+    });
+
+    function roundedRect(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, w / 2, h / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
+    }
+
+    function drawTag(ctx, x, y, text) {
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,.88)";
+      ctx.strokeStyle = "rgba(0,0,0,.14)";
+      roundedRect(ctx, x, y, 118, 46, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#1d2422";
+      ctx.font = "700 18px Inter, sans-serif";
+      ctx.fillText(text, x + 12, y + 29);
+      ctx.restore();
+    }
+
+    function productArt(kind) {
+      const c = document.createElement("canvas");
+      c.width = 640;
+      c.height = 640;
+      const ctx = c.getContext("2d");
+      const bg = ctx.createLinearGradient(0, 0, 640, 640);
+      bg.addColorStop(0, "#f7f2e4");
+      bg.addColorStop(.45, "#ded7c9");
+      bg.addColorStop(1, "#bfc8c2");
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, 640, 640);
+
+      ctx.fillStyle = "rgba(22, 28, 27, .15)";
+      ctx.beginPath();
+      ctx.ellipse(320, 522, 196, 36, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (kind.includes("shirt")) {
+        const green = kind.includes("green");
+        ctx.fillStyle = green ? "#5c765f" : "#47748e";
+        roundedRect(ctx, 210, 155, 220, 338, 18);
+        ctx.fill();
+        ctx.fillStyle = green ? "#516a55" : "#3e6680";
+        ctx.beginPath();
+        ctx.moveTo(210, 176); ctx.lineTo(124, 274); ctx.lineTo(184, 326); ctx.lineTo(228, 250); ctx.closePath(); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(430, 176); ctx.lineTo(516, 274); ctx.lineTo(456, 326); ctx.lineTo(412, 250); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = "#f5f2ec";
+        ctx.beginPath();
+        ctx.moveTo(268, 155); ctx.lineTo(320, 218); ctx.lineTo(372, 155); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,.35)";
+        ctx.lineWidth = 3;
+        for (let x = 240; x <= 400; x += 32) {
+          ctx.beginPath(); ctx.moveTo(x, 190); ctx.lineTo(x + 24, 476); ctx.stroke();
+        }
+        drawTag(ctx, 256, 408, green ? "4XL" : "16.5");
+      } else if (kind.includes("perfume")) {
+        ctx.fillStyle = "#1f2627";
+        roundedRect(ctx, 180, 150, 170, 350, 12);
+        ctx.fill();
+        ctx.fillStyle = "#d8b45c";
+        roundedRect(ctx, 210, 198, 110, 132, 8);
+        ctx.fill();
+        ctx.fillStyle = "#f2d27e";
+        ctx.fillRect(230, 220, 70, 86);
+        ctx.fillStyle = "#4d3226";
+        ctx.font = "700 30px Inter, sans-serif";
+        ctx.fillText("DIOR", 225, 382);
+        ctx.font = "700 22px Inter, sans-serif";
+        ctx.fillText("60 ML", 224, 418);
+        ctx.fillStyle = "#9c7434";
+        roundedRect(ctx, 372, 248, 76, 252, 18);
+        ctx.fill();
+        ctx.fillStyle = "#2d2520";
+        roundedRect(ctx, 386, 208, 48, 52, 7);
+        ctx.fill();
+        ctx.fillStyle = "rgba(255,255,255,.28)";
+        ctx.fillRect(396, 282, 12, 180);
+      } else if (kind.includes("pants")) {
+        ctx.fillStyle = "#363c42";
+        roundedRect(ctx, 230, 136, 180, 82, 10);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(245, 210); ctx.lineTo(310, 210); ctx.lineTo(296, 508); ctx.lineTo(210, 508); ctx.closePath(); ctx.fill();
+        ctx.beginPath();
+        ctx.moveTo(330, 210); ctx.lineTo(395, 210); ctx.lineTo(430, 508); ctx.lineTo(344, 508); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,.18)";
+        ctx.lineWidth = 4;
+        ctx.beginPath(); ctx.moveTo(320, 220); ctx.lineTo(318, 492); ctx.stroke();
+        ctx.fillStyle = "#4f5960";
+        roundedRect(ctx, 220, 285, 72, 70, 7); ctx.fill();
+        roundedRect(ctx, 350, 285, 72, 70, 7); ctx.fill();
+        drawTag(ctx, 260, 424, "W34");
+      } else if (kind.includes("shoe")) {
+        ctx.fillStyle = "#815332";
+        ctx.beginPath();
+        ctx.moveTo(130, 405);
+        ctx.bezierCurveTo(210, 308, 320, 282, 408, 344);
+        ctx.bezierCurveTo(455, 378, 520, 376, 548, 424);
+        ctx.bezierCurveTo(482, 464, 214, 472, 112, 446);
+        ctx.bezierCurveTo(100, 430, 112, 416, 130, 405);
+        ctx.fill();
+        ctx.fillStyle = "#5a351e";
+        ctx.fillRect(122, 434, 420, 28);
+        ctx.strokeStyle = "#e5bc7a";
+        ctx.lineWidth = 6;
+        for (let x = 274; x <= 382; x += 28) {
+          ctx.beginPath(); ctx.moveTo(x, 352); ctx.lineTo(x + 36, 386); ctx.stroke();
+        }
+        drawTag(ctx, 250, 486, "42 EU");
+      }
+
+      ctx.fillStyle = "rgba(255,255,255,.16)";
+      ctx.fillRect(0, 0, 640, 44);
+      return c.toDataURL("image/png");
+    }
+
+    const art = {
+      "shirt-blue": productArt("shirt-blue"),
+      "shirt-green": productArt("shirt-green"),
+      "perfume-gold": productArt("perfume-gold"),
+      "pants-charcoal": productArt("pants-charcoal"),
+      "shoe-brown": productArt("shoe-brown")
+    };
+    document.querySelectorAll("img[data-art]").forEach(img => {
+      img.src = art[img.dataset.art];
+    });
+  </script>
+</body>
+</html>

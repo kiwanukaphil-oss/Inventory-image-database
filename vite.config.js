@@ -9,7 +9,9 @@ export default defineConfig(() => ({
   server: { port: 5173, host: true }, // host:true exposes on LAN for phone testing
   plugins: [
     VitePWA({
-      registerType: "autoUpdate",
+      // Updates are offered explicitly so an active review/pricing task is never
+      // replaced by a service-worker reload halfway through the work.
+      registerType: "prompt",
       // Keep dev clean (no service worker in `npm run dev`); the PWA is active in
       // the built/deployed site, which is what gets installed on a phone.
       devOptions: { enabled: false },

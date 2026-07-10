@@ -49,6 +49,11 @@ function clearUploadDefaults() {
   try { localStorage.removeItem(UPLOAD_DEFAULTS_KEY); } catch {}
 }
 
+function cleanAiVisibleText(value) {
+  const text = String(value || "").trim();
+  return text && !["unknown", "n/a", "none", "null", "-", "--"].includes(text.toLowerCase()) ? text : "";
+}
+
 // Pick up any photos shared into the app via the PWA share target (stashed in a
 // Cache by public/sw-share.js), hand them to the Add flow, then clear the cache
 // so a later visit doesn't re-import them. Safe no-op when nothing was shared.
@@ -68,7 +73,7 @@ async function consumeSharedMedia(addFiles) {
     }
     const keys = await cache.keys();
     await Promise.all(keys.map((k) => cache.delete(k)));
-    if (files.length) addFiles(files);
+    if (files.length) addFiles(files, { source: "share" });
   } catch { /* caches API unavailable / blocked — ignore */ }
 }
 
@@ -109,6 +114,8 @@ async function aiFillItem(id, common) {
     filled++;
   }
   const update = { brand, name, attributes, confidence };
+  const visibleText = cleanAiVisibleText(data.visible_text);
+  if (visibleText) update.ai_visible_text = visibleText;
   // Same rule as bulk AI-fill: an AI-touched draft surfaces in Review rather
   // than sitting silently as a confident-but-unchecked draft.
   if (filled && common.status === "draft") update.status = "needs-review";
@@ -163,10 +170,22 @@ export async function renderUpload(view, caps, onDone) {
   const seen = new Set(); // dedupe key set
   let stopFlag = false;
   let wakeLock = null;
+  let sharedImportCount = 0;
 
   view.innerHTML = `
     <div class="uploader">
-      <h2 class="up-h">Add photos</h2>
+      <section class="up-hero">
+        <div>
+          <div class="up-kicker">Stock intake</div>
+          <h2 class="up-h">Add photos</h2>
+        </div>
+        <div class="up-intake" id="upIntake" aria-live="polite">
+          <span><b id="upPhotoCount">0</b><small>Photos</small></span>
+          <span><b id="upCatState">Category</b><small id="upCatHint">Choose</small></span>
+          <span><b id="upAiState">${canEdit && uploadDefaults.ai ? "AI on" : "AI off"}</b><small>After upload</small></span>
+        </div>
+      </section>
+      <div class="up-shared" id="sharedBanner" hidden></div>
       <div class="pickrow" id="pickRow">
         <label class="pickbtn">
           <input id="camInput" type="file" accept="image/*" capture="environment" hidden>
@@ -242,6 +261,8 @@ export async function renderUpload(view, caps, onDone) {
   const commonFields = $("#commonFields");
   const uploadBtn = $("#uploadBtn");
   const defaultsEl = $("#upDefaults");
+  const sharedBanner = $("#sharedBanner");
+  $("#aiAfter")?.addEventListener("change", renderIntakeSummary);
   $("#clearDefaults")?.addEventListener("click", () => {
     clearUploadDefaults();
     uploadDefaults = {};
@@ -256,15 +277,77 @@ export async function renderUpload(view, caps, onDone) {
     doneArea.hidden = m !== "done";
   }
 
+  function renderSharedBanner() {
+    if (!sharedBanner) return;
+    sharedBanner.hidden = !sharedImportCount;
+    if (!sharedImportCount) { sharedBanner.innerHTML = ""; return; }
+    sharedBanner.innerHTML = `<b>${sharedImportCount} shared photo${sharedImportCount === 1 ? "" : "s"} ready</b>
+      <span>Choose the batch category, then upload.</span>
+      <button type="button" class="linkbtn" data-shared-ok>Got it</button>`;
+  }
+
+  function renderIntakeSummary() {
+    const catPath = catSel.value ? categoryPath(catSel.value) : "";
+    const aiOn = !!$("#aiAfter")?.checked;
+    const photoCount = $("#upPhotoCount");
+    const catState = $("#upCatState");
+    const catHint = $("#upCatHint");
+    const aiState = $("#upAiState");
+    if (photoCount) photoCount.textContent = String(entries.length);
+    if (catState) catState.textContent = catPath ? catPath.split(" › ").pop() : "Category";
+    if (catHint) catHint.textContent = catPath || "Choose";
+    if (aiState) aiState.textContent = canEdit ? (aiOn ? "AI on" : "AI off") : "No AI";
+  }
+
   // ---- selection ----
   const keyOf = (f) => `${f.name}|${f.size}|${f.lastModified}`;
-  function addFiles(list) {
+  async function imageDimensions(file, url) {
+    if ("createImageBitmap" in window) {
+      const bmp = await createImageBitmap(file);
+      const dims = { width: bmp.width, height: bmp.height };
+      bmp.close?.();
+      return dims;
+    }
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
+  async function inspectPhotoQuality(entry) {
+    entry.quality = { state: "checking", label: "Checking" };
+    try {
+      const { width, height } = await imageDimensions(entry.file, entry.url);
+      const ratio = width && height ? width / height : 1;
+      const issues = [];
+      if (Math.min(width, height) < 900) issues.push("Low resolution");
+      if (ratio > 2.2 || ratio < 0.45) issues.push("Extreme crop");
+      if (entry.file.size < 80_000) issues.push("Tiny file");
+      if (entry.file.size > 8_000_000) issues.push("Large file will compress");
+      entry.quality = issues.length
+        ? { state: "warn", label: issues[0], detail: `${width}x${height} · ${issues.join(" · ")}` }
+        : { state: "ok", label: "Looks ok", detail: `${width}x${height}` };
+    } catch {
+      entry.quality = { state: "warn", label: "Check photo", detail: "Could not inspect this file before upload." };
+    }
+    if (entries.some((e) => e.key === entry.key)) {
+      renderPicked();
+      renderGrid();
+    }
+  }
+  function addFiles(list, opts = {}) {
+    let added = 0;
     for (const f of list) {
       const key = keyOf(f);
       if (seen.has(key)) continue; // de-dupe
       seen.add(key);
-      entries.push({ key, file: f, url: URL.createObjectURL(f) });
+      const entry = { key, file: f, url: URL.createObjectURL(f), quality: { state: "checking", label: "Checking" } };
+      entries.push(entry);
+      inspectPhotoQuality(entry);
+      added++;
     }
+    if (opts.source === "share" && added) { sharedImportCount += added; renderSharedBanner(); }
     renderPicked();
     renderGrid();
     batchForm.style.display = entries.length ? "block" : "none";
@@ -291,23 +374,42 @@ export async function renderUpload(view, caps, onDone) {
     refreshEnabled();
   }
   function renderPicked() {
+    const checking = entries.filter((e) => !e.quality || e.quality.state === "checking").length;
+    const warnings = entries.filter((e) => e.quality?.state === "warn").length;
+    const qualityText = warnings
+      ? `${warnings} photo${warnings === 1 ? "" : "s"} need a capture check`
+      : checking
+        ? "checking photo quality"
+        : entries.length ? "photo quality checked" : "";
     pickedEl.innerHTML = entries.length
-      ? `${entries.length} photo${entries.length === 1 ? "" : "s"} selected · <a href="#" id="clearPick">clear all</a>`
+      ? `${entries.length} photo${entries.length === 1 ? "" : "s"} selected${qualityText ? ` · ${qualityText}` : ""} · <a href="#" id="clearPick">clear all</a>`
       : "";
     const c = $("#clearPick");
     if (c) c.onclick = (e) => { e.preventDefault(); clearAll(); };
+    renderIntakeSummary();
   }
   function renderGrid() {
     gridEl.innerHTML = entries
-      .map((e) => `<div class="up-thumb" data-key="${esc(e.key)}">
+      .map((e) => {
+        const q = e.quality || { state: "checking", label: "Checking" };
+        const qState = q.state === "ok" ? "ok" : q.state === "warn" ? "warn" : "checking";
+        return `<div class="up-thumb" data-key="${esc(e.key)}">
         <img loading="lazy" src="${e.url}" alt="">
+        <span class="up-quality upq-${qState}" title="${esc(q.detail || q.label)}">${esc(q.label)}</span>
         <button class="up-x" data-rm="${esc(e.key)}" aria-label="Remove">${ICON.x}</button>
-      </div>`).join("");
+      </div>`;
+      }).join("");
     gridEl.querySelectorAll("[data-rm]").forEach((b) =>
       (b.onclick = () => removeFile(b.dataset.rm)));
   }
   camInput.addEventListener("change", () => { addFiles([...camInput.files]); camInput.value = ""; });
   libInput.addEventListener("change", () => { addFiles([...libInput.files]); libInput.value = ""; });
+  sharedBanner?.addEventListener("click", (e) => {
+    if (!e.target.closest("[data-shared-ok]")) return;
+    sharedImportCount = 0;
+    renderSharedBanner();
+    catSel.focus();
+  });
 
   // Burst capture: a full-screen, stay-open camera built for the core workflow
   // (one photo = one unit, many per session). Tap the big shutter to snap each
@@ -385,9 +487,10 @@ export async function renderUpload(view, caps, onDone) {
       const busy = s.state === "uploading" || s.state === "reading";
       const overlay = busy ? `<span class="bt-spin" aria-hidden="true"></span>`
         : s.state === "err" ? `<span class="bt-err" title="Couldn't save — re-shoot">!</span>`
+        : s.state === "aierr" ? `<span class="bt-label bt-fail">AI issue</span>`
         : s.label ? `<span class="bt-label">${esc(s.label)}</span>` : "";
       const dot = (s.state === "done" && s.conf) ? `<span class="bt-dot bt-${s.conf}"></span>` : "";
-      const phase = s.state === "uploading" ? "Saving" : s.state === "reading" ? "Reading…" : "";
+      const phase = s.state === "uploading" ? "Saving" : s.state === "reading" ? "Reading AI" : "";
       return `<div class="bt bt-${s.state}">
         <img src="${s.url}" alt="${esc(s.label || "captured unit")}">
         ${overlay}${dot}${s.dup ? `<span class="bt-dup" title="Possible repeat of the previous shot">≈</span>` : ""}${phase ? `<span class="bt-phase">${phase}</span>` : ""}</div>`;
@@ -424,8 +527,14 @@ export async function renderUpload(view, caps, onDone) {
       if (looksDup) toast("Looks like the unit you just shot — Undo if it's a repeat.", { label: "Undo", onClick: undoLast });
       try {
         const res = await uploadOne({ file }, burstCommon, () => { s.state = "reading"; paintBurst(); });
-        s.id = res.id; s.path = res.path; s.state = "done";
-        if (res.ai) { s.label = [res.ai.brand, res.ai.name].filter(Boolean).join(" · "); s.conf = worstConf(res.ai.confidence); }
+        s.id = res.id; s.path = res.path;
+        if (res.aiFailed) {
+          s.state = "aierr"; s.label = "AI issue"; s.aiFailed = true;
+        } else {
+          s.state = "done";
+          if (res.ai) { s.label = [res.ai.brand, res.ai.name].filter(Boolean).join(" · ") || "Saved"; s.conf = worstConf(res.ai.confidence); }
+          else s.label = "Saved";
+        }
       } catch (e) {
         s.state = "err";
         console.error("burst upload failed", e);
@@ -466,7 +575,8 @@ export async function renderUpload(view, caps, onDone) {
       ov.remove();
       // Units are already uploaded + queued for Review (AI promotes them there).
       const ids = session.filter((s) => s.id).map((s) => s.id);
-      if (ids.length) onDone?.({ view: "review", itemIds: ids });
+      const aiFailedIds = session.filter((s) => s.id && s.aiFailed).map((s) => s.id);
+      if (ids.length) onDone?.({ view: "review", itemIds: aiFailedIds.length ? aiFailedIds : ids, issue: aiFailedIds.length ? "ai" : undefined });
     };
 
     ov.querySelector("#bcShutter").onclick = snap;
@@ -523,6 +633,7 @@ export async function renderUpload(view, caps, onDone) {
     uploadBtn.textContent = entries.length ? `Upload ${entries.length}` : "Upload";
     const hintEl = $("#upHint");
     if (hintEl) hintEl.textContent = entries.length && !catSel.value ? "Choose a category to enable upload." : "";
+    renderIntakeSummary();
   }
 
   // Gather the batch-common values once.
@@ -590,7 +701,8 @@ export async function renderUpload(view, caps, onDone) {
   function paintRun(p, total, done, failed, aiFailed = 0) {
     if (!barFill?.isConnected) return;
     barFill.style.width = `${total ? Math.round((p / total) * 100) : 0}%`;
-    runStats.innerHTML = `${p}/${total} processed · <b>${done}</b> added${aiFailed ? ` · <span style="color:var(--review-txt)">${aiFailed} AI issue${aiFailed === 1 ? "" : "s"}</span>` : ""}${failed ? ` · <span style="color:var(--flag-txt)">${failed} failed</span>` : ""}`;
+    const remaining = Math.max(0, total - p);
+    runStats.innerHTML = `<b>${done}</b> added · ${remaining} remaining${aiFailed ? ` · <span style="color:var(--review-txt)">${aiFailed} AI issue${aiFailed === 1 ? "" : "s"}</span>` : ""}${failed ? ` · <span style="color:var(--flag-txt)">${failed} failed</span>` : ""}`;
   }
 
   async function startUpload(list) {
@@ -682,7 +794,7 @@ export async function renderUpload(view, caps, onDone) {
       (firstError ? `<div class="up-err">Upload failed: ${esc(firstError)}</div>` : "");
     const acts = [];
     if (remaining > 0) acts.push(`<button class="primary up-go" data-d="retry">Upload remaining ${remaining}</button>`);
-    if (aiFailedIds.length) acts.push(`<button class="primary up-go" data-d="ai">Review AI issues</button>`);
+    if (aiFailedIds.length) acts.push(`<button class="primary up-go" data-d="ai">Open AI issues in Review</button>`);
     if (uploadedIds.length) acts.push(`<button class="${aiFailedIds.length ? "ghost" : "primary"} up-go" data-d="batch">Review this batch</button>`);
     acts.push(`<button class="ghost up-go" data-d="more">Add more photos</button>`);
     acts.push(`<button class="ghost up-go" data-d="gallery">View gallery</button>`);
@@ -705,5 +817,6 @@ export async function renderUpload(view, caps, onDone) {
   uploadBtn.addEventListener("click", () => startUpload(entries.slice()));
 
   setMode("compose");
+  renderIntakeSummary();
   consumeSharedMedia(addFiles); // import any photos shared into the app (PWA share target)
 }

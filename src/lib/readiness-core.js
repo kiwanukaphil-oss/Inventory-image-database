@@ -61,6 +61,7 @@ export function missingCoreFields(it, fields = []) {
   const missing = [];
   const attrs = it.attributes || {};
   if (!it.image_path) missing.push("photo");
+  if (!it.category_id) missing.push("category");
   if (!hasValue(it.name)) missing.push("name");
 
   const required = (fields || []).filter((f) => f.required);

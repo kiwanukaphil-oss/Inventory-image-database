@@ -9,10 +9,10 @@ import {
 
 describe("missingCoreFields", () => {
   it("flags photo, name and details when empty", () => {
-    expect(missingCoreFields({}, [])).toEqual(expect.arrayContaining(["photo", "name", "details"]));
+    expect(missingCoreFields({}, [])).toEqual(expect.arrayContaining(["photo", "category", "name", "details"]));
   });
   it("flags required category fields that are absent", () => {
-    const item = { image_path: "x", name: "Shirt", attributes: { color: "Red" } };
+    const item = { image_path: "x", category_id: "shirts", name: "Shirt", attributes: { color: "Red" } };
     const fields = [
       { key: "size", label: "Size", required: true },
       { key: "color", label: "Colour", required: true },
@@ -20,7 +20,7 @@ describe("missingCoreFields", () => {
     expect(missingCoreFields(item, fields)).toEqual(["Size"]); // colour present, size missing
   });
   it("is empty when complete", () => {
-    const item = { image_path: "x", name: "Shirt", attributes: { size: "M" } };
+    const item = { image_path: "x", category_id: "shirts", name: "Shirt", attributes: { size: "M" } };
     expect(missingCoreFields(item, [{ key: "size", label: "Size", required: true }])).toEqual([]);
   });
 });
@@ -47,6 +47,7 @@ describe("getItemReadiness", () => {
   const complete = {
     status: "needs-review",
     image_path: "x",
+    category_id: "shirts",
     name: "Shirt",
     attributes: { size: "M" },
     price: 100,
@@ -61,10 +62,24 @@ describe("getItemReadiness", () => {
     expect(r.canApprove).toBe(true);
     expect(r.blockers).toEqual([]);
   });
+  it("moves a checked AI item to ready without approving its status", () => {
+    const awaitingCheck = { ...complete, confidence: { brand: "Medium" } };
+    expect(getItemReadiness(awaitingCheck, { fields }).issue).toBe("doubt");
+    const checked = { ...awaitingCheck, confidence: { brand: "High" } };
+    const readiness = getItemReadiness(checked, { fields });
+    expect(checked.status).toBe("needs-review");
+    expect(readiness.issue).toBe("ready");
+    expect(readiness.canApprove).toBe(true);
+  });
   it("blocks on missing price", () => {
     const r = getItemReadiness({ ...complete, price: null }, { fields });
     expect(r.canApprove).toBe(false);
     expect(r.blockers.some((b) => b.issue === "price")).toBe(true);
+  });
+  it("blocks on missing category", () => {
+    const r = getItemReadiness({ ...complete, category_id: null }, { fields });
+    expect(r.canApprove).toBe(false);
+    expect(r.blockers.some((b) => b.issue === "missing")).toBe(true);
   });
   it("blocks on missing cost and tailors the message by canViewCost", () => {
     const admin = getItemReadiness({ ...complete, has_cost_price: false }, { fields });
@@ -81,7 +96,7 @@ describe("getItemReadiness", () => {
   });
   it("blocks when a photo exists but AI has not read it", () => {
     const noSignal = {
-      status: "needs-review", image_path: "x", name: "", brand: "",
+      status: "needs-review", image_path: "x", category_id: "shirts", name: "", brand: "",
       attributes: {}, confidence: {}, price: 100, has_cost_price: true,
     };
     expect(getItemReadiness(noSignal, { fields: [] }).blockers.some((b) => b.issue === "ai")).toBe(true);

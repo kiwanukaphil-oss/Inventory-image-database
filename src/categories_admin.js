@@ -111,7 +111,11 @@ export async function openCategoryManager(caps) {
     })(null, 0);
 
     setScreen("Categories & fields",
-      `<button class="primary scbtn" id="addTop">+ Add top-level category</button>
+      `<div class="cat-admin-note">
+         <b>Structured reference data</b>
+         <span>Categories and fields drive editor forms, AI extraction prompts, SKUs, pricing groups, and review readiness. Changes refresh app reference data when this screen closes.</span>
+       </div>
+       <button class="primary scbtn" id="addTop">+ Add top-level category</button>
        ${rows.join("") || '<div class="empty"><div>No categories yet.</div></div>'}`, null);
 
     body.querySelector("#addTop").onclick = () => editCategory(null, null);
@@ -183,7 +187,7 @@ export async function openCategoryManager(caps) {
     if (count) { toast(`This category has ${count} item(s). Move or delete them first.`); return; }
     const ok = await confirmSheet({
       title: "Delete category?",
-      message: `“${cat.name}” and its field definitions will be deleted.`,
+      message: `"${cat.name}" and its field definitions will be deleted. Categories with subcategories or assigned items are blocked before this confirmation.`,
       confirmText: "Delete",
       danger: true,
     });
@@ -279,7 +283,7 @@ export async function openCategoryManager(caps) {
   async function deleteField(cat, field) {
     const ok = await confirmSheet({
       title: "Delete field?",
-      message: `“${field.label}” will be removed from this category.`,
+      message: `"${field.label}" will be removed from this category. Existing item values are not scrubbed automatically, but the editor and readiness checks will stop treating it as a defined field here.`,
       confirmText: "Delete",
       danger: true,
     });

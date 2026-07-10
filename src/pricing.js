@@ -14,7 +14,8 @@
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, getSetting } from "./data.js";
 import { logManyItemActivities } from "./activity.js";
-import { esc, toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
+import { parsePrice } from "./lib/price.js";
+import { esc, toast, trapFocus, openBottomSheet, bindPriceInput, ICON } from "./ui.js";
 
 // Grouping key chosen last time, remembered across opens (per the "I pick the
 // grouping each time" workflow — start sensible, never force a default).
@@ -49,12 +50,12 @@ function valueOf(it, key) {
  * @param {object} [opts]    { itemIds } to price only a selected subset
  */
 export async function openPricing(caps, onClose, opts = {}) {
-  // Show the overlay immediately with a spinner so tapping "Set prices" feels
+  // Show the overlay immediately with a spinner so tapping "Price table" feels
   // responsive — loading the catalogue (up to 5000 rows) can take a moment.
   // The real content replaces this innerHTML once the data + groups are ready.
   const el = document.createElement("div");
   el.className = "calib pricing";
-  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Set prices</span></div>
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Price table</span></div>
     <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add("open"));
@@ -63,7 +64,7 @@ export async function openPricing(caps, onClose, opts = {}) {
 
   const { data: rows, error } = await supabase
     .from("items")
-    .select("id, brand, attributes, category_id, price")
+    .select("id, brand, attributes, category_id, price, pos_sync_status")
     .limit(5000);
   if (error) {
     // Keep the overlay open with a retry instead of vanishing on a network blip.
@@ -73,9 +74,15 @@ export async function openPricing(caps, onClose, opts = {}) {
     el.querySelector("#pgRetry").onclick = () => { el.remove(); openPricing(caps, onClose, opts); };
     return;
   }
-  // When launched from a gallery selection, price only those items.
+  // When launched from a gallery selection, price only those items. Once an item
+  // is synced to the POS, the POS owns its price, so skip it here and explain the
+  // count in the controls instead of offering an edit that will not take effect.
   const idset = opts.itemIds?.length ? new Set(opts.itemIds) : null;
-  const items = (rows || []).filter((it) => !idset || idset.has(it.id));
+  const allItems = rows || [];
+  const selectedRows = idset ? allItems.filter((it) => idset.has(it.id)) : allItems;
+  const priceable = (it) => !it.pos_sync_status || it.pos_sync_status === "error";
+  const posSkipped = selectedRows.filter((it) => !priceable(it)).length;
+  const items = selectedRows.filter(priceable);
   const byId = Object.fromEntries(items.map((it) => [it.id, it]));
 
   // Cost lives in the admin-only item_costs table, so only load it (and offer the
@@ -133,11 +140,15 @@ export async function openPricing(caps, onClose, opts = {}) {
   // ---- overlay shell (reuses the calibration overlay layout) --------------
   // el is already created + shown (with a loading spinner) at the top of openPricing.
   const release = trapFocus(el);
+  const changedIds = new Set(opts.initialChangedIds || []);
   const close = () => {
     document.removeEventListener("keydown", onKey);
     release();
     el.classList.remove("open");
-    setTimeout(() => { el.remove(); onClose?.(); }, 180);
+    setTimeout(() => {
+      el.remove();
+      if (changedIds.size) onClose?.([...changedIds]);
+    }, 180);
   };
   // Don't steal Esc from a sheet opened on top (the scope picker closes itself).
   // Esc backs out one level at a time: leave select mode first, then close. Never
@@ -278,6 +289,14 @@ export async function openPricing(caps, onClose, opts = {}) {
     updateSelBar();
   }
 
+  function wirePriceInputs(root = el) {
+    root.querySelectorAll("[data-price-input]").forEach((input) => {
+      if (input.dataset.priceBound) return;
+      input.dataset.priceBound = "1";
+      bindPriceInput(input);
+    });
+  }
+
   // ---- render -------------------------------------------------------------
   function render() {
     const visible = visibleGroups();
@@ -303,7 +322,10 @@ export async function openPricing(caps, onClose, opts = {}) {
     // The collapsed controls show just a one-line summary of the grouping/scope.
     const groupSummary = (groupKeys.length ? groupKeys.map(groupLabelFor).join(" · ") : "All items")
       + (scope.length ? ` · ${scope.length} scope${scope.length > 1 ? "s" : ""}` : "");
-    const titleText = idset ? `Set prices · ${items.length} selected` : "Set prices";
+    const titleText = idset ? `Price table · ${items.length} selected` : "Price table";
+    const posSkipNote = posSkipped
+      ? `<div class="pg-posskip">${posSkipped} POS-owned item${posSkipped === 1 ? "" : "s"} skipped. Change synced shop prices in the POS.</div>`
+      : "";
     const summaryLine = totalUnpriced
       ? `<div class="pg-summary">${totalUnpriced} of ${visibleCount} shown ${totalUnpriced === 1 ? "has" : "have"} no ${noun}${excluded ? ` · ${excluded} excluded by scope` : ""}</div>`
       : `<div class="pg-summary pg-done">All ${visibleCount} shown ${visibleCount === 1 ? "has" : "have"} a ${noun} ✓${excluded ? ` · ${excluded} excluded by scope` : ""}</div>`;
@@ -328,6 +350,7 @@ export async function openPricing(caps, onClose, opts = {}) {
         ` : ""}
         <label class="pg-toggle"><input type="checkbox" id="pgHidePriced"${hideFullyPriced ? " checked" : ""}> Show only groups that need a ${noun}</label>
         <label class="pg-toggle"><input type="checkbox" id="pgOnlyUnpriced"${onlyUnpriced ? " checked" : ""}> Only fill items with no ${noun}</label>
+        ${posSkipNote}
         <input id="pgFilter" class="fb-search" type="search" placeholder="Filter groups…" value="${esc(filterText)}">
         ${summaryLine}
       </div>
@@ -336,6 +359,7 @@ export async function openPricing(caps, onClose, opts = {}) {
     </div>`;
 
     // ✕ backs out one level: leave select mode first, then close the overlay.
+    wirePriceInputs(el);
     el.querySelector("#pgX").onclick = () => { if (selectMode) exitSelect(); else close(); };
     if (selectMode) {
       el.querySelector("#pgSelDone").onclick = exitSelect;
@@ -431,7 +455,7 @@ export async function openPricing(caps, onClose, opts = {}) {
       </div>
       <div class="pg-input">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-        <input id="pgSelInput" type="number" inputmode="decimal" placeholder="${noun} for selected" aria-label="Price for selected groups">
+        <input id="pgSelInput" type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="${noun} for selected" aria-label="Price for selected groups">
         <button class="pg-set" id="pgSelSet"${sel.length ? "" : " disabled"}>Set ${noun}</button>
       </div>
     </div>`;
@@ -543,7 +567,7 @@ export async function openPricing(caps, onClose, opts = {}) {
       <span class="pg-state pg-${st.kind}">${esc(st.text)}</span>
       <div class="pg-input">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-        <input type="number" inputmode="decimal" placeholder="${ph}" value="${inputVal}" aria-label="Price for ${esc(name)}">
+        <input type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="${ph}" value="${inputVal}" aria-label="Price for ${esc(name)}">
         <button class="pg-set" data-set${bandKey ? ` data-band="${bandKey}"` : ""}>Set</button>
       </div>
     </div>`;
@@ -630,7 +654,11 @@ export async function openPricing(caps, onClose, opts = {}) {
   // Swap just one group's card in place (keeps the rest of the scroll/list).
   function replaceCard(idx) {
     const card = el.querySelector(`.pg-group[data-idx="${idx}"]`);
-    if (card) card.outerHTML = groupCardHtml(groups[Number(idx)]);
+    if (card) {
+      card.outerHTML = groupCardHtml(groups[Number(idx)]);
+      const next = el.querySelector(`.pg-group[data-idx="${idx}"]`);
+      if (next) wirePriceInputs(next);
+    }
   }
 
   // A price change is risky enough to preview when it spans more than one
@@ -715,8 +743,8 @@ export async function openPricing(caps, onClose, opts = {}) {
   async function setSelectedPrice() {
     const raw = el.querySelector("#pgSelInput").value.trim();
     if (raw === "") { toast("Enter a price first."); return; }
-    const value = Number(raw);
-    if (!Number.isFinite(value) || value < 0) { toast("Enter a valid price."); return; }
+    const value = parsePrice(raw);
+    if (value === null) { toast("Enter a valid price."); return; }
     const noun = priceMode === "cost" ? "cost" : "price";
     let ids = selectedItemIds();
     if (!ids.length) { toast("Select at least one group."); return; }
@@ -735,8 +763,8 @@ export async function openPricing(caps, onClose, opts = {}) {
     const g = groups[Number(card.dataset.idx)];
     const raw = setBtn.closest(".pg-input").querySelector("input").value.trim();
     if (raw === "") { toast("Enter a price first."); return; }
-    const price = Number(raw);
-    if (!Number.isFinite(price) || price < 0) { toast("Enter a valid price."); return; }
+    const price = parsePrice(raw);
+    if (price === null) { toast("Enter a valid price."); return; }
     const bandKey = setBtn.dataset.band;
     let targetIds = g.ids;
     if (bandKey) {
@@ -771,6 +799,7 @@ export async function openPricing(caps, onClose, opts = {}) {
     const prior = ids.map((id) => ({ id, value: mode === "cost" ? byId[id].cost ?? null : byId[id].price ?? null }));
     const { error } = await writePrice(ids, value, mode);
     if (error) { toast("Couldn't set price: " + error.message); return; }
+    ids.forEach((id) => changedIds.add(id));
     const fieldPath = mode === "cost" ? "cost_price" : "price";
     await logManyItemActivities(
       ids,

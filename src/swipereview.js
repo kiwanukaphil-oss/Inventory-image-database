@@ -1,9 +1,10 @@
 import { supabase } from "./db.js";
 import { openEditor } from "./editor.js";
 import { getItemReadiness } from "./readiness.js";
+import { approvalBlockerText, confirmApprovalWarnings } from "./approval.js";
 import { logItemActivity } from "./activity.js";
 import { getSetting } from "./data.js";
-import { esc, toast, trapFocus, ICON } from "./ui.js";
+import { esc, toast, trapFocus, isTopOverlay, ICON } from "./ui.js";
 
 // Swipe-review stack — the uncertain pile as a one-card-at-a-time deck.
 //   swipe right / Approve  → approve (only if nothing blocks it)
@@ -21,13 +22,9 @@ export async function openSwipeReview(items, caps, opts = {}) {
   const cur = getSetting("currency", "");
   const fmtPrice = (n) => (cur ? `${cur} ` : "") + Number(n).toLocaleString();
 
-  // Sign every photo once up front so cards paint instantly as you swipe.
+  // Sign only the current and next photos. Large queues open quickly and keep
+  // one card of look-ahead without doing storage work for the whole deck.
   const signed = {};
-  const paths = [...new Set(queue.map((it) => it.image_path).filter(Boolean))];
-  if (paths.length) {
-    const { data } = await supabase.storage.from("product-images").createSignedUrls(paths, 3600);
-    (data || []).forEach((u) => { if (u.signedUrl) signed[u.path] = u.signedUrl; });
-  }
 
   let idx = 0;
   let approved = 0, flagged = 0;
@@ -56,8 +53,44 @@ export async function openSwipeReview(items, caps, opts = {}) {
   const stage = ov.querySelector("#swStage");
   const prog = ov.querySelector("#swProg");
   const undoBtn = ov.querySelector("#swUndo");
+  const approveBtn = ov.querySelector("#swApprove");
+  let acting = false;
+  let closed = false;
+  let renderSeq = 0;
+  const changedIds = new Set();
 
   const readinessOf = (it) => getItemReadiness(it, { forApproval: true, canViewCost: !!caps.can_view_cost });
+
+  async function ensureSigned(indices) {
+    const paths = [...new Set(indices
+      .map((i) => queue[i]?.image_path)
+      .filter((path) => path && !signed[path]))];
+    if (!paths.length) return;
+    const { data } = await supabase.storage.from("product-images").createSignedUrls(paths, 3600);
+    (data || []).forEach((entry) => { if (entry.signedUrl) signed[entry.path] = entry.signedUrl; });
+  }
+
+  function paintApproveAffordance() {
+    if (!approveBtn) return;
+    const label = approveBtn.querySelector("span");
+    const it = queue[idx];
+    if (!it || idx >= queue.length) {
+      approveBtn.disabled = true;
+      approveBtn.title = "";
+      if (label) label.textContent = "Approve";
+      return;
+    }
+    const r = readinessOf(it);
+    const blocked = r.blockers.length > 0;
+    approveBtn.disabled = acting || blocked;
+    approveBtn.title = blocked ? `Fix before approval: ${approvalBlockerText(r) || r.primary?.label || "not ready"}` : "";
+    if (label) label.textContent = blocked ? "Blocked" : r.warnings.length ? "Review & approve" : "Approve";
+  }
+
+  function setActing(next) {
+    acting = next;
+    paintApproveAffordance();
+  }
 
   function cardHtml(it) {
     const r = readinessOf(it);
@@ -87,6 +120,7 @@ export async function openSwipeReview(items, caps, opts = {}) {
   function paintProgress() {
     prog.textContent = idx < queue.length ? `${idx + 1} of ${queue.length}` : "Done";
     undoBtn.disabled = history.length === 0;
+    paintApproveAffordance();
   }
 
   function renderDone() {
@@ -101,8 +135,11 @@ export async function openSwipeReview(items, caps, opts = {}) {
   }
 
   let card = null;
-  function render() {
+  async function render() {
+    const seq = ++renderSeq;
     if (idx >= queue.length) { renderDone(); return; }
+    await ensureSigned([idx, idx + 1]);
+    if (closed || seq !== renderSeq || idx >= queue.length) return;
     stage.innerHTML = cardHtml(queue[idx]);
     card = stage.querySelector(".sw-card");
     attachGestures(card);
@@ -123,53 +160,84 @@ export async function openSwipeReview(items, caps, opts = {}) {
   function advance() { idx++; render(); }
 
   async function doApprove() {
+    if (acting) return;
     const it = queue[idx];
+    if (!it) return;
     const r = readinessOf(it);
-    if (!r.canApprove) { snapBack(); toast(`Can't approve: ${r.primary?.detail || r.primary?.label || "not ready"}`); return; }
-    history.push({ id: it.id, prevStatus: it.status });
-    approved++;
-    navigator.vibrate?.(12);
-    flyOut("approve", advance);
+    if (!r.canApprove) { snapBack(); toast(`Can't approve: ${approvalBlockerText(r) || r.primary?.detail || r.primary?.label || "not ready"}`); return; }
+    setActing(true);
+    if (!(await confirmApprovalWarnings(r))) { setActing(false); snapBack(); return; }
+    const prevStatus = it.status;
     const { error } = await supabase.from("items").update({ status: "approved" }).eq("id", it.id);
-    if (error) { toast("Couldn't approve: " + error.message); return; }
-    logItemActivity(it.id, "status", "approval",
-      [{ field_path: "status", before: it.status, after: "approved" }], "Approved in swipe review").catch(() => {});
+    if (error) { setActing(false); snapBack(); toast("Couldn't approve: " + error.message); return; }
+    history.push({ id: it.id, prevStatus, action: "approve" });
+    changedIds.add(it.id);
+    approved++;
     it.status = "approved";
+    logItemActivity(it.id, "status", "approval",
+      [{ field_path: "status", before: prevStatus, after: "approved" }], "Approved in swipe review").catch(() => {});
+    navigator.vibrate?.(12);
+    flyOut("approve", () => { setActing(false); advance(); });
   }
 
   async function doFlag() {
+    if (acting) return;
     const it = queue[idx];
-    history.push({ id: it.id, prevStatus: it.status });
-    flagged++;
-    navigator.vibrate?.(12);
-    flyOut("flag", advance);
+    if (!it) return;
+    setActing(true);
+    const prevStatus = it.status;
     const { error } = await supabase.from("items").update({ status: "flag" }).eq("id", it.id);
-    if (error) { toast("Couldn't flag: " + error.message); return; }
-    logItemActivity(it.id, "status", "manual",
-      [{ field_path: "status", before: it.status, after: "flag" }], "Flagged in swipe review").catch(() => {});
+    if (error) { setActing(false); snapBack(); toast("Couldn't flag: " + error.message); return; }
+    history.push({ id: it.id, prevStatus, action: "flag" });
+    changedIds.add(it.id);
+    flagged++;
     it.status = "flag";
+    logItemActivity(it.id, "status", "manual",
+      [{ field_path: "status", before: prevStatus, after: "flag" }], "Flagged in swipe review").catch(() => {});
+    navigator.vibrate?.(12);
+    flyOut("flag", () => { setActing(false); advance(); });
   }
 
-  // Fix opens the full editor focused on the blocking issue; afterwards we move
-  // on (the end-of-deck refresh re-reads everything truthfully).
+  // Fix pauses the deck. Cancelling keeps the current card; saving advances to
+  // the next item and reports only this changed id to the parent Review view.
   function doFix() {
+    if (acting) return;
     const it = queue[idx];
+    if (!it) return;
+    setActing(true);
     const r = readinessOf(it);
-    openEditor(it.id, caps, () => {}, { focusIssue: r.primary?.issue });
-    flyOut("fix", advance);
+    let saved = false;
+    openEditor(it.id, caps, () => {
+      saved = true;
+      changedIds.add(it.id);
+    }, {
+      focusIssue: r.primary?.issue,
+      onClose: () => {
+        setActing(false);
+        if (saved) flyOut("fix", advance);
+        else snapBack();
+      },
+    }).catch((error) => {
+      setActing(false);
+      snapBack();
+      toast("Couldn't open item: " + (error.message || error));
+    });
   }
 
   async function undo() {
+    if (acting) return;
     const last = history.pop();
     if (!last) return;
-    if (last.prevStatus === "approved") approved--; // shouldn't happen, but keep counters honest
+    setActing(true);
     // Step back to the reverted item and restore its status.
     const { error } = await supabase.from("items").update({ status: last.prevStatus }).eq("id", last.id);
-    if (error) { toast("Couldn't undo: " + error.message); history.push(last); return; }
+    if (error) { toast("Couldn't undo: " + error.message); history.push(last); setActing(false); return; }
     const qi = queue.findIndex((it) => it.id === last.id);
     if (qi >= 0) { queue[qi].status = last.prevStatus; idx = qi; }
-    // Recount from history is overkill; nudge the visible tallies.
-    approved = Math.max(0, approved); flagged = Math.max(0, flagged);
+    if (last.action === "approve") approved = Math.max(0, approved - 1);
+    if (last.action === "flag") flagged = Math.max(0, flagged - 1);
+    changedIds.add(last.id);
+    setActing(false);
     render();
   }
 
@@ -212,12 +280,16 @@ export async function openSwipeReview(items, caps, opts = {}) {
   }
 
   function close() {
+    if (closed) return;
+    if (acting) { toast("Finish the current action before closing."); return; }
+    closed = true;
     document.removeEventListener("keydown", onKey);
     release();
     ov.remove();
-    opts.onChanged?.();
+    if (changedIds.size) opts.onChanged?.([...changedIds]);
   }
   const onKey = (e) => {
+    if (!isTopOverlay(ov)) return;
     if (e.key === "Escape") close();
     else if (e.key === "ArrowRight") doApprove();
     else if (e.key === "ArrowLeft") doFlag();

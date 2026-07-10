@@ -1,9 +1,9 @@
 import { supabase } from "./db.js";
 import { loadRefData, categoryPath, fieldLabel, resolveFields, getSetting } from "./data.js";
-import { esc, toast, trapFocus, openBottomSheet, ICON } from "./ui.js";
+import { esc, toast, trapFocus, openBottomSheet, bindPriceInput, ICON } from "./ui.js";
 import { openPricing } from "./pricing.js";
 import { logManyItemActivities } from "./activity.js";
-import { costFromRetail } from "./lib/price.js";
+import { costFromRetail, formatPriceInput, parsePrice, stripPriceGrouping } from "./lib/price.js";
 
 // ============================================================================
 //  Guided pricing — "price like you'd say it".
@@ -18,9 +18,9 @@ import { costFromRetail } from "./lib/price.js";
 //    4. CHECK  — every affected item shown as a photo with its new price tag,
 //                grouped by outcome, then ONE undoable write
 //
-//  The pivot-style tool (pricing.js) stays available behind "Advanced" — same
+//  The pivot-style tool (pricing.js) stays available behind "Group table" — same
 //  write semantics, different audience. This flow edits retail price only;
-//  cost lives in Advanced where it is capability-gated.
+//  cost lives in the group table where it is capability-gated.
 // ============================================================================
 
 
@@ -28,11 +28,11 @@ import { costFromRetail } from "./lib/price.js";
 const isNumericish = (v) => v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v));
 
 export async function openGuidedPricing(caps, onClose, opts = {}) {
-  // Show the overlay immediately with a spinner so "Set prices" feels responsive
+  // Show the overlay immediately with a spinner so "Price items" feels responsive
   // while the catalogue (up to 5000 rows) loads; real content replaces it below.
   const el = document.createElement("div");
   el.className = "calib pricing pgd";
-  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Set prices</span></div>
+  el.innerHTML = `<div class="calib-panel"><div class="calib-head"><span>Price items</span></div>
     <div class="calib-body"><div class="spinner" style="margin:48px auto"></div></div></div>`;
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add("open"));
@@ -61,7 +61,8 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   const items = allItems.filter(priceable);
   // Selection mode: when the caller hands us specific items (a gallery selection
   // or the review price queue), we price exactly those — skipping the category
-  // picker — so "Set prices" is one model everywhere. Pivot stays via Advanced.
+  // picker — so "Price items" is one model everywhere. Pivot stays via the
+  // group table.
   const selIds = Array.isArray(opts.itemIds) ? new Set(opts.itemIds) : null;
   const selectionMode = !!(selIds && selIds.size);
 
@@ -100,7 +101,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   // Optional cost price (admins only) applied alongside retail, so a pricing pass
   // also clears the cost approval-blocker. "pct" = a percentage of each item's
   // retail (e.g. 50% margin); "fixed" = one cost for everything priced.
-  let costEnabled = false;
+  let costEnabled = !!caps.can_view_cost;
   let costMode = "pct";  // "pct" | "fixed"
   let costPct = "50";
   let costFixed = "";
@@ -139,7 +140,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   // Final price for an item under the current sentence: base, then each
   // exception in order — the LAST matching line wins. null = untouched.
   const finalPriceOf = (it) => {
-    let p = basePrice === "" ? null : Number(basePrice);
+    let p = basePrice === "" ? null : parsePrice(basePrice);
     for (const ex of exceptions) if (exceptionMatches(ex, it)) p = Number(ex.price);
     if (p == null) return null;
     if (keepPriced && it.price != null) return null;
@@ -176,11 +177,15 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   // ---- overlay shell --------------------------------------------------------
   // el is already created + shown (with a loading spinner) at the top.
   const release = trapFocus(el);
-  const close = () => {
+  const changedIds = new Set();
+  const close = ({ notify = true } = {}) => {
     document.removeEventListener("keydown", onKey);
     release();
     el.classList.remove("open");
-    setTimeout(() => { el.remove(); onClose?.(); }, 180);
+    setTimeout(() => {
+      el.remove();
+      if (notify && changedIds.size) onClose?.([...changedIds]);
+    }, 180);
   };
   // Esc backs out one step at a time; sheets on top own Esc while open.
   const onKey = (e) => {
@@ -235,7 +240,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     return `<div class="pgd-pile">
       <div class="pgd-pilehead">${head}</div>
       <div class="pgd-strip">${withImg.map((it) => `<span class="pgd-stripthumb">${thumbOf(it)}</span>`).join("")}</div>
-      ${inShop ? `<div class="pgd-hint muted">${inShop} more ${inShop === 1 ? "is" : "are"} already in the shop and not shown — once pushed, prices change in the POS, not here.</div>` : ""}
+      ${inShop ? `<div class="pgd-posskip">${inShop} more ${inShop === 1 ? "is" : "are"} already in the shop and not shown. Change synced prices in the POS.</div>` : ""}
     </div>`;
   }
 
@@ -261,7 +266,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
       <div class="pgd-lead">Everyone pays this — unless an exception says otherwise.</div>
       <div class="pg-input pgd-baseinput">
         ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-        <input id="pgdBase" type="number" inputmode="decimal" placeholder="Standard price — or leave empty" value="${esc(basePrice)}">
+        <input id="pgdBase" type="text" inputmode="decimal" data-price-input autocomplete="off" placeholder="Standard price — or leave empty" value="${esc(basePrice)}">
       </div>
       ${sug ? `<button class="ghost pgd-suggest" id="pgdSuggest" type="button">Use ${esc(fmt(sug.median))}<span class="muted"> · similar in your catalogue ${esc(fmt(sug.min))}–${esc(fmt(sug.max))} (${sug.n})</span></button>` : ""}
       <div class="pgd-hint muted">Leave it empty to only price the exceptions you add next
@@ -279,7 +284,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           </div>
           <div class="pg-input pgd-costinput">
             ${costMode === "fixed" && cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-            <input id="pgdCostVal" type="number" inputmode="decimal"
+            <input id="pgdCostVal" type="${costMode === "fixed" ? "text" : "number"}" inputmode="decimal"${costMode === "fixed" ? " data-price-input autocomplete=\"off\"" : ""}
               placeholder="${costMode === "fixed" ? "Cost amount" : "e.g. 50"}"
               value="${esc(costMode === "fixed" ? costFixed : costPct)}">
             ${costMode !== "fixed" ? `<span class="pg-cur">%</span>` : ""}
@@ -334,7 +339,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           </div>`).join("")}</div>
       </div>`).join("");
     const willCost = costOn() ? pile.filter((it) => { const p = finalPriceOf(it); return p != null && costOf(p) != null; }).length : 0;
-    const costLabel = costMode === "fixed" ? esc(fmt(Number(costFixed) || 0)) : `${esc(costPct)}% of each price`;
+    const costLabel = costMode === "fixed" ? esc(fmt(parsePrice(costFixed) ?? 0)) : `${esc(costPct)}% of each price`;
     return `
       <div class="pgd-lead">${total
         ? `Check the tags — <b>${total}</b> item${total === 1 ? "" : "s"} will be priced (${news} new · ${overwrites} changed${unchanged ? ` · ${unchanged} untouched` : ""}).`
@@ -349,10 +354,10 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
   const TITLES = { 1: "What are we pricing?", 2: "Base price", 3: "Exceptions", 4: "Check & apply" };
   function footHtml() {
     // While drilled into the tree, the left slot becomes Back (mobile users
-    // need a visible way up); Advanced is discoverable at the entry level.
+    // need a visible way up); Group table is discoverable at the entry level.
     if (step === 1) return `${drillId
       ? `<button class="ghost" id="pgdBack">‹ Back</button>`
-      : `<button class="ghost" id="pgdAdv">Advanced</button>`}<span class="pgd-dots">${dots()}</span><span></span>`;
+      : `<button class="ghost" id="pgdAdv">Price table</button>`}<span class="pgd-dots">${dots()}</span><span></span>`;
     const nextLabel = step === 2 ? "Exceptions ›" : step === 3 ? "Preview ›" : "Apply";
     const nextDisabled = step === 4 && !pile.some((it) => {
       const p = finalPriceOf(it);
@@ -371,7 +376,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
       <div class="calib-head">
         <button class="iconbtn" id="pgdX" aria-label="Close">${ICON.x}</button>
         <span>${esc(TITLES[step])}</span>
-        <span>${selectionMode ? `<button class="linkbtn" id="pgdAdv">Advanced</button>` : ""}</span>
+        <span>${selectionMode ? `<button class="linkbtn" id="pgdAdv">Price table</button>` : ""}</span>
       </div>
       ${step >= 2 && sentence() ? `<div class="pgd-sentence">${esc(selectionMode ? "Selected" : (categoryPath(pickedId)?.split(" › ").pop() || ""))}: ${esc(sentence())}</div>` : ""}
       <div class="calib-body" id="pgdBody">${body}</div>
@@ -380,7 +385,12 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
 
     el.querySelector("#pgdX").onclick = close;
     el.querySelector("#pgdBack")?.addEventListener("click", back);
-    el.querySelector("#pgdAdv")?.addEventListener("click", () => { close(); openPricing(caps, onClose, selectionMode ? { itemIds: [...selIds] } : undefined); });
+    el.querySelector("#pgdAdv")?.addEventListener("click", () => {
+      const pricingOpts = selectionMode ? { itemIds: [...selIds] } : {};
+      pricingOpts.initialChangedIds = [...changedIds];
+      close({ notify: false });
+      openPricing(caps, onClose, pricingOpts);
+    });
     el.querySelector("#pgdNext")?.addEventListener("click", next);
 
     const bodyEl = el.querySelector("#pgdBody");
@@ -396,14 +406,14 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
         }
       });
     } else if (step === 2) {
-      bodyEl.querySelector("#pgdBase").addEventListener("input", (e) => { basePrice = e.target.value.trim(); });
+      bindPriceInput(bodyEl.querySelector("#pgdBase"), (value) => { basePrice = stripPriceGrouping(value); });
       bodyEl.querySelector("#pgdKeep")?.addEventListener("change", (e) => { keepPriced = e.target.checked; });
       bodyEl.querySelector("#pgdSuggest")?.addEventListener("click", () => {
         const s = priceSuggestion();
         if (!s) return;
         basePrice = String(s.median);
         const input = bodyEl.querySelector("#pgdBase");
-        if (input) input.value = basePrice;
+        if (input) input.value = formatPriceInput(basePrice);
       });
       // Cost controls (admins): toggle visibility in place; mode switch re-renders
       // so the input's adornment (% vs currency) and placeholder update.
@@ -416,10 +426,9 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
         const btn = e.target.closest("[data-cm]");
         if (btn) { costMode = btn.dataset.cm; render(); }
       });
-      bodyEl.querySelector("#pgdCostVal")?.addEventListener("input", (e) => {
-        const v = e.target.value.trim();
-        if (costMode === "fixed") costFixed = v; else costPct = v;
-      });
+      const costInput = bodyEl.querySelector("#pgdCostVal");
+      if (costMode === "fixed") bindPriceInput(costInput, (value) => { costFixed = stripPriceGrouping(value); });
+      else costInput?.addEventListener("input", (e) => { costPct = e.target.value.trim(); });
       requestAnimationFrame(() => bodyEl.querySelector("#pgdBase")?.focus());
     } else if (step === 3) {
       bodyEl.querySelector("#pgdAddEx").onclick = openExceptionSheet;
@@ -436,7 +445,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
 
   function next() {
     if (step === 2) {
-      if (basePrice !== "" && (!Number.isFinite(Number(basePrice)) || Number(basePrice) < 0)) {
+      if (basePrice !== "" && parsePrice(basePrice) === null) {
         toast("Enter a valid base price (or leave it empty)."); return;
       }
       step = 3; render();
@@ -543,7 +552,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           <div class="cm-label" style="margin-top:10px">They pay</div>
           <div class="pg-input">
             ${cur ? `<span class="pg-cur">${esc(cur)}</span>` : ""}
-            <input type="number" inputmode="decimal" id="pgdExPrice" placeholder="Price for this exception" value="${esc(price)}">
+            <input type="text" inputmode="decimal" data-price-input autocomplete="off" id="pgdExPrice" placeholder="Price for this exception" value="${esc(price)}">
           </div>
           <button class="primary up-go" data-add>Add exception</button>`;
         sh.body.querySelector("[data-back]").onclick = showDiffs;
@@ -561,7 +570,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           const n = sh.body.querySelector("#pgdBandN"); const bn = bandCount();
           if (n) n.textContent = bn == null ? "Enter a number." : `${bn} item${bn === 1 ? "" : "s"} match.`;
         });
-        sh.body.querySelector("#pgdExPrice").addEventListener("input", (e) => { price = e.target.value.trim(); });
+        bindPriceInput(sh.body.querySelector("#pgdExPrice"), (value) => { price = stripPriceGrouping(value); });
         // Search filters the list in place (the input lives OUTSIDE the list,
         // so it keeps focus and the sheet's scroll position survives typing).
         sh.body.querySelector("#pgdValQ")?.addEventListener("input", (e) => {
@@ -581,12 +590,13 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
           box.classList.toggle("on", on); box.textContent = on ? "✓" : "";
         });
         sh.body.querySelector("[data-add]").onclick = () => {
-          if (!Number.isFinite(Number(price)) || price === "" || Number(price) < 0) { toast("Enter the exception's price."); return; }
+          const parsedPrice = parsePrice(price);
+          if (parsedPrice === null) { toast("Enter the exception's price."); return; }
           if (mode === "values" && !sel.size) { toast("Pick at least one value."); return; }
           if (mode === "band" && !Number.isFinite(Number(threshold))) { toast("Enter the threshold number."); return; }
           exceptions.push(mode === "values"
-            ? { key: d.key, label: d.label, mode, values: new Set(sel), price: Number(price) }
-            : { key: d.key, label: d.label, mode, dir, threshold, price: Number(price) });
+            ? { key: d.key, label: d.label, mode, values: new Set(sel), price: parsedPrice }
+            : { key: d.key, label: d.label, mode, dir, threshold, price: parsedPrice });
           sh.close();
           render();
         };
@@ -625,6 +635,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     for (const [value, ids] of writes) {
       const { error: wErr } = await supabase.from("items").update({ price: value }).in("id", ids);
       if (wErr) { toast("Couldn't set prices: " + wErr.message); return; }
+      ids.forEach((id) => changedIds.add(id));
     }
     const priceById = new Map([...writes.entries()].flatMap(([v, ids]) => ids.map((id) => [id, v])));
 
@@ -645,7 +656,10 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
         const { error: cErr } = await supabase.from("item_costs")
           .upsert(costTargets.map((x) => ({ item_id: x.id, cost_price: x.cost })), { onConflict: "item_id" });
         if (cErr) toast("Prices set, but cost failed: " + cErr.message);
-        else costApplied = true;
+        else {
+          costApplied = true;
+          costTargets.forEach((target) => changedIds.add(target.id));
+        }
       }
     }
 
@@ -699,7 +713,7 @@ export async function openGuidedPricing(caps, onClose, opts = {}) {
     // the next sentence (scenarios usually come in runs).
     if (selectionMode) { close(); return; }
     step = 1; drillId = null; pickedId = null; pile = [];
-    basePrice = ""; keepPriced = false; exceptions.length = 0; costEnabled = false;
+    basePrice = ""; keepPriced = false; exceptions.length = 0; costEnabled = !!caps.can_view_cost;
     render();
     } finally {
       applying = false;
