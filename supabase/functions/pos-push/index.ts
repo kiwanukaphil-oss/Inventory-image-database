@@ -30,7 +30,7 @@
 //          platform-injected SUPABASE_URL / SERVICE_ROLE / ANON keys.
 // =============================================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 // Self-contained for direct Supabase-dashboard deploy (no CLI bundling of _shared).
 // Origin-allowlisted CORS (S5) + constant-time, fail-closed POS-caller auth (S4).
 // These two helpers are duplicated across the 3 pos-* functions — keep them in sync.
@@ -62,6 +62,9 @@ function corsHeaders(req) {
 const makeJson = (cors) => (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 
+const fetchWithTimeout = (input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 15_000) =>
+  fetch(input, { ...init, signal: init.signal || AbortSignal.timeout(timeoutMs) });
+
 async function timingSafeEqual(a, b) {
   const enc = new TextEncoder();
   const [ha, hb] = await Promise.all([
@@ -87,8 +90,8 @@ async function authorizePosCaller(req, env) {
   const { data: userData } = await userClient.auth.getUser();
   if (!userData?.user) return { ok: false, status: 401, error: "unauthorized" };
   const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
-  const { data: me } = await adminCheck.from("profiles").select("role, can_manage_users").eq("id", userData.user.id).maybeSingle();
-  if (!me || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
+  const { data: me } = await adminCheck.from("profiles").select("role, active, can_manage_users").eq("id", userData.user.id).maybeSingle();
+  if (!me?.active || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
   return { ok: true };
 }
 
@@ -102,10 +105,13 @@ const QUEUE_LIMIT_MAX = 50; // hard cap on caller-supplied limits (audit S10)
 class Pos {
   base: string;
   token: string | null = null;
+  branches: unknown[] = [];
+  defaultBranchId: string | null = null;
+  branchId: string | null = null;
   constructor(base: string) { this.base = base.replace(/\/$/, ""); }
 
   async login() {
-    const res = await fetch(`${this.base}/auth/login`, {
+    const res = await fetchWithTimeout(`${this.base}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -116,18 +122,44 @@ class Pos {
     const body = await res.json().catch(() => ({}));
     if (!res.ok || !body.token) throw new Error(`POS login failed (${res.status}): ${body.message || "no token"}`);
     this.token = body.token;
+    const branchResult = await this.req("/branches/my", { branchScoped: false });
+    if (branchResult.status !== 200) throw new Error(`branch access lookup failed (${branchResult.status})`);
+    this.branches = branchResult.body.data?.branches || [];
+    this.defaultBranchId = branchResult.body.data?.default_branch_id
+      || this.branches.find((b) => b.is_user_default)?.id
+      || this.branches.find((b) => b.is_default)?.id
+      || this.branches[0]?.id
+      || null;
+    this.branchId = this.resolveBranchId(this.defaultBranchId);
   }
 
-  async req(path: string, { method = "GET", body }: { method?: string; body?: unknown } = {}) {
-    const res = await fetch(`${this.base}${path}`, {
+  resolveBranchId(requested?: string | null) {
+    const id = requested || this.defaultBranchId;
+    const branch = this.branches.find((b) => b.id === id);
+    if (!branch) throw new Error(requested ? `catalog_sync cannot access POS branch ${requested}` : "no POS branch is available");
+    if (!["active", "opening"].includes(branch.status)) throw new Error(`POS branch ${branch.code || branch.id} is ${branch.status}`);
+    return branch.id;
+  }
+
+  useBranch(requested?: string | null) {
+    this.branchId = this.resolveBranchId(requested);
+    return this.branchId;
+  }
+
+  async req(path: string, { method = "GET", body, branchScoped = true }: { method?: string; body?: unknown; branchScoped?: boolean } = {}) {
+    const res = await fetchWithTimeout(`${this.base}${path}`, {
       method,
       headers: {
         Authorization: `Bearer ${this.token}`,
+        ...(branchScoped && this.branchId ? { "X-Branch-Id": this.branchId } : {}),
         ...(body ? { "Content-Type": "application/json" } : {}),
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     const out = await res.json().catch(() => ({}));
+    if (branchScoped && out.branch_id && out.branch_id !== this.branchId) {
+      throw new Error(`POS returned branch ${out.branch_id} for requested branch ${this.branchId}`);
+    }
     return { status: res.status, body: out };
   }
 
@@ -198,9 +230,12 @@ class Pos {
   async uploadProductImage(productId: string, bytes: ArrayBuffer, filename: string) {
     const form = new FormData();
     form.append("image", new Blob([bytes], { type: "image/webp" }), filename);
-    const res = await fetch(`${this.base}/products/${productId}/image`, {
+    const res = await fetchWithTimeout(`${this.base}/products/${productId}/image`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${this.token}` },
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        ...(this.branchId ? { "X-Branch-Id": this.branchId } : {}),
+      },
       body: form,
     });
     const out = await res.json().catch(() => ({}));
@@ -336,7 +371,7 @@ const buildProductPayload = ({ item, brandId, posCategoryId, costPrice, grouped 
 // ---------------------------------------------------------------------------
 const ITEM_SELECT =
   "id, name, brand, price, stock_quantity, reorder_level, sku, image_path, attributes, category_id, " +
-  "pos_product_id, pos_variant_id, item_costs ( cost_price ), categories ( slug, name )";
+  "pos_product_id, pos_variant_id, pos_branch_id, item_costs ( cost_price ), categories ( slug, name )";
 
 Deno.serve(async (req) => {
   const cors = corsHeaders(req);
@@ -394,7 +429,7 @@ Deno.serve(async (req) => {
   const transferImage = async (pos, item, productId) => {
     const url = await signedImageUrl(item.image_path);
     if (!url) return false;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, {}, 30_000);
     if (!res.ok) throw new Error(`image download ${res.status}`);
     await pos.uploadProductImage(productId, await res.arrayBuffer(), `${item.sku || "product"}.webp`);
     return true;
@@ -404,6 +439,24 @@ Deno.serve(async (req) => {
     if (!POS_BASE_URL) throw new Error("POS_BASE_URL secret is not set");
     const pos = new Pos(POS_BASE_URL);
     await pos.login();
+    const mirroredAt = new Date().toISOString();
+    const branchRows = pos.branches.map((branch) => ({
+      pos_branch_id: branch.id,
+      code: branch.code,
+      name: branch.name,
+      status: branch.status,
+      is_default: branch.id === pos.defaultBranchId || branch.is_default === true,
+      timezone: branch.timezone || null,
+      mirrored_at: mirroredAt,
+    }));
+    const { error: clearDefaultError } = await db.from("pos_branches")
+      .update({ is_default: false }).eq("is_default", true);
+    if (clearDefaultError) throw new Error(`branch default reset failed: ${clearDefaultError.message}`);
+    if (branchRows.length) {
+      const { error: branchError } = await db.from("pos_branches")
+        .upsert(branchRows, { onConflict: "pos_branch_id" });
+      if (branchError) throw new Error(`branch mirror upsert failed: ${branchError.message}`);
+    }
 
     // Shared lookups. The group registry seeds from already-linked items so a
     // new size joins the product an earlier run created.
@@ -444,6 +497,18 @@ Deno.serve(async (req) => {
 
     for (const item of queue || []) {
       summary.queue_seen++;
+      let itemBranchId;
+      try {
+        itemBranchId = pos.useBranch(item.pos_branch_id);
+        if (!item.pos_branch_id) await writeBack(item.id, { pos_branch_id: itemBranchId });
+      } catch (err) {
+        summary.errored++;
+        await db.from("items").update({
+          pos_sync_status: "error",
+          pos_sync_error: `Branch selection failed: ${String(err?.message || err)}`,
+        }).eq("id", item.id);
+        continue;
+      }
       const posCategoryId = categoryMap.get(item.category_id);
       if (item.price == null || !item.sku || !posCategoryId) {
         const reasons = [];
@@ -523,6 +588,7 @@ Deno.serve(async (req) => {
         await writeBack(item.id, {
           pos_product_id: posProductId,
           pos_variant_id: posVariantId,
+          pos_branch_id: itemBranchId,
           pos_sku: item.sku,
           pos_sync_status: pendingApproval ? "awaiting_approval" : "synced",
           pos_sync_error: pendingApproval ? "stock receipt awaiting POS approval" : imageNote,
@@ -555,6 +621,7 @@ Deno.serve(async (req) => {
       for (const item of dirty || []) {
         summary.dirty_seen++;
         try {
+          pos.useBranch(item.pos_branch_id);
           const posCategoryId = categoryMap.get(item.category_id);
           const brandId = await resolveBrandId(item);
           const grouped = Boolean(getGroupKey(item));
@@ -609,6 +676,11 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "internal error", ...summary }, 500);
   } finally {
     // Always release the single-flight lock, even on error.
-    await db.rpc("release_sync_lock", { p_name: LOCK_NAME }).catch(() => {});
+    try {
+      const { error: releaseError } = await db.rpc("release_sync_lock", { p_name: LOCK_NAME });
+      if (releaseError) console.error("pos-push lock release failed", releaseError.message);
+    } catch (releaseError) {
+      console.error("pos-push lock release threw", String(releaseError?.message || releaseError));
+    }
   }
 });

@@ -4,6 +4,7 @@ import { openEditor } from "./editor.js";
 import { openSyncCenter } from "./synccenter.js";
 import { syncCountsFromItems } from "./syncstate.js";
 import { esc, ICON, openBottomSheet } from "./ui.js";
+import { ALL_POS_BRANCHES, enabledBranches, storePosBranchId } from "./posbranches.js";
 
 // The Shop tab — answers, not analytics. Each card is a question floor staff
 // actually ask, answered with photos and plain words over the read-only POS
@@ -22,7 +23,7 @@ const SHOP_ITEM_CAP = 10000; // explicit cap (P5): the report was relying on Pos
 
 // Filter/view state survives tab switches within the session (same pattern as
 // the gallery's browseState).
-const state = { q: "", top: "", brand: "", bestWindow: "7d", expanded: new Set() };
+const state = { q: "", top: "", brand: "", branchId: "", bestWindow: "7d", expanded: new Set() };
 
 async function loadLatestSyncRun(kind) {
   const { data } = await supabase
@@ -43,7 +44,7 @@ export async function renderShop(view, caps, onChanged) {
   const [{ data: items, error }, posMirror, reconcileRun] = await Promise.all([
     supabase
       .from("items")
-      .select("id, name, brand, sku, status, image_path, attributes, category_id, pos_sync_status, pos_variant_id, pos_synced_at, pos_dirty, categories(name)")
+      .select("id, name, brand, sku, status, image_path, attributes, category_id, pos_sync_status, pos_variant_id, pos_branch_id, pos_synced_at, pos_dirty, categories(name)")
       .order("created_at", { ascending: true })
       .limit(SHOP_ITEM_CAP),
     loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
@@ -57,6 +58,17 @@ export async function renderShop(view, caps, onChanged) {
   // P5: an aggregate report over a truncated set would mislead — flag it.
   const truncated = (items || []).length >= SHOP_ITEM_CAP;
   if (truncated) console.warn("shop: item set hit the cap", SHOP_ITEM_CAP);
+  const branches = enabledBranches(posMirror.branches);
+  if (state.branchId !== ALL_POS_BRANCHES && !branches.some((b) => b.pos_branch_id === state.branchId)) {
+    state.branchId = posMirror.selectedBranchId || posMirror.defaultBranchId || "";
+  }
+  if (state.branchId === ALL_POS_BRANCHES && branches.length < 2) {
+    state.branchId = posMirror.defaultBranchId || branches[0]?.pos_branch_id || "";
+  }
+  const selectedMirror = posMirror.forBranch ? posMirror.forBranch(state.branchId) : posMirror.byVariant;
+  const scopedItems = !branches.length || state.branchId === ALL_POS_BRANCHES
+    ? (items || [])
+    : (items || []).filter((it) => (it.pos_branch_id || posMirror.defaultBranchId) === state.branchId);
 
   // One representative catalog item per POS variant (oldest with a photo) —
   // duplicate-SKU photos collapse here; the report counts products, not photos.
@@ -68,13 +80,13 @@ export async function renderShop(view, caps, onChanged) {
   }
   // Sync bucket counts come from the shared single source (syncstate.js) so the
   // Shop strip and the Sync Center can never disagree.
-  const { queued, errors, sending, dirty, inShop } = syncCountsFromItems(items || []);
+  const { queued, errors, sending, dirty, inShop } = syncCountsFromItems(scopedItems);
   const driftFindings = Array.isArray(reconcileRun?.summary?.findings)
     ? reconcileRun.summary.findings
     : [];
 
   // The variant universe, dressed for filtering: top-level category + brand.
-  const all = [...posMirror.byVariant.values()]
+  const all = [...selectedMirror.values()]
     .filter((m) => m.is_active !== false)
     .map((m) => {
       const rep = repByVariant.get(m.pos_variant_id) || null;
@@ -104,7 +116,9 @@ export async function renderShop(view, caps, onChanged) {
     const sold7d = variants.reduce((s, v) => s + (v.m.units_sold_7d || 0), 0);
 
     const low = variants
-      .filter((v) => v.m.stock_quantity > 0 && v.m.reorder_level != null && v.m.stock_quantity <= v.m.reorder_level)
+      .filter((v) => state.branchId === ALL_POS_BRANCHES
+        ? (v.m.low_branch_count || 0) > 0
+        : v.m.stock_quantity > 0 && v.m.reorder_level != null && v.m.stock_quantity <= v.m.reorder_level)
       .sort((a, b) => a.m.stock_quantity - b.m.stock_quantity);
     const soldOut = variants
       .filter((v) => v.m.stock_quantity <= 0 && (v.m.units_sold || 0) > 0)
@@ -208,6 +222,44 @@ export async function renderShop(view, caps, onChanged) {
       </span>`;
 
     const filtered = state.q || state.top || state.brand;
+    const selectedBranch = state.branchId === ALL_POS_BRANCHES
+      ? null
+      : branches.find((branch) => branch.pos_branch_id === state.branchId) || branches[0];
+    const openBranchPicker = () => {
+      const options = [
+        ...branches.map((branch) => ({
+          value: branch.pos_branch_id,
+          code: branch.code,
+          label: branch.name,
+          sub: branch.is_default ? "Default stock location" : "Branch stock location",
+        })),
+        ...(branches.length > 1 ? [{
+          value: ALL_POS_BRANCHES,
+          code: "ALL",
+          label: "All branches",
+          sub: "Combined view across every location",
+        }] : []),
+      ];
+      const sheet = openBottomSheet("Stock location", `
+        <div class="shop-branchpick">
+          <p>Choose which branch drives stock, sales and reorder signals.</p>
+          <div class="shop-branchlist">
+            ${options.map((option) => `<button type="button" class="shop-branchrow${state.branchId === option.value ? " on" : ""}" data-branch="${esc(option.value)}">
+              <span class="shop-branchcode">${esc(option.code)}</span>
+              <span class="shop-branchdetails"><b>${esc(option.label)}</b><small>${esc(option.sub)}</small></span>
+              <span class="shop-branchmark">${state.branchId === option.value ? ICON.tick : ""}</span>
+            </button>`).join("")}
+          </div>
+        </div>`);
+      sheet.body.querySelectorAll("[data-branch]").forEach((button) => {
+        button.onclick = () => {
+          state.branchId = button.dataset.branch;
+          storePosBranchId(state.branchId);
+          sheet.close();
+          renderShop(view, caps, onChanged);
+        };
+      });
+    };
     const openBrandPicker = () => {
       const options = [{ label: "All brands", value: "" }, ...brands.map((b) => ({ label: b, value: b }))];
       const sheet = openBottomSheet("Brand", `
@@ -244,6 +296,20 @@ export async function renderShop(view, caps, onChanged) {
 
     view.innerHTML = `
       <div class="shop-wrap">
+        ${branches.length ? `<div class="shop-branchbar">
+          <span class="shop-branchprompt">Viewing stock at</span>
+          <button id="shopBranch" class="shop-branchswitch" type="button" aria-haspopup="dialog" aria-label="Change stock location">
+            <span class="shop-branchicon" aria-hidden="true">${ICON.navShop}</span>
+            <span class="shop-branchcurrent">
+              <b>${esc(state.branchId === ALL_POS_BRANCHES ? "All branches" : selectedBranch?.code || "Branch")}</b>
+              <small>${esc(state.branchId === ALL_POS_BRANCHES ? "Combined locations" : selectedBranch?.name || "Stock location")}</small>
+            </span>
+            <span class="shop-branchchev" aria-hidden="true">${ICON.fwd}</span>
+          </button>
+        </div>` : `<div class="shop-branchbar pending">
+          <div class="shop-branchlabel"><b>Stock location pending</b><span>Waiting for the POS branch directory to sync</span></div>
+          <button class="shop-refresh" id="shopBranchRefresh" type="button">Retry</button>
+        </div>`}
         <div class="shop-filterbar">
           <input id="shopQ" class="fb-search" type="search" placeholder="Search the shop…" value="${esc(state.q)}">
           <button id="shopBrand" type="button" class="shop-brandbtn" aria-label="Brand filter" aria-haspopup="dialog">
@@ -279,7 +345,9 @@ export async function renderShop(view, caps, onChanged) {
         </div>
 
         ${section("low", "Running low", "Restock candidates — at or below their reorder level.",
-          low.map((v) => rowHtml(v, `<b>${v.m.stock_quantity}</b> left${coverNote(v)}`)),
+          low.map((v) => rowHtml(v, state.branchId === ALL_POS_BRANCHES
+            ? `<b>${v.m.low_branch_count}</b> branch${v.m.low_branch_count === 1 ? "" : "es"} low · ${v.m.stock_quantity} total`
+            : `<b>${v.m.stock_quantity}</b> left${coverNote(v)}`)),
           filtered ? "Nothing running low in this selection." : "Nothing running low 🎉")}
 
         ${section("out", "Sold out", "They were selling — worth reordering.",
@@ -329,6 +397,8 @@ export async function renderShop(view, caps, onChanged) {
       qTimer = setTimeout(() => { state.q = e.target.value.trim().toLowerCase(); draw(); keepSearchFocus(); }, 200);
     });
     wrap.querySelector("#shopBrand")?.addEventListener("click", openBrandPicker);
+    wrap.querySelector("#shopBranch")?.addEventListener("click", openBranchPicker);
+    wrap.querySelector("#shopBranchRefresh")?.addEventListener("click", () => renderShop(view, caps, onChanged));
     wrap.querySelector("#shopRefresh").onclick = () => renderShop(view, caps, onChanged);
     function keepSearchFocus() {
       const q = view.querySelector("#shopQ");

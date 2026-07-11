@@ -17,7 +17,7 @@
 // the platform automatically — no secrets to set for this function.
 // =============================================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 
 // Self-contained for direct Supabase-dashboard deploy (no CLI bundling of
 // _shared). Origin-allowlisted CORS (audit S5): set ALLOWED_ORIGINS to add origins.
@@ -73,9 +73,9 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
     const { data: me } = await admin.from("profiles")
-      .select("role, can_upload, can_edit, can_delete, can_view_cost, can_manage_users")
+      .select("role, active, can_upload, can_edit, can_delete, can_view_cost, can_manage_users")
       .eq("id", caller.id).maybeSingle();
-    if (!me || !(me.can_manage_users || me.role === "admin")) return json({ error: "forbidden" }, 403);
+    if (!me?.active || !(me.can_manage_users || me.role === "admin")) return json({ error: "forbidden" }, 403);
     const callerIsAdmin = me.role === "admin";
 
     const { action, email, password, role, caps, user_id } = await req.json();
@@ -123,7 +123,11 @@ Deno.serve(async (req) => {
       const ban = action === "deactivate";
       const { error } = await admin.auth.admin.updateUserById(user_id, { ban_duration: ban ? BAN_FOREVER : "none" });
       if (error) return json({ error: error.message }, 400);
-      await admin.from("profiles").update({ active: !ban }).eq("id", user_id);
+      const { error: profileError } = await admin.from("profiles").update({ active: !ban }).eq("id", user_id);
+      if (profileError) {
+        console.error("profile activation state update failed", profileError.message);
+        return json({ error: "Account authentication changed, but its profile state did not. Retry or contact an operator." }, 500);
+      }
       return json({ ok: true });
     }
 

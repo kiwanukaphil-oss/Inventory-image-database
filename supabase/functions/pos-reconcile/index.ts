@@ -23,7 +23,7 @@
 // Scheduled nightly; also invocable from the Sync Center.
 // =============================================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 // Self-contained for direct Supabase-dashboard deploy (no CLI bundling of _shared).
 // Origin-allowlisted CORS (S5) + constant-time, fail-closed POS-caller auth (S4).
 // These two helpers are duplicated across the 3 pos-* functions — keep them in sync.
@@ -55,6 +55,9 @@ function corsHeaders(req) {
 const makeJson = (cors) => (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 
+const fetchWithTimeout = (input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 15_000) =>
+  fetch(input, { ...init, signal: init.signal || AbortSignal.timeout(timeoutMs) });
+
 async function timingSafeEqual(a, b) {
   const enc = new TextEncoder();
   const [ha, hb] = await Promise.all([
@@ -80,15 +83,15 @@ async function authorizePosCaller(req, env) {
   const { data: userData } = await userClient.auth.getUser();
   if (!userData?.user) return { ok: false, status: 401, error: "unauthorized" };
   const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
-  const { data: me } = await adminCheck.from("profiles").select("role, can_manage_users").eq("id", userData.user.id).maybeSingle();
-  if (!me || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
+  const { data: me } = await adminCheck.from("profiles").select("role, active, can_manage_users").eq("id", userData.user.id).maybeSingle();
+  if (!me?.active || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
   return { ok: true };
 }
 
 const MAX_FINDINGS = 50;
 
 async function posLogin(baseUrl: string) {
-  const res = await fetch(`${baseUrl}/auth/login`, {
+  const res = await fetchWithTimeout(`${baseUrl}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -102,19 +105,48 @@ async function posLogin(baseUrl: string) {
 }
 
 /** One movement type's ledger (paged) → per-variant totals + per-reference map. */
-async function fetchLedger(baseUrl: string, token: string, movementType: string) {
+async function posGet(baseUrl: string, token: string, path: string, branchId?: string) {
+  const res = await fetchWithTimeout(`${baseUrl}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(branchId ? { "X-Branch-Id": branchId } : {}),
+    },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(`POS GET ${path} failed (${res.status}): ${body.message || ""}`);
+  return body;
+}
+
+async function loadSyncBranches(baseUrl: string, token: string, db) {
+  const body = await posGet(baseUrl, token, "/branches/my");
+  const accessible = (body.data?.branches || []).filter((b) => ["active", "opening"].includes(b.status));
+  const { data: configured } = await db.from("pos_branches").select("pos_branch_id, is_enabled");
+  const enabled = new Map((configured || []).map((b) => [b.pos_branch_id, b.is_enabled !== false]));
+  const branches = accessible.filter((b) => enabled.get(b.id) !== false);
+  if (!branches.length) throw new Error("catalog_sync has no enabled active/opening POS branches");
+  const requestedDefault = body.data?.default_branch_id;
+  const defaultBranch = branches.find((b) => b.id === requestedDefault)
+    || branches.find((b) => b.is_user_default || b.is_default)
+    || branches[0];
+  return { branches, defaultBranchId: defaultBranch.id };
+}
+
+async function fetchLedger(baseUrl: string, token: string, branchId: string, movementType: string) {
   const PAGE = 500;
   const MAX_PAGES = 400;
   // variant_id -> { total, negative, refs: Map(reference_id -> qty) }
   const byVariant = new Map();
   let offset = 0, scanned = 0;
   for (let page = 0; page < MAX_PAGES; page++) {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       `${baseUrl}/inventory/movements?movement_type=${movementType}&limit=${PAGE}&offset=${offset}`,
-      { headers: { Authorization: `Bearer ${token}` } }
+      { headers: { Authorization: `Bearer ${token}`, "X-Branch-Id": branchId } }
     );
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`movements read failed (${res.status})`);
+    if (body.branch_id && body.branch_id !== branchId) {
+      throw new Error(`POS returned branch ${body.branch_id} for requested branch ${branchId}`);
+    }
     const rows = body.data || [];
     for (const m of rows) {
       const slot = byVariant.get(m.variant_id) || { total: 0, negative: 0, refs: new Map() };
@@ -151,51 +183,88 @@ Deno.serve(async (req) => {
   const db = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
   const startedAt = new Date().toISOString();
   const findings = [];
-  const add = (kind, sku, note) => {
-    if (findings.length < MAX_FINDINGS) findings.push({ kind, sku, note });
+  let branchCodes = new Map();
+  let currentFindingBranchId = null;
+  const add = (kind, sku, note, branchId = null) => {
+    const effectiveBranchId = branchId || currentFindingBranchId;
+    if (findings.length < MAX_FINDINGS) findings.push({
+      kind, sku, note,
+      ...(effectiveBranchId ? {
+        branch_id: effectiveBranchId,
+        branch_code: branchCodes.get(effectiveBranchId) || null,
+      } : {}),
+    });
   };
 
   try {
     if (!POS_BASE_URL) throw new Error("POS_BASE_URL secret is not set");
     const token = await posLogin(POS_BASE_URL);
+    const { branches, defaultBranchId } = await loadSyncBranches(POS_BASE_URL, token, db);
+    branchCodes = new Map(branches.map((b) => [b.id, b.code]));
 
-    const [{ data: synced, error: sErr }, { data: mirrorRows, error: mErr }, ledger, adjustments] = await Promise.all([
+    const [syncedResult, mirrorResult, branchMirrorResult] = await Promise.all([
       db.from("items")
-        .select("id, sku, stock_quantity, pos_variant_id")
+        .select("id, sku, stock_quantity, pos_variant_id, pos_branch_id")
         .eq("pos_sync_status", "synced")
         .not("pos_variant_id", "is", null),
       db.from("pos_stock_mirror").select("pos_variant_id, pos_sku, stock_quantity, is_active"),
-      fetchLedger(POS_BASE_URL, token, "purchase"),
-      fetchLedger(POS_BASE_URL, token, "adjustment"),
+      db.from("pos_branch_stock").select("pos_branch_id, pos_variant_id, stock_quantity"),
     ]);
+    const { data: synced, error: sErr } = syncedResult;
+    const { data: mirrorRows, error: mErr } = mirrorResult;
+    const { data: branchMirrorRows, error: bmErr } = branchMirrorResult;
     if (sErr) throw new Error(`items read failed: ${sErr.message}`);
     if (mErr) throw new Error(`mirror read failed: ${mErr.message}`);
+    if (bmErr) throw new Error(`branch mirror read failed: ${bmErr.message}`);
     const mirror = new Map((mirrorRows || []).map((r) => [r.pos_variant_id, r]));
+    const branchMirror = new Map((branchMirrorRows || []).map((r) => [`${r.pos_branch_id}:${r.pos_variant_id}`, r]));
+    const ledgers = new Map();
+    const adjustments = new Map();
+    let purchaseMovementsScanned = 0;
+    for (const branch of branches) {
+      const [ledger, adjustment] = await Promise.all([
+        fetchLedger(POS_BASE_URL, token, branch.id, "purchase"),
+        fetchLedger(POS_BASE_URL, token, branch.id, "adjustment"),
+      ]);
+      ledgers.set(branch.id, ledger);
+      adjustments.set(branch.id, adjustment);
+      purchaseMovementsScanned += ledger.scanned;
+    }
 
     // Group synced items per variant: expected receipt units = each item's qty.
     // Blank legacy quantities are one photographed unit; explicit zero expects
     // no receipt.
-    const expect = new Map(); // variant_id -> { sku, units, itemIds }
+    const expect = new Map(); // branch_id:variant_id -> expected receipt units
     for (const it of synced || []) {
-      const slot = expect.get(it.pos_variant_id) || { sku: it.sku, units: 0, itemIds: [] };
+      const branchId = it.pos_branch_id || defaultBranchId;
+      const key = `${branchId}:${it.pos_variant_id}`;
+      const slot = expect.get(key) || {
+        branchId, variantId: it.pos_variant_id, sku: it.sku, units: 0, itemIds: [],
+      };
       // Match pos-push: legacy blank quantity means one photographed unit;
       // explicit 0 still means catalog-only/no receipt expected.
       slot.units += it.stock_quantity ?? 1;
       slot.itemIds.push(it.id);
-      expect.set(it.pos_variant_id, slot);
+      expect.set(key, slot);
     }
 
     // 1 + 2: per variant — receipts vs expectation, and link integrity.
-    for (const [variantId, exp] of expect) {
-      const mir = mirror.get(variantId);
+    for (const [key, exp] of expect) {
+      currentFindingBranchId = exp.branchId;
+      const globalMir = mirror.get(exp.variantId);
+      const mir = branchMirror.get(key);
+      if (!mir && globalMir) {
+        add("missing-branch-stock", exp.sku, "variant has no stock mirror row for this branch", exp.branchId);
+        continue;
+      }
       if (!mir) {
         add("missing-variant", exp.sku, "linked POS variant is not in the mirror — deleted in the POS?");
         continue;
       }
-      if (mir.is_active === false) {
+      if (globalMir?.is_active === false) {
         add("retired-variant", exp.sku, "variant was retired in the POS but the catalog still lists it as in-shop");
       }
-      const slot = ledger.byVariant.get(variantId);
+      const slot = ledgers.get(exp.branchId)?.byVariant.get(exp.variantId);
       const receivedFromCatalog = exp.itemIds.reduce(
         (sum, id) => sum + (slot?.refs.get(id) || 0), 0);
       if (receivedFromCatalog < exp.units) {
@@ -208,7 +277,7 @@ Deno.serve(async (req) => {
         // over-receipt only counts as drift when no downward adjustment of at
         // least the excess exists on the variant — i.e. nobody has corrected it.
         const excess = receivedFromCatalog - exp.units;
-        const correctedDown = adjustments.byVariant.get(variantId)?.negative || 0;
+        const correctedDown = adjustments.get(exp.branchId)?.byVariant.get(exp.variantId)?.negative || 0;
         if (correctedDown < excess) {
           add("double-receipt", exp.sku,
             `POS ledger holds ${receivedFromCatalog} catalog-receipt unit(s) but the catalog accounts for ${exp.units}, and only ${correctedDown} were adjusted away`);
@@ -222,6 +291,7 @@ Deno.serve(async (req) => {
 
     // 4: mirror freshness — silence means broken, and reconcile runs at night
     //    when nobody is watching the UI's freshness line.
+    currentFindingBranchId = null;
     const { data: lastMirror } = await db
       .from("pos_sync_runs").select("finished_at, ok").eq("kind", "mirror")
       .order("started_at", { ascending: false }).limit(1);
@@ -232,7 +302,8 @@ Deno.serve(async (req) => {
 
     const summary = {
       variants_checked: expect.size,
-      purchase_movements_scanned: ledger.scanned,
+      branches_checked: branches.length,
+      purchase_movements_scanned: purchaseMovementsScanned,
       findings,
     };
     await db.from("pos_sync_runs").insert({

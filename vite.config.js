@@ -5,7 +5,17 @@ import { VitePWA } from "vite-plugin-pwa";
 // public/CNAME file), so the base is "/" everywhere — dev, preview, and deployed.
 export default defineConfig(() => ({
   base: "/",
-  build: { outDir: "dist", sourcemap: false },
+  build: {
+    outDir: "dist",
+    sourcemap: false,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/@supabase/")) return "supabase";
+        },
+      },
+    },
+  },
   server: { port: 5173, host: true }, // host:true exposes on LAN for phone testing
   plugins: [
     VitePWA({

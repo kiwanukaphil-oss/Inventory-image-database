@@ -12,8 +12,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 # Allow only one concurrent deployment; cancel in-progress runs on new pushes.
 concurrency:
@@ -25,6 +23,7 @@ jobs:
   # (audit P2). A failing test blocks the GitHub Pages deploy.
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,10 +32,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Verify database migrations and RLS invariants
+        run: npm run test:db
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
   build:
     needs: test
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
@@ -62,6 +66,10 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

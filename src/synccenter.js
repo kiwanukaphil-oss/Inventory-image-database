@@ -106,7 +106,7 @@ export function openSyncCenter(caps, onChanged, opts = {}) {
     // Drift findings from the nightly reconcile (Phase 4) — only shown when present.
     const findings = Array.isArray(s.reconcile?.summary?.findings) ? s.reconcile.summary.findings : [];
     const driftHtml = findings.length
-      ? findings.slice(0, 12).map((f) => `<div class="sync-problem"><b>${esc(f.sku || f.kind)}</b><span>${esc(f.note)}</span></div>`).join("")
+      ? findings.slice(0, 12).map((f) => `<div class="sync-problem"><b>${esc(f.sku || f.kind)}${f.branch_code ? ` · ${esc(f.branch_code)}` : ""}</b><span>${esc(f.note)}</span></div>`).join("")
       : `<div class="sync-empty">No drift findings from the last check.</div>`;
 
     const focusProblems = opts.focus === "errors";

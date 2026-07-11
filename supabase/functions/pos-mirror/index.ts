@@ -20,11 +20,12 @@
 //   POS_BASE_URL              e.g. https://inventorypos-production.up.railway.app/api
 //   CATALOG_SYNC_USERNAME     the POS catalog_sync service account
 //   CATALOG_SYNC_PASSWORD
+//   CATALOG_SYNC_BRANCH_IDS   optional comma-separated POS branch UUID allowlist
 // SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / SUPABASE_ANON_KEY are injected by
 // the platform automatically.
 // =============================================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 // Self-contained for direct Supabase-dashboard deploy (no CLI bundling of _shared).
 // Origin-allowlisted CORS (S5) + constant-time, fail-closed POS-caller auth (S4).
 // These two helpers are duplicated across the 3 pos-* functions — keep them in sync.
@@ -56,6 +57,9 @@ function corsHeaders(req) {
 const makeJson = (cors) => (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...cors, "content-type": "application/json" } });
 
+const fetchWithTimeout = (input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 15_000) =>
+  fetch(input, { ...init, signal: init.signal || AbortSignal.timeout(timeoutMs) });
+
 async function timingSafeEqual(a, b) {
   const enc = new TextEncoder();
   const [ha, hb] = await Promise.all([
@@ -81,8 +85,8 @@ async function authorizePosCaller(req, env) {
   const { data: userData } = await userClient.auth.getUser();
   if (!userData?.user) return { ok: false, status: 401, error: "unauthorized" };
   const adminCheck = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
-  const { data: me } = await adminCheck.from("profiles").select("role, can_manage_users").eq("id", userData.user.id).maybeSingle();
-  if (!me || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
+  const { data: me } = await adminCheck.from("profiles").select("role, active, can_manage_users").eq("id", userData.user.id).maybeSingle();
+  if (!me?.active || !(me.can_manage_users || me.role === "admin")) return { ok: false, status: 403, error: "forbidden" };
   return { ok: true };
 }
 
@@ -101,7 +105,7 @@ const clampText = (v, max = 200) => {
 
 /** Log in to the POS as catalog_sync and return a Bearer token. */
 async function posLogin(baseUrl: string) {
-  const res = await fetch(`${baseUrl}/auth/login`, {
+  const res = await fetchWithTimeout(`${baseUrl}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -116,9 +120,12 @@ async function posLogin(baseUrl: string) {
   return body.token;
 }
 
-async function posGet(baseUrl: string, token: string, path: string) {
-  const res = await fetch(`${baseUrl}${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
+async function posGet(baseUrl: string, token: string, path: string, branchId?: string) {
+  const res = await fetchWithTimeout(`${baseUrl}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(branchId ? { "X-Branch-Id": branchId } : {}),
+    },
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`POS GET ${path} failed (${res.status}): ${body.message || ""}`);
@@ -132,7 +139,7 @@ async function posGet(baseUrl: string, token: string, path: string) {
  * `since` (ISO) narrows the scan via the endpoint's date_from filter — used for
  * the today / trailing-7-day windows the Shop tab reports on.
  */
-async function sumMovements(baseUrl: string, token: string, movementType: string, since?: string) {
+async function sumMovements(baseUrl: string, token: string, branchId: string, movementType: string, since?: string) {
   const PAGE = 500;
   const MAX_PAGES = 400; // hard stop ≈ 200k movements, far beyond current scale
   const totals = new Map(); // variant_id -> summed |quantity_change|
@@ -143,8 +150,12 @@ async function sumMovements(baseUrl: string, token: string, movementType: string
     const body = await posGet(
       baseUrl,
       token,
-      `/inventory/movements?movement_type=${movementType}&limit=${PAGE}&offset=${offset}${dateArg}`
+      `/inventory/movements?movement_type=${movementType}&limit=${PAGE}&offset=${offset}${dateArg}`,
+      branchId
     );
+    if (body.branch_id && body.branch_id !== branchId) {
+      throw new Error(`POS returned branch ${body.branch_id} for requested branch ${branchId}`);
+    }
     const rows = body.data || [];
     for (const m of rows) {
       const qty = Math.abs(Number(m.quantity_change) || 0);
@@ -156,6 +167,42 @@ async function sumMovements(baseUrl: string, token: string, movementType: string
     if (rows.length < PAGE || offset >= total) break;
   }
   return { totals, scanned };
+}
+
+async function loadSyncBranches(baseUrl: string, token: string, db) {
+  const body = await posGet(baseUrl, token, "/branches/my");
+  const accessible = body.data?.branches || [];
+  const defaultBranchId = body.data?.default_branch_id || null;
+  const allowList = new Set(
+    (Deno.env.get("CATALOG_SYNC_BRANCH_IDS") || "")
+      .split(",").map((id) => id.trim()).filter(Boolean)
+  );
+  const { data: existing } = await db.from("pos_branches").select("pos_branch_id, is_enabled");
+  const existingEnabled = new Map((existing || []).map((b) => [b.pos_branch_id, b.is_enabled !== false]));
+  const nowIso = new Date().toISOString();
+  const rows = accessible.map((b) => ({
+    pos_branch_id: b.id,
+    code: clampText(b.code, 20),
+    name: clampText(b.name, 255),
+    status: b.status,
+    is_default: b.id === defaultBranchId || b.is_user_default === true || b.is_default === true,
+    is_enabled: allowList.size ? allowList.has(b.id) : (existingEnabled.get(b.id) ?? true),
+    timezone: clampText(b.timezone, 64),
+    mirrored_at: nowIso,
+  }));
+  if (rows.length) {
+    const { error: clearDefaultError } = await db.from("pos_branches")
+      .update({ is_default: false }).eq("is_default", true);
+    if (clearDefaultError) throw new Error(`branch default reset failed: ${clearDefaultError.message}`);
+    const { error } = await db.from("pos_branches").upsert(rows, { onConflict: "pos_branch_id" });
+    if (error) throw new Error(`branch mirror upsert failed: ${error.message}`);
+  }
+  const enabled = rows.filter((b) => b.is_enabled && ["active", "opening"].includes(b.status));
+  if (!enabled.length) throw new Error("catalog_sync has no enabled active/opening POS branches");
+  const resolvedDefault = enabled.find((b) => b.pos_branch_id === defaultBranchId)
+    || enabled.find((b) => b.is_default)
+    || enabled[0];
+  return { branches: enabled, defaultBranchId: resolvedDefault.pos_branch_id };
 }
 
 // Midnight today in the shop's timezone. Kampala is fixed UTC+3 (no DST), so a
@@ -192,42 +239,90 @@ Deno.serve(async (req) => {
   try {
     if (!POS_BASE_URL) throw new Error("POS_BASE_URL secret is not set");
     const token = await posLogin(POS_BASE_URL);
+    const { branches, defaultBranchId } = await loadSyncBranches(POS_BASE_URL, token, db);
 
     // 1. Every active variant (one call — the endpoint is unpaginated).
-    const variantsBody = await posGet(POS_BASE_URL, token, "/products/variants");
-    const variants = variantsBody.data || [];
+    const global = new Map();
+    const branchRows = [];
+    const branchSummaries = [];
 
     // 2. Sold/returned per variant from the movements ledger: lifetime, plus
     //    the today / trailing-7-day windows the Shop tab reports on.
     const since7d = new Date(Date.now() - 7 * 86400_000).toISOString();
-    const [sales, returns, salesToday, sales7d] = [
-      await sumMovements(POS_BASE_URL, token, "sale"),
-      await sumMovements(POS_BASE_URL, token, "return"),
-      await sumMovements(POS_BASE_URL, token, "sale", shopMidnightIso()),
-      await sumMovements(POS_BASE_URL, token, "sale", since7d),
-    ];
-
-    // 3. Upsert the mirror.
     const nowIso = new Date().toISOString();
-    const rows = variants.map((v) => ({
-      pos_variant_id: v.id,
-      pos_sku: clampText((v.sku || "").toUpperCase(), 64),
-      product_name: clampText(v.product_name, 200),
-      brand_name: clampText(v.brand_name, 120),
-      price: v.price ?? null,
-      stock_quantity: Number(v.quantity_in_stock) || 0,
-      reorder_level: v.reorder_level ?? null,
-      units_sold: sales.totals.get(v.id) || 0,
-      units_returned: returns.totals.get(v.id) || 0,
-      units_sold_today: salesToday.totals.get(v.id) || 0,
-      units_sold_7d: sales7d.totals.get(v.id) || 0,
-      is_active: v.is_active !== false,
-      mirrored_at: nowIso,
+    for (const branch of branches) {
+      const variantsBody = await posGet(POS_BASE_URL, token, "/products/variants", branch.pos_branch_id);
+      if (variantsBody.branch_id && variantsBody.branch_id !== branch.pos_branch_id) {
+        throw new Error(`POS returned branch ${variantsBody.branch_id} for requested branch ${branch.pos_branch_id}`);
+      }
+      const variants = variantsBody.data || [];
+      const [sales, returns, salesToday, sales7d] = [
+        await sumMovements(POS_BASE_URL, token, branch.pos_branch_id, "sale"),
+        await sumMovements(POS_BASE_URL, token, branch.pos_branch_id, "return"),
+        await sumMovements(POS_BASE_URL, token, branch.pos_branch_id, "sale", shopMidnightIso()),
+        await sumMovements(POS_BASE_URL, token, branch.pos_branch_id, "sale", since7d),
+      ];
+      for (const v of variants) {
+        const branchStock = Number(v.quantity_in_stock) || 0;
+        branchRows.push({
+          pos_branch_id: branch.pos_branch_id,
+          pos_variant_id: v.id,
+          stock_quantity: branchStock,
+          reorder_level: v.reorder_level ?? null,
+          units_sold: sales.totals.get(v.id) || 0,
+          units_returned: returns.totals.get(v.id) || 0,
+          units_sold_today: salesToday.totals.get(v.id) || 0,
+          units_sold_7d: sales7d.totals.get(v.id) || 0,
+          mirrored_at: nowIso,
+        });
+        const slot = global.get(v.id) || {
+          pos_variant_id: v.id,
+          pos_sku: clampText((v.sku || "").toUpperCase(), 64),
+          product_name: clampText(v.product_name, 200),
+          brand_name: clampText(v.brand_name, 120),
+          price: v.price ?? null,
+          stock_quantity: 0,
+          aggregate_stock_quantity: v.aggregate_stock_quantity == null ? null : Number(v.aggregate_stock_quantity),
+          reorder_level: v.reorder_level ?? null,
+          units_sold: 0,
+          units_returned: 0,
+          units_sold_today: 0,
+          units_sold_7d: 0,
+          is_active: v.is_active !== false,
+          mirrored_at: nowIso,
+        };
+        slot.stock_quantity += branchStock;
+        slot.units_sold += sales.totals.get(v.id) || 0;
+        slot.units_returned += returns.totals.get(v.id) || 0;
+        slot.units_sold_today += salesToday.totals.get(v.id) || 0;
+        slot.units_sold_7d += sales7d.totals.get(v.id) || 0;
+        global.set(v.id, slot);
+      }
+      branchSummaries.push({
+        branch_id: branch.pos_branch_id,
+        code: branch.code,
+        variants: variants.length,
+        sale_movements_scanned: sales.scanned,
+        return_movements_scanned: returns.scanned,
+      });
+    }
+    const rows = [...global.values()].map((row) => ({
+      ...row,
+      aggregate_stock_quantity: row.aggregate_stock_quantity ?? row.stock_quantity,
     }));
     if (rows.length) {
       const { error } = await db.from("pos_stock_mirror").upsert(rows, { onConflict: "pos_variant_id" });
       if (error) throw new Error(`mirror upsert failed: ${error.message}`);
     }
+    if (branchRows.length) {
+      const { error } = await db.from("pos_branch_stock")
+        .upsert(branchRows, { onConflict: "pos_branch_id,pos_variant_id" });
+      if (error) throw new Error(`branch stock upsert failed: ${error.message}`);
+    }
+    const { error: backfillError } = await db.from("items")
+      .update({ pos_branch_id: defaultBranchId })
+      .is("pos_branch_id", null);
+    if (backfillError) throw new Error(`item branch backfill failed: ${backfillError.message}`);
 
     // 4. Variants that vanished from the active list were archived in the POS —
     //    keep their rows but flag them, so the catalog can say "retired".
@@ -244,13 +339,16 @@ Deno.serve(async (req) => {
 
     const summary = {
       variants: rows.length,
+      branch_stock_rows: branchRows.length,
+      branches: branchSummaries,
+      default_branch_id: defaultBranchId,
       retired: retired.length,
-      sale_movements_scanned: sales.scanned,
-      return_movements_scanned: returns.scanned,
+      sale_movements_scanned: branchSummaries.reduce((n, b) => n + b.sale_movements_scanned, 0),
+      return_movements_scanned: branchSummaries.reduce((n, b) => n + b.return_movements_scanned, 0),
     };
     await db.from("pos_sync_runs").insert({
       kind: "mirror", started_at: startedAt, finished_at: new Date().toISOString(),
-      ok: true, ok_count: rows.length, error_count: 0, summary,
+      ok: true, ok_count: branchRows.length, error_count: 0, summary,
     });
     return json({ ok: true, ...summary });
   } catch (err) {

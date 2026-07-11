@@ -89,9 +89,11 @@ if (!isConfigured) {
     renderedUid = undefined; // allow a retry to re-render
     mount.innerHTML = `<div class="auth"><div class="card">
       <h1>Something went wrong</h1>
-      <p class="sub">${(err && err.message) || "Unexpected error."}</p>
+      <p class="sub"></p>
       <button class="primary" id="reloadBtn">Reload</button>
     </div></div>`;
+    // Remote error text is data, never executable markup.
+    mount.querySelector(".sub").textContent = (err && err.message) || "Unexpected error.";
     mount.querySelector("#reloadBtn").onclick = () => location.reload();
   }
 

@@ -153,3 +153,32 @@ New sign-ups start with **no** capabilities until you grant them in that screen.
   flagged for your check. Review, correct, and **Save**.
 - Open the browser Network tab → the request goes to `…/functions/v1/ai-extract`
   and your `ANTHROPIC_API_KEY` never appears anywhere client-side.
+
+---
+
+# Branch-aware POS synchronization
+
+Apply `supabase/migrations/20260711065228_branch_aware_pos_sync.sql` before
+deploying the three POS functions. It adds the POS branch directory,
+branch/variant stock mirror, item receipt destination, RLS policies, and
+explicit Data API grants.
+
+The POS `catalog_sync` account must be assigned to every branch that the catalog
+is allowed to use. Re-run `backend/src/scripts/seedCatalogSyncUser.js` in the POS
+repository after creating a branch, then run `npm run branch:readiness` there.
+
+The existing POS secrets remain required. Optionally set
+`CATALOG_SYNC_BRANCH_IDS` to a comma-separated allowlist of POS branch UUIDs;
+when omitted, every active/opening branch assigned to `catalog_sync` is mirrored.
+
+Deploy in this order:
+
+```bash
+supabase functions deploy pos-mirror
+supabase functions deploy pos-push
+supabase functions deploy pos-reconcile
+```
+
+Invoke `pos-mirror` once before releasing the frontend. That discovers branches,
+backfills legacy catalog items to the POS default branch, and populates the
+branch selector used by stock intake and the Shop dashboard.

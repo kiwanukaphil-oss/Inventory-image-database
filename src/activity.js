@@ -13,7 +13,7 @@ const SOURCE_LABELS = {
   history: "Edited",
 };
 
-const FIELD_COLUMNS = ["name", "brand", "price", "stock_quantity", "reorder_level", "status", "category_id"];
+const FIELD_COLUMNS = ["name", "brand", "price", "stock_quantity", "reorder_level", "status", "category_id", "pos_branch_id"];
 const HUMAN_EDIT_SOURCES = new Set(["manual", "bulk", "pricing", "approval", "undo"]);
 const RECENT_MS = 7 * 24 * 60 * 60 * 1000;
 const QUERY_CHUNK = 80;

@@ -1,4 +1,10 @@
 import { supabase } from "./db.js";
+import {
+  branchVariantKey,
+  defaultPosBranchId,
+  mergeBranchMirror,
+  storedPosBranchId,
+} from "./posbranches.js";
 
 // Loads and caches the reference data that drives the UI: the category tree,
 // per-category field definitions (with inheritance), and the controlled
@@ -61,12 +67,20 @@ export function getSetting(key, def = "") {
  * migration 0018 isn't applied yet, so every caller degrades gracefully.
  */
 export async function loadPosMirror() {
-  const [mirror, run] = await Promise.all([
+  const [mirror, branchStock, branchesResult, run] = await Promise.all([
     // select(*) so the call survives column additions that the deployed app
     // predates (e.g. the 0019 window columns) — callers default missing keys.
     supabase
       .from("pos_stock_mirror")
       .select("*"),
+    supabase
+      .from("pos_branch_stock")
+      .select("*"),
+    supabase
+      .from("pos_branches")
+      .select("pos_branch_id, code, name, status, is_default, is_enabled, timezone, mirrored_at")
+      .order("is_default", { ascending: false })
+      .order("code", { ascending: true }),
     supabase
       .from("pos_sync_runs")
       .select("finished_at, ok, error")
@@ -74,9 +88,28 @@ export async function loadPosMirror() {
       .order("started_at", { ascending: false })
       .limit(1),
   ]);
-  const byVariant = new Map();
-  for (const r of mirror.data || []) byVariant.set(r.pos_variant_id, r);
-  return { byVariant, lastMirror: (run.data || [])[0] || null };
+  const globalRows = mirror.data || [];
+  const branchRows = branchStock.data || [];
+  const branches = branchesResult.data || [];
+  const globalByVariant = new Map(globalRows.map((r) => [r.pos_variant_id, r]));
+  const byBranchVariant = new Map(
+    branchRows.map((r) => [branchVariantKey(r.pos_branch_id, r.pos_variant_id), r])
+  );
+  const defaultBranchId = defaultPosBranchId(branches);
+  const selectedBranchId = storedPosBranchId(branches) || defaultBranchId;
+  const byVariant = mergeBranchMirror(globalRows, branchRows, selectedBranchId);
+  return {
+    branches,
+    branchRows,
+    globalRows,
+    globalByVariant,
+    byBranchVariant,
+    byVariant,
+    defaultBranchId,
+    selectedBranchId,
+    forBranch: (branchId) => mergeBranchMirror(globalRows, branchRows, branchId || defaultBranchId),
+    lastMirror: (run.data || [])[0] || null,
+  };
 }
 
 export function refreshRefData() {
