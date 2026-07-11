@@ -15,7 +15,7 @@
 // ============================================================================
 
 import { createClient } from "@supabase/supabase-js";
-import XLSX from "xlsx"; // SheetJS is CommonJS; default import exposes readFile/utils
+import ExcelJS from "exceljs";
 import sharp from "sharp";
 import { randomUUID } from "node:crypto";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -72,11 +72,34 @@ function buildImageIndex() {
   return index;
 }
 
-/** Read an xlsx sheet into an array of row objects keyed by header. */
+function spreadsheetValue(value) {
+  if (value == null) return null;
+  if (typeof value !== "object" || value instanceof Date) return value;
+  if ("result" in value) return value.result;
+  if ("text" in value) return value.text;
+  if (Array.isArray(value.richText)) return value.richText.map((part) => part.text || "").join("");
+  return String(value);
+}
+
+/** Read an xlsx sheet into an array of row objects keyed by its first row. */
 function readSheet(wb, name) {
-  const ws = wb.Sheets[name];
+  const ws = wb.getWorksheet(name);
   if (!ws) throw new Error(`Sheet not found: ${name}`);
-  return XLSX.utils.sheet_to_json(ws, { defval: null });
+  const headers = ws.getRow(1).values.slice(1).map((value) => s(spreadsheetValue(value)));
+  const rows = [];
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    const record = {};
+    let hasValue = false;
+    headers.forEach((header, index) => {
+      if (!header) return;
+      const value = spreadsheetValue(row.getCell(index + 1).value);
+      record[header] = value;
+      if (value !== null && value !== "") hasValue = true;
+    });
+    if (hasValue) rows.push(record);
+  });
+  return rows;
 }
 
 const s = (v) => (v === null || v === undefined ? "" : String(v).trim());
@@ -104,7 +127,8 @@ async function main() {
   }
 
   // 2. Load the spreadsheet: Image map (per photo) + Variants (price/cost/stock).
-  const wb = XLSX.readFile(XLSX_PATH);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(XLSX_PATH);
   const imageMap = readSheet(wb, "Image map");
   const variants = readSheet(wb, "Variants");
   const variantBySku = Object.fromEntries(

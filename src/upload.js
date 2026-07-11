@@ -1,5 +1,6 @@
 import { supabase } from "./db.js";
-import { loadRefData, resolveFields, categoryPath, vocabSuggestions, normalizeValue, normalizeAttributeValue } from "./data.js";
+import { loadRefData, loadPosMirror, resolveFields, categoryPath, vocabSuggestions, normalizeValue, normalizeAttributeValue } from "./data.js";
+import { enabledBranches, storedPosBranchId, storePosBranchId } from "./posbranches.js";
 import { compressImage } from "./imageCompress.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { diffItemValues, logItemActivity } from "./activity.js";
@@ -41,6 +42,7 @@ function saveUploadDefaults(common) {
       brand: common.brand || "",
       attributes: common.attributes || {},
       ai: !!common.ai,
+      posBranchId: common.posBranchId || null,
     }));
   } catch {}
 }
@@ -162,10 +164,18 @@ export async function renderUpload(view, caps, onDone) {
   }
 
   const canEdit = !!caps.can_edit; // AI extraction requires editor/admin
-  const cache = await loadRefData();
+  const [cache, posMirror] = await Promise.all([
+    loadRefData(),
+    loadPosMirror().catch(() => ({ branches: [] })),
+  ]);
+  const posBranches = enabledBranches(posMirror.branches);
   const leaves = leafCategories(cache);
   let uploadDefaults = loadUploadDefaults();
   if (!leaves.some((l) => l.id === uploadDefaults.categoryId)) uploadDefaults = {};
+  const initialBranchId = posBranches.some((b) => b.pos_branch_id === uploadDefaults.posBranchId)
+    ? uploadDefaults.posBranchId
+    : storedPosBranchId(posBranches, { allowAll: false });
+  const initialBranch = posBranches.find((b) => b.pos_branch_id === initialBranchId) || null;
   const entries = []; // { key, file, url }
   const seen = new Set(); // dedupe key set
   let stopFlag = false;
@@ -182,6 +192,7 @@ export async function renderUpload(view, caps, onDone) {
         <div class="up-intake" id="upIntake" aria-live="polite">
           <span><b id="upPhotoCount">0</b><small>Photos</small></span>
           <span><b id="upCatState">Category</b><small id="upCatHint">Choose</small></span>
+          <span><b id="upBranchState">${esc(initialBranch?.code || "Branch pending")}</b><small>Destination</small></span>
           <span><b id="upAiState">${canEdit && uploadDefaults.ai ? "AI on" : "AI off"}</b><small>After upload</small></span>
         </div>
       </section>
@@ -216,6 +227,12 @@ export async function renderUpload(view, caps, onDone) {
             </div>
           </div>
           <div id="commonFields"></div>
+          ${posBranches.length ? `<div class="frow">
+            <label for="posBranchSel">Destination branch</label>
+            <div class="fctl"><select id="posBranchSel">
+              ${posBranches.map((b) => `<option value="${b.pos_branch_id}"${b.pos_branch_id === initialBranchId ? " selected" : ""}>${esc(b.code)} - ${esc(b.name)}</option>`).join("")}
+            </select></div>
+          </div>` : `<div class="up-branch-pending">Branch directory pending. Until it syncs, the POS default branch will be used.</div>`}
           <div class="frow">
             <label for="statusSel">Status</label>
             <div class="fctl">
@@ -258,11 +275,16 @@ export async function renderUpload(view, caps, onDone) {
   const gridEl = $("#grid");
   const batchForm = $("#batchForm");
   const catSel = $("#catSel");
+  const posBranchSel = $("#posBranchSel");
   const commonFields = $("#commonFields");
   const uploadBtn = $("#uploadBtn");
   const defaultsEl = $("#upDefaults");
   const sharedBanner = $("#sharedBanner");
   $("#aiAfter")?.addEventListener("change", renderIntakeSummary);
+  posBranchSel?.addEventListener("change", () => {
+    storePosBranchId(posBranchSel.value);
+    renderIntakeSummary();
+  });
   $("#clearDefaults")?.addEventListener("click", () => {
     clearUploadDefaults();
     uploadDefaults = {};
@@ -293,10 +315,14 @@ export async function renderUpload(view, caps, onDone) {
     const catState = $("#upCatState");
     const catHint = $("#upCatHint");
     const aiState = $("#upAiState");
+    const branchState = $("#upBranchState");
     if (photoCount) photoCount.textContent = String(entries.length);
     if (catState) catState.textContent = catPath ? catPath.split(" › ").pop() : "Category";
     if (catHint) catHint.textContent = catPath || "Choose";
     if (aiState) aiState.textContent = canEdit ? (aiOn ? "AI on" : "AI off") : "No AI";
+    if (branchState) {
+      branchState.textContent = posBranches.find((b) => b.pos_branch_id === posBranchSel?.value)?.code || "Branch pending";
+    }
   }
 
   // ---- selection ----
@@ -653,6 +679,7 @@ export async function renderUpload(view, caps, onDone) {
     return {
       categoryId, slug: cache.byId[categoryId]?.slug || "misc", status: $("#statusSel").value,
       brand, attributes, ai: !!$("#aiAfter")?.checked,
+      posBranchId: posBranchSel?.value || null,
     };
   }
 
@@ -676,6 +703,7 @@ export async function renderUpload(view, caps, onDone) {
       // One photo = one unit (workflow rule): every physical unit gets its own
       // photo as evidence, so the receipt quantity is always 1 — never a total.
       stock_quantity: 1,
+      pos_branch_id: common.posBranchId,
     });
     if (ins.error) throw ins.error;
     await logItemActivity(id, "upload", "upload", [], "Uploaded product photo");

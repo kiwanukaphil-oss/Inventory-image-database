@@ -7,7 +7,9 @@ import {
   normalizeValue,
   normalizeAttributeValue,
   AI_BLIND_FIELDS,
+  loadPosMirror,
 } from "./data.js";
+import { enabledBranches, mirrorForItem } from "./posbranches.js";
 import { loadCostPresence } from "./costs.js";
 import { parsePrice } from "./lib/price.js";
 import { clearItemJobFailures, loadLatestFailedJobs, recordItemJobFailure } from "./joblog.js";
@@ -129,15 +131,11 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
   // Live shop numbers for this item's POS variant (read-only mirror — the POS
   // owns stock/sold/price after push). Null when not pushed or not mirrored yet.
-  let shopMirror = null;
-  if (item.pos_variant_id) {
-    const { data } = await supabase
-      .from("pos_stock_mirror")
-      .select("stock_quantity, units_sold, units_returned, is_active, mirrored_at")
-      .eq("pos_variant_id", item.pos_variant_id)
-      .maybeSingle();
-    shopMirror = data || null;
-  }
+  const posMirror = await loadPosMirror().catch(() => ({ branches: [], byVariant: new Map() }));
+  const posBranches = enabledBranches(posMirror.branches);
+  const itemBranchId = item.pos_branch_id || posMirror.defaultBranchId || null;
+  const itemBranch = posBranches.find((b) => b.pos_branch_id === itemBranchId) || null;
+  const shopMirror = mirrorForItem(posMirror, { ...item, pos_branch_id: itemBranchId }) || null;
   const [recentActivity, failedAiJobs] = await Promise.all([
     canEdit ? loadItemActivity(itemId, 6) : Promise.resolve([]),
     loadLatestFailedJobs([itemId], "ai_fill"),
@@ -250,6 +248,12 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
 
         <section class="ed-section ed-selling" data-ed-section="selling" aria-label="Selling">
           <div class="ed-section-title">Selling</div>
+        ${posBranches.length ? `<div class="frow" data-field-row="pos_branch_id">
+          <label for="f-pos_branch_id">Destination branch</label>
+          <div class="fctl"><select id="f-pos_branch_id" data-pos-branch${canEdit && item.pos_sync_status !== "synced" ? "" : " disabled"}>
+            ${posBranches.map((b) => `<option value="${b.pos_branch_id}"${b.pos_branch_id === itemBranchId ? " selected" : ""}>${esc(b.code)} - ${esc(b.name)}</option>`).join("")}
+          </select></div>
+        </div>` : `<div class="shop-line"><span class="warn">Branch assignment pending</span> — waiting for the POS branch directory.</div>`}
         ${shopLineHtml()}
         ${posOwnedNoticeHtml()}
         ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
@@ -1046,6 +1050,7 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost, currentC
     // "No stock on purpose" is an explicit 0.
     stock_quantity: num("stock_quantity") ?? 1,
     reorder_level: num("reorder_level"),
+    pos_branch_id: sheet.querySelector("[data-pos-branch]")?.value || item.pos_branch_id || null,
     status,
     attributes,
     confidence: conf,

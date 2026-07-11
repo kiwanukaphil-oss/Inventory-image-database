@@ -38,6 +38,7 @@ import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActiv
 import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, bindPriceInput, ICON } from "./ui.js";
 import { sortItems } from "./lib/itemsort.js";
 import { shopState as libShopState, facetValue, buildFacets, searchText, matchesItem } from "./lib/facets.js";
+import { mirrorForItem } from "./posbranches.js";
 import { parsePrice, stripPriceGrouping } from "./lib/price.js";
 import { classifyVerificationRisk, verificationRiskRank } from "./lib/review-risk.js";
 import {
@@ -565,7 +566,7 @@ const GALLERY_LIMIT = 2000;
 const GALLERY_CACHE_TTL_MS = 60 * 1000;
 const SIGNED_URL_TTL_SECONDS = 3600;
 const SIGNED_URL_REFRESH_MS = (SIGNED_URL_TTL_SECONDS - 300) * 1000;
-const GALLERY_ITEM_SELECT = "id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_dirty, categories(name)";
+const GALLERY_ITEM_SELECT = "id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_branch_id, pos_dirty, categories(name)";
 
 let galleryPayloadCache = null;
 let galleryPayloadPromise = null;
@@ -854,7 +855,7 @@ async function renderGallery(view, caps, opts = {}) {
   // One mutually-exclusive state per item, derived from the sync link columns
   // plus the live mirror. Used verbatim as the facet value, so chip and filter
   // can never disagree.
-  const mirrorOf = (it) => (it.pos_variant_id ? posMirror.byVariant.get(it.pos_variant_id) : undefined);
+  const mirrorOf = (it) => mirrorForItem(posMirror, it);
   // Pure logic in src/lib/facets.js (tested); bind the live mirror lookup here.
   const shopState = (it) => libShopState(it, mirrorOf);
   // The small ambient chip on every card. Short on the card, full story in the
@@ -863,6 +864,8 @@ async function renderGallery(view, caps, opts = {}) {
     const st = shopState(it);
     if (st === "Not pushed") return "";
     const m = mirrorOf(it);
+    const branch = posMirror.branches?.find((b) => b.pos_branch_id === (it.pos_branch_id || posMirror.defaultBranchId));
+    const branchNote = branch ? ` at ${branch.code}` : "";
     const left = m ? `${m.stock_quantity} left` : "";
     const C = {
       "In shop":        ["ps-in",     m ? `● ${left}` : "● In shop", m ? `In the shop — ${left}` : "In the shop (live count arrives with the next sync)"],
@@ -874,7 +877,8 @@ async function renderGallery(view, caps, opts = {}) {
       "Sync error":     ["ps-err",    "⚠ Error",         `Couldn't reach the shop: ${it.pos_sync_error || "unknown error"}`],
       "Update pending": ["ps-dirty",  "✎ Edited",        "Edited since it went to the shop — the update hasn't reached the POS yet"],
     }[st];
-    return `<span class="poschip ${C[0]}" title="${esc(C[2])}" data-tip="${esc(C[2])}">${esc(C[1])}</span>`;
+    const visible = branch ? `${C[1]} · ${branch.code}` : C[1];
+    return `<span class="poschip ${C[0]}" title="${esc(C[2] + branchNote)}" data-tip="${esc(C[2] + branchNote)}">${esc(visible)}</span>`;
   }
   // The freshness line: when the mirror last spoke to the POS. Stale or failing
   // data is SHOWN as such — never silently presented as live.

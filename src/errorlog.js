@@ -10,6 +10,19 @@ const MAX_PER_SESSION = 25;
 const seenKeys = new Set(); // dedupe identical context+message
 let sentCount = 0;
 
+// Never persist query strings or fragments. Supabase auth callbacks and other
+// integrations can place short-lived credentials there, and telemetry must not
+// become a second credential store.
+export function safeTelemetryUrl(value = globalThis.location?.href) {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    return `${parsed.origin}${parsed.pathname}`.slice(0, 1000);
+  } catch {
+    return null;
+  }
+}
+
 // Insert one report, respecting the per-session cap and dedupe. Never throws.
 async function postError({ context, message, stack, severity = "error" }) {
   if (sentCount >= MAX_PER_SESSION) return;
@@ -22,7 +35,7 @@ async function postError({ context, message, stack, severity = "error" }) {
       context: context || null,
       message: (message || "").slice(0, 2000),
       stack: stack ? String(stack).slice(0, 8000) : null,
-      url: location.href,
+      url: safeTelemetryUrl(),
       user_agent: navigator.userAgent,
       severity,
     });

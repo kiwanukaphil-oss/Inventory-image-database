@@ -19,7 +19,7 @@
 // the platform automatically. Only ANTHROPIC_API_KEY must be set by you.
 // =============================================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.110.2";
 
 // Self-contained for direct Supabase-dashboard deploy (no CLI bundling of
 // _shared). Origin-allowlisted CORS (audit S5): set ALLOWED_ORIGINS to add origins.
@@ -65,6 +65,9 @@ const TRANSIENT_ANTHROPIC_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503,
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const fetchWithTimeout = (input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 35_000) =>
+  fetch(input, { ...init, signal: init.signal || AbortSignal.timeout(timeoutMs) });
+
 async function readAnthropicBody(resp: Response) {
   const text = await resp.text();
   if (!text) return null;
@@ -97,7 +100,7 @@ async function callAnthropic(payload: unknown) {
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      const resp = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "x-api-key": Deno.env.get("ANTHROPIC_API_KEY")!,
@@ -156,8 +159,8 @@ Deno.serve(async (req) => {
 
     const admin = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
     const { data: profile } = await admin
-      .from("profiles").select("role").eq("id", user.id).maybeSingle();
-    if (!profile || !["editor", "admin"].includes(profile.role)) {
+      .from("profiles").select("active, can_edit").eq("id", user.id).maybeSingle();
+    if (!profile?.active || !profile.can_edit) {
       return json({ error: "forbidden" }, 403);
     }
 
