@@ -15,6 +15,7 @@
     "test:db": "node scripts/verify-migrations.mjs",
     "test:watch": "vitest",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
+    "backup:images": "node --env-file=.env.prod.local scripts/backup-images.mjs",
     "seed": "node --env-file=.env scripts/seed.mjs"
   },
   "dependencies": {
