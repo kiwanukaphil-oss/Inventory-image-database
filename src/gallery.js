@@ -569,8 +569,7 @@ const GALLERY_ITEM_SELECT = "id, name, brand, sku, price, stock_quantity, status
 
 let galleryPayloadCache = null;
 let galleryPayloadPromise = null;
-const thumbUrlCache = new Map();
-const fullImageUrlCache = new Map();
+const fullImageUrlCache = new Map(); // shared by thumbnails and the full-size viewer (see signThumb)
 
 const galleryCacheKey = (caps = {}) => `${caps.id || caps.email || "user"}:${caps.can_view_cost ? "cost" : "nocost"}`;
 
@@ -589,11 +588,13 @@ function cachedSignedUrl(cache, path, signer) {
   return promise;
 }
 
+// Thumbnails reuse the untransformed original: uploads are already client-side
+// compressed to ≤1280px WebP (imageCompress.js), and Supabase image transforms
+// are metered at 100 origin images/month on Pro — the catalog alone exceeds
+// that. Sharing signFullImage's URL also lets the full-size viewer open from
+// browser cache after the grid has loaded the image.
 function signThumb(path) {
-  return cachedSignedUrl(thumbUrlCache, path, () =>
-    supabase.storage.from("product-images")
-      .createSignedUrl(path, SIGNED_URL_TTL_SECONDS, { transform: { width: 500, quality: 80, resize: "contain" } })
-  );
+  return signFullImage(path);
 }
 
 function signFullImage(path) {
@@ -1262,8 +1263,8 @@ async function renderGallery(view, caps, opts = {}) {
     const cat = it.categories?.name || "";
     const variant = summarizeItem(it); // category-driven summary line
     const brand = it.brand || it.name || "—";
-    // Thumbnail src is set lazily by observeThumbs (a small transform); the full
-    // image is used by the lightbox. data-img marks an image-bearing thumb; the
+    // Thumbnail src is set lazily by observeThumbs (same original image the
+    // lightbox uses). data-img marks an image-bearing thumb; the
     // lightbox builds its slide list from the current filtered rows on click, so
     // the cached card HTML never holds a stale positional slide index.
     const inner = hasImg
