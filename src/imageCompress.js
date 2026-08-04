@@ -6,11 +6,13 @@
 // upload a 10MB+ photo.
 const DEFAULT_MAX_FALLBACK_BYTES = 10 * 1024 * 1024; // 10 MB
 
-function fallback(file, maxBytes) {
+function fallback(file, maxBytes, dimensions = {}) {
   return {
     blob: file,
     ext: file.name.split(".").pop() || "jpg",
     oversize: file.size > maxBytes,
+    sourceWidth: dimensions.sourceWidth || 0,
+    sourceHeight: dimensions.sourceHeight || 0,
   };
 }
 
@@ -20,6 +22,8 @@ export async function compressImage(
 ) {
   try {
     const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    const sourceWidth = bitmap.width;
+    const sourceHeight = bitmap.height;
     const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
     const w = Math.round(bitmap.width * scale);
     const h = Math.round(bitmap.height * scale);
@@ -31,8 +35,8 @@ export async function compressImage(
     bitmap.close?.();
 
     const blob = await new Promise((res) => canvas.toBlob(res, "image/webp", quality));
-    if (!blob) return fallback(file, maxFallbackBytes);
-    return { blob, ext: "webp", oversize: false };
+    if (!blob) return fallback(file, maxFallbackBytes, { sourceWidth, sourceHeight });
+    return { blob, ext: "webp", oversize: false, sourceWidth, sourceHeight };
   } catch {
     return fallback(file, maxFallbackBytes);
   }

@@ -112,6 +112,15 @@ Supabase dashboard → **Edge Functions → Secrets** (or **Project Settings →
 Functions**) → add:
 - `ANTHROPIC_API_KEY` = your `sk-ant-...` key
 
+Optional application-side cost controls:
+- `AI_RATE_PER_HOUR` = positive request limit per editor per hour. Omit it or set
+  it to `0` to allow large intake batches without an application hourly ceiling.
+- `AI_RATE_PER_DAY` = global daily request limit. The default is `2000`.
+
+These are K-LINE application limits, not Anthropic account-tier limits. Anthropic
+can still return its own rate-limit response; those items remain recoverable from
+the Review AI-issues queue.
+
 (You do NOT set `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` / `SUPABASE_ANON_KEY`
 — the platform injects those into functions automatically.)
 
