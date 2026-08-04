@@ -2,6 +2,18 @@ import { supabase } from "./db.js";
 import { loadRefData, loadPosMirror, resolveFields, categoryPath, vocabSuggestions, normalizeValue, normalizeAttributeValue } from "./data.js";
 import { enabledBranches, storedPosBranchId, storePosBranchId } from "./posbranches.js";
 import { compressImage } from "./imageCompress.js";
+import {
+  classifyPhotoQuality,
+  clearQueuedPhotos,
+  deleteQueuedAiTask,
+  deleteQueuedPhoto,
+  isExistingStorageObjectError,
+  loadQueuedAiTasks,
+  loadQueuedPhotos,
+  preferredUploadConcurrency,
+  saveQueuedAiTask,
+  saveQueuedPhoto,
+} from "./uploadQueue.js";
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { diffItemValues, logItemActivity } from "./activity.js";
 import { dHash, hammingHex } from "./imagehash.js";
@@ -11,7 +23,8 @@ import { esc, toast, trapFocus, ICON } from "./ui.js";
 // grid you can prune), set fields common to the whole batch once, then upload
 // in parallel with a progress bar, Stop, and retry of any failures.
 
-const CONCURRENCY = 5; // parallel uploads
+const PREPARATION_CONCURRENCY = 2;
+const AI_CONCURRENCY = 2;
 const UPLOAD_DEFAULTS_KEY = "kline.upload.defaults.v2";
 
 // crypto.randomUUID() only exists in secure contexts (HTTPS/localhost), so it's
@@ -176,11 +189,21 @@ export async function renderUpload(view, caps, onDone) {
     ? uploadDefaults.posBranchId
     : storedPosBranchId(posBranches, { allowAll: false });
   const initialBranch = posBranches.find((b) => b.pos_branch_id === initialBranchId) || null;
-  const entries = []; // { key, file, url }
+  const entries = []; // { key, itemId, file, originalName, ext, url, quality, queueOrder }
   const seen = new Set(); // dedupe key set
   let stopFlag = false;
   let wakeLock = null;
   let sharedImportCount = 0;
+  let pendingPreparationCount = 0;
+  let selectionGeneration = 0;
+  let queuePersistenceAvailable = true;
+  let queuePersistenceWarningShown = false;
+  let aiProcessingPromise = Promise.resolve({ completed: 0, failedIds: [], firstError: "" });
+  let aiResumeListenerArmed = false;
+  const uploadConcurrency = preferredUploadConcurrency({
+    deviceMemory: navigator.deviceMemory,
+    coarsePointer: window.matchMedia?.("(pointer: coarse)")?.matches,
+  });
 
   view.innerHTML = `
     <div class="uploader">
@@ -239,7 +262,7 @@ export async function renderUpload(view, caps, onDone) {
               <select id="statusSel"><option value="draft"${uploadDefaults.status !== "needs-review" ? " selected" : ""}>draft</option><option value="needs-review"${uploadDefaults.status === "needs-review" ? " selected" : ""}>needs-review</option></select>
             </div>
           </div>
-          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"${uploadDefaults.ai ? " checked" : ""}> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(slower; per-photo cost; AI-filled items go to Review)</span></label>` : ""}
+          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"${uploadDefaults.ai ? " checked" : ""}> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(runs separately; per-photo cost; AI-filled items go to Review)</span></label>` : ""}
           <div class="up-defaults" id="upDefaults" ${uploadDefaults.categoryId ? "" : "hidden"}>
             <span>Using last batch defaults.</span>
             <button type="button" class="linkbtn" id="clearDefaults">Clear</button>
@@ -316,7 +339,7 @@ export async function renderUpload(view, caps, onDone) {
     const catHint = $("#upCatHint");
     const aiState = $("#upAiState");
     const branchState = $("#upBranchState");
-    if (photoCount) photoCount.textContent = String(entries.length);
+    if (photoCount) photoCount.textContent = String(entries.length + pendingPreparationCount);
     if (catState) catState.textContent = catPath ? catPath.split(" › ").pop() : "Category";
     if (catHint) catHint.textContent = catPath || "Choose";
     if (aiState) aiState.textContent = canEdit ? (aiOn ? "AI on" : "AI off") : "No AI";
@@ -327,93 +350,224 @@ export async function renderUpload(view, caps, onDone) {
 
   // ---- selection ----
   const keyOf = (f) => `${f.name}|${f.size}|${f.lastModified}`;
-  async function imageDimensions(file, url) {
-    if ("createImageBitmap" in window) {
-      const bmp = await createImageBitmap(file);
-      const dims = { width: bmp.width, height: bmp.height };
-      bmp.close?.();
-      return dims;
-    }
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-      img.onerror = reject;
-      img.src = url;
-    });
+  // Recreate a browser File and preview URL from one persisted compact record.
+  // The original filename remains separate from the storage object's UUID path.
+  function uploadEntryFromRecord(record) {
+    const file = new File(
+      [record.blob],
+      record.originalName || `queued-${record.itemId}.${record.ext || "webp"}`,
+      { type: record.blob.type || record.contentType || "image/webp", lastModified: record.lastModified || Date.now() },
+    );
+    return {
+      key: record.key,
+      itemId: record.itemId,
+      file,
+      originalName: record.originalName || file.name,
+      ext: record.ext || "webp",
+      quality: record.quality,
+      queueOrder: record.queueOrder || 0,
+      common: record.common || null,
+      url: URL.createObjectURL(record.blob),
+      persistent: true,
+    };
   }
-  async function inspectPhotoQuality(entry) {
-    entry.quality = { state: "checking", label: "Checking" };
-    try {
-      const { width, height } = await imageDimensions(entry.file, entry.url);
-      const ratio = width && height ? width / height : 1;
-      const issues = [];
-      if (Math.min(width, height) < 900) issues.push("Low resolution");
-      if (ratio > 2.2 || ratio < 0.45) issues.push("Extreme crop");
-      if (entry.file.size < 80_000) issues.push("Tiny file");
-      if (entry.file.size > 8_000_000) issues.push("Large file will compress");
-      entry.quality = issues.length
-        ? { state: "warn", label: issues[0], detail: `${width}x${height} · ${issues.join(" · ")}` }
-        : { state: "ok", label: "Looks ok", detail: `${width}x${height}` };
-    } catch {
-      entry.quality = { state: "warn", label: "Check photo", detail: "Could not inspect this file before upload." };
+
+  function showQueuePersistenceWarning() {
+    if (queuePersistenceWarningShown) return;
+    queuePersistenceWarningShown = true;
+    toast("This browser could not save a restart copy. Keep the app open until this batch finishes.");
+  }
+
+  // Decode and compress only one selected source at a time per intake worker,
+  // then persist the compact result before it enters the visible upload queue.
+  // This avoids keeping dozens of decoded phone photos alive simultaneously.
+  async function prepareSelectedPhoto(file, key, queueOrder, generation) {
+    const compressed = await compressImage(file);
+    if (compressed.oversize) {
+      throw new Error(`${file.name} is too large and could not be compressed.`);
     }
-    if (entries.some((e) => e.key === entry.key)) {
-      renderPicked();
-      renderGrid();
+    if (generation !== selectionGeneration) return null;
+    const record = {
+      key,
+      itemId: uuid(),
+      originalName: file.name,
+      lastModified: file.lastModified,
+      blob: compressed.blob,
+      contentType: compressed.blob.type || "image/webp",
+      ext: compressed.ext,
+      queueOrder,
+      quality: classifyPhotoQuality({
+        width: compressed.sourceWidth,
+        height: compressed.sourceHeight,
+        originalBytes: file.size,
+      }),
+    };
+    let persistent = false;
+    if (queuePersistenceAvailable) {
+      try {
+        await saveQueuedPhoto(record);
+        persistent = true;
+      } catch (error) {
+        queuePersistenceAvailable = false;
+        console.error("upload queue persistence unavailable", error);
+        showQueuePersistenceWarning();
+      }
+    }
+    if (generation !== selectionGeneration) {
+      if (persistent) await deleteQueuedPhoto(key).catch(() => {});
+      return null;
+    }
+    return { ...uploadEntryFromRecord(record), persistent };
+  }
+
+  // Bind common fields to each photo the first time its batch starts. Restored
+  // entries keep their original category and branch even if the operator changes
+  // the form before resuming or adds photos from a later gallery selection.
+  async function checkpointEntryBatchValues(list, currentCommon) {
+    for (const entry of list) {
+      if (entry.common) continue;
+      entry.common = {
+        ...currentCommon,
+        attributes: { ...(currentCommon.attributes || {}) },
+      };
+      if (!entry.persistent) continue;
+      try {
+        await saveQueuedPhoto({
+          key: entry.key,
+          itemId: entry.itemId,
+          originalName: entry.originalName,
+          lastModified: entry.file.lastModified,
+          blob: entry.file,
+          contentType: entry.file.type || "image/webp",
+          ext: entry.ext,
+          queueOrder: entry.queueOrder,
+          quality: entry.quality,
+          common: entry.common,
+        });
+      } catch (error) {
+        console.error("upload batch checkpoint failed", entry.originalName, error);
+        showQueuePersistenceWarning();
+      }
     }
   }
-  function addFiles(list, opts = {}) {
-    let added = 0;
-    for (const f of list) {
-      const key = keyOf(f);
-      if (seen.has(key)) continue; // de-dupe
+
+  // Large selections are prepared through a two-worker queue. Entries appear in
+  // original gallery order as they become restart-safe, and failures affect only
+  // their individual files rather than discarding the entire selection.
+  async function addFiles(list, opts = {}) {
+    const generation = selectionGeneration;
+    const baseOrder = Date.now() * 1000;
+    const candidates = [];
+    for (const file of list) {
+      const key = keyOf(file);
+      if (seen.has(key)) continue;
       seen.add(key);
-      const entry = { key, file: f, url: URL.createObjectURL(f), quality: { state: "checking", label: "Checking" } };
-      entries.push(entry);
-      inspectPhotoQuality(entry);
-      added++;
+      candidates.push({ file, key, queueOrder: baseOrder + candidates.length });
     }
-    if (opts.source === "share" && added) { sharedImportCount += added; renderSharedBanner(); }
+    if (!candidates.length) return;
+    pendingPreparationCount += candidates.length;
+    if (opts.source === "share") {
+      sharedImportCount += candidates.length;
+      renderSharedBanner();
+    }
     renderPicked();
-    renderGrid();
-    batchForm.style.display = entries.length ? "block" : "none";
     refreshEnabled();
+
+    let nextCandidate = 0;
+    let failedCount = 0;
+    let firstFailure = "";
+    const preparationWorker = async () => {
+      while (generation === selectionGeneration) {
+        const candidateIndex = nextCandidate++;
+        if (candidateIndex >= candidates.length) return;
+        const candidate = candidates[candidateIndex];
+        try {
+          const entry = await prepareSelectedPhoto(
+            candidate.file,
+            candidate.key,
+            candidate.queueOrder,
+            generation,
+          );
+          if (entry) {
+            entries.push(entry);
+            entries.sort((left, right) => left.queueOrder - right.queueOrder);
+          }
+        } catch (error) {
+          seen.delete(candidate.key);
+          failedCount++;
+          if (!firstFailure) firstFailure = error?.message || String(error);
+          console.error("photo preparation failed", candidate.file.name, error);
+        } finally {
+          if (generation === selectionGeneration) {
+            pendingPreparationCount = Math.max(0, pendingPreparationCount - 1);
+            renderPicked();
+            renderGrid();
+            batchForm.style.display = entries.length ? "block" : "none";
+            refreshEnabled();
+          }
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(PREPARATION_CONCURRENCY, candidates.length) }, preparationWorker),
+    );
+    if (failedCount && generation === selectionGeneration) {
+      toast(`${failedCount} photo${failedCount === 1 ? "" : "s"} could not be prepared. ${firstFailure}`);
+    }
   }
-  function removeFile(key) {
+
+  // Remove one photo from both the active UI and its restart-safe disk copy.
+  async function removeFile(key) {
     const i = entries.findIndex((e) => e.key === key);
     if (i < 0) return;
     URL.revokeObjectURL(entries[i].url);
     entries.splice(i, 1);
     seen.delete(key);
+    await deleteQueuedPhoto(key).catch((error) => {
+      console.error("queued photo removal failed", error);
+      showQueuePersistenceWarning();
+    });
     renderPicked();
     renderGrid();
     batchForm.style.display = entries.length ? "block" : "none";
     refreshEnabled();
   }
-  function clearAll() {
+
+  // Invalidate active preparation workers before clearing both memory and disk,
+  // so an image finishing compression cannot reappear after the user clears it.
+  async function clearAll() {
+    selectionGeneration++;
+    pendingPreparationCount = 0;
     entries.forEach((e) => URL.revokeObjectURL(e.url));
     entries.length = 0;
     seen.clear();
+    await clearQueuedPhotos().catch((error) => {
+      console.error("upload queue clear failed", error);
+      showQueuePersistenceWarning();
+    });
     renderPicked();
     renderGrid();
     batchForm.style.display = "none";
     refreshEnabled();
   }
+
   function renderPicked() {
-    const checking = entries.filter((e) => !e.quality || e.quality.state === "checking").length;
     const warnings = entries.filter((e) => e.quality?.state === "warn").length;
     const qualityText = warnings
       ? `${warnings} photo${warnings === 1 ? "" : "s"} need a capture check`
-      : checking
-        ? "checking photo quality"
-        : entries.length ? "photo quality checked" : "";
-    pickedEl.innerHTML = entries.length
-      ? `${entries.length} photo${entries.length === 1 ? "" : "s"} selected${qualityText ? ` · ${qualityText}` : ""} · <a href="#" id="clearPick">clear all</a>`
+      : entries.length ? "photo quality checked" : "";
+    const totalSelected = entries.length + pendingPreparationCount;
+    const preparationText = pendingPreparationCount
+      ? `${pendingPreparationCount} preparing`
+      : entries.length && queuePersistenceAvailable ? "saved for restart" : "";
+    pickedEl.innerHTML = totalSelected
+      ? `${totalSelected} photo${totalSelected === 1 ? "" : "s"} selected${preparationText ? ` · ${preparationText}` : ""}${qualityText ? ` · ${qualityText}` : ""} · <a href="#" id="clearPick">clear all</a>`
       : "";
     const c = $("#clearPick");
-    if (c) c.onclick = (e) => { e.preventDefault(); clearAll(); };
+    if (c) c.onclick = (e) => { e.preventDefault(); void clearAll(); };
     renderIntakeSummary();
   }
+
   function renderGrid() {
     gridEl.innerHTML = entries
       .map((e) => {
@@ -426,10 +580,44 @@ export async function renderUpload(view, caps, onDone) {
       </div>`;
       }).join("");
     gridEl.querySelectorAll("[data-rm]").forEach((b) =>
-      (b.onclick = () => removeFile(b.dataset.rm)));
+      (b.onclick = () => { void removeFile(b.dataset.rm); }));
   }
-  camInput.addEventListener("change", () => { addFiles([...camInput.files]); camInput.value = ""; });
-  libInput.addEventListener("change", () => { addFiles([...libInput.files]); libInput.value = ""; });
+
+  camInput.addEventListener("change", () => {
+    const selectedFiles = [...camInput.files];
+    camInput.value = "";
+    void addFiles(selectedFiles);
+  });
+  libInput.addEventListener("change", () => {
+    const selectedFiles = [...libInput.files];
+    libInput.value = "";
+    void addFiles(selectedFiles);
+  });
+
+  // Rehydrate compact blobs and their stable item IDs before accepting another
+  // selection. The queue order preserves the exact boundary from the prior run.
+  async function restoreQueuedPhotoEntries() {
+    try {
+      const records = await loadQueuedPhotos();
+      for (const record of records) {
+        if (seen.has(record.key)) continue;
+        seen.add(record.key);
+        entries.push(uploadEntryFromRecord(record));
+      }
+      entries.sort((left, right) => left.queueOrder - right.queueOrder);
+      if (records.length) {
+        toast(`${records.length} remaining photo${records.length === 1 ? "" : "s"} restored from the last upload.`);
+      }
+    } catch (error) {
+      queuePersistenceAvailable = false;
+      console.error("upload queue restore unavailable", error);
+    }
+    renderPicked();
+    renderGrid();
+    batchForm.style.display = entries.length ? "block" : "none";
+    refreshEnabled();
+  }
+
   sharedBanner?.addEventListener("click", (e) => {
     if (!e.target.closest("[data-shared-ok]")) return;
     sharedImportCount = 0;
@@ -655,10 +843,16 @@ export async function renderUpload(view, caps, onDone) {
   }
 
   function refreshEnabled() {
-    uploadBtn.disabled = !(entries.length && catSel.value);
-    uploadBtn.textContent = entries.length ? `Upload ${entries.length}` : "Upload";
+    uploadBtn.disabled = !(entries.length && catSel.value) || pendingPreparationCount > 0;
+    uploadBtn.textContent = pendingPreparationCount
+      ? `Preparing ${pendingPreparationCount}…`
+      : entries.length ? `Upload ${entries.length}` : "Upload";
     const hintEl = $("#upHint");
-    if (hintEl) hintEl.textContent = entries.length && !catSel.value ? "Choose a category to enable upload." : "";
+    if (hintEl) {
+      hintEl.textContent = pendingPreparationCount
+        ? "Compressing and saving a restart-safe copy of each photo."
+        : entries.length && !catSel.value ? "Choose a category to enable upload." : "";
+    }
     renderIntakeSummary();
   }
 
@@ -683,30 +877,163 @@ export async function renderUpload(view, caps, onDone) {
     };
   }
 
+  // Run AI separately from file transfer, with its own conservative concurrency.
+  // Each task remains in IndexedDB until it succeeds or is converted into a
+  // durable Review issue, so closing the PWA cannot lose the remaining reads.
+  async function processAiTaskBatch(tasks, { shouldStop, onProgress } = {}) {
+    let nextTask = 0;
+    let completed = 0;
+    let firstError = "";
+    const failedIds = [];
+    const aiWorker = async () => {
+      while (!shouldStop?.()) {
+        const taskIndex = nextTask++;
+        if (taskIndex >= tasks.length) return;
+        const task = tasks[taskIndex];
+        try {
+          await aiFillItem(task.itemId, task.common);
+          await deleteQueuedAiTask(task.itemId).catch((error) => {
+            console.error("completed AI queue cleanup failed", task.itemId, error);
+          });
+        } catch (error) {
+          failedIds.push(task.itemId);
+          if (!firstError) firstError = error?.message || String(error);
+          await recordItemJobFailure(task.itemId, "ai_fill", error);
+          await deleteQueuedAiTask(task.itemId).catch(() => {});
+          console.error("queued ai-fill failed", task.itemId, error);
+        } finally {
+          completed++;
+          onProgress?.({ completed, total: tasks.length, failed: failedIds.length });
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(AI_CONCURRENCY, tasks.length) }, aiWorker),
+    );
+    return {
+      completed,
+      failedIds,
+      firstError,
+      pending: Math.max(0, tasks.length - completed),
+    };
+  }
+
+  // Serialize restored and newly-created AI batches so a reload followed by a
+  // new upload never doubles the provider concurrency or processes one item twice.
+  function scheduleAiTaskBatch(tasks, options) {
+    if (!tasks.length) {
+      return Promise.resolve({ completed: 0, failedIds: [], firstError: "", pending: 0 });
+    }
+    const scheduled = aiProcessingPromise
+      .catch(() => ({ completed: 0, failedIds: [], firstError: "" }))
+      .then(() => processAiTaskBatch(tasks, options));
+    aiProcessingPromise = scheduled;
+    return scheduled;
+  }
+
+  // Resume AI work independently from the photo queue. Uploaded item rows are
+  // already safe at this point; failed reads become durable Review issues, while
+  // offline tasks wait for the next online event without blocking the Add view.
+  async function resumeSavedAiTasks() {
+    if (!navigator.onLine) {
+      if (!aiResumeListenerArmed) {
+        aiResumeListenerArmed = true;
+        window.addEventListener("online", () => {
+          aiResumeListenerArmed = false;
+          void resumeSavedAiTasks();
+        }, { once: true });
+      }
+      return;
+    }
+    let tasks;
+    try {
+      tasks = await loadQueuedAiTasks();
+    } catch (error) {
+      console.error("queued AI restore unavailable", error);
+      return;
+    }
+    if (!tasks.length) return;
+    toast(`Resuming AI for ${tasks.length} uploaded photo${tasks.length === 1 ? "" : "s"}.`);
+    const result = await scheduleAiTaskBatch(tasks);
+    if (result.failedIds.length) {
+      toast(`${result.failedIds.length} AI read${result.failedIds.length === 1 ? "" : "s"} need attention in Review.`);
+    } else {
+      toast(`AI finished for ${result.completed} restored photo${result.completed === 1 ? "" : "s"}.`);
+    }
+  }
+
   // Upload one photo and create its item. onUploaded(id) fires after the row
   // exists but before AI runs, so the burst filmstrip can flip to "reading…".
-  // Returns the new id/path plus the AI result (for live self-ID surfaces).
+  // Queued entries keep a stable item ID, making retries safe across a crash
+  // even when Storage or the item insert completed just before interruption.
   async function uploadOne(entry, common, onUploaded) {
-    const { blob, ext, oversize } = await compressImage(entry.file);
-    // R6: only reject the absurd case (couldn't compress AND still huge); normal
-    // fallbacks upload as-is. Prevents silently storing a 10MB+ phone photo.
-    if (oversize) throw new Error("Photo is too large and couldn't be compressed — use a smaller image.");
-    const id = uuid();
+    const prepared = entry.ext
+      ? { blob: entry.file, ext: entry.ext, oversize: false }
+      : await compressImage(entry.file);
+    if (prepared.oversize) {
+      throw new Error("Photo is too large and couldn't be compressed — use a smaller image.");
+    }
+    const id = entry.itemId || uuid();
+    const ext = prepared.ext;
     const path = `${common.slug}/${id}.${ext}`;
-    const up = await supabase.storage.from("product-images")
-      .upload(path, blob, { contentType: blob.type || "image/webp", upsert: false });
-    if (up.error) throw up.error;
-    const ins = await supabase.from("items").insert({
-      id, category_id: common.categoryId, brand: common.brand,
-      attributes: common.attributes, status: common.status,
-      image_path: path, original_filename: entry.file.name,
-      // One photo = one unit (workflow rule): every physical unit gets its own
-      // photo as evidence, so the receipt quantity is always 1 — never a total.
-      stock_quantity: 1,
-      pos_branch_id: common.posBranchId,
-    });
-    if (ins.error) throw ins.error;
-    await logItemActivity(id, "upload", "upload", [], "Uploaded product photo");
+    const existingLookup = await supabase
+      .from("items")
+      .select("id,image_path")
+      .eq("id", id)
+      .maybeSingle();
+    if (existingLookup.error) throw existingLookup.error;
+    let existingItem = existingLookup.data;
+    let insertedItem = false;
+    let createdStorageObject = false;
+
+    if (!existingItem) {
+      const uploadResult = await supabase.storage.from("product-images")
+        .upload(path, prepared.blob, {
+          contentType: prepared.blob.type || "image/webp",
+          upsert: false,
+        });
+      if (uploadResult.error && !isExistingStorageObjectError(uploadResult.error)) {
+        throw uploadResult.error;
+      }
+      createdStorageObject = !uploadResult.error;
+
+      const insertResult = await supabase.from("items").insert({
+        id, category_id: common.categoryId, brand: common.brand,
+        attributes: common.attributes, status: common.status,
+        image_path: path, original_filename: entry.originalName || entry.file.name,
+        // One photo = one unit (workflow rule): every physical unit gets its own
+        // photo as evidence, so the receipt quantity is always 1 — never a total.
+        stock_quantity: 1,
+        pos_branch_id: common.posBranchId,
+      });
+      if (insertResult.error) {
+        const retryLookup = await supabase
+          .from("items")
+          .select("id,image_path")
+          .eq("id", id)
+          .maybeSingle();
+        existingItem = retryLookup.data;
+        if (!existingItem) {
+          if (createdStorageObject) {
+            await supabase.storage.from("product-images").remove([path]).catch(() => {});
+          }
+          throw insertResult.error;
+        }
+      } else {
+        insertedItem = true;
+      }
+    }
+
+    if (existingItem?.image_path && existingItem.image_path !== path) {
+      throw new Error("The recovered upload ID points to a different stored image.");
+    }
+    if (insertedItem) {
+      try {
+        await logItemActivity(id, "upload", "upload", [], "Uploaded product photo");
+      } catch (error) {
+        console.error("upload activity logging failed", error);
+      }
+    }
     onUploaded?.(id);
     // Opt-in: read the photo and fill any still-empty fields. Soft-fails — the
     // photo is already saved, so an AI hiccup never fails the upload.
@@ -733,6 +1060,8 @@ export async function renderUpload(view, caps, onDone) {
     runStats.innerHTML = `<b>${done}</b> added · ${remaining} remaining${aiFailed ? ` · <span style="color:var(--review-txt)">${aiFailed} AI issue${aiFailed === 1 ? "" : "s"}</span>` : ""}${failed ? ` · <span style="color:var(--flag-txt)">${failed} failed</span>` : ""}`;
   }
 
+  // Transfer compact queued files first, checkpointing each success immediately,
+  // then drain the separately persisted AI queue without holding file progress.
   async function startUpload(list) {
     const common = gatherCommon();
     if (!common) { toast("Choose a category first."); return; }
@@ -740,6 +1069,7 @@ export async function renderUpload(view, caps, onDone) {
     saveUploadDefaults(common);
     uploadDefaults = loadUploadDefaults();
     if (defaultsEl) defaultsEl.hidden = false;
+    await checkpointEntryBatchValues(list, common);
     stopFlag = false;
     stopBtn.disabled = false;
     stopBtn.textContent = "Stop";
@@ -749,6 +1079,7 @@ export async function renderUpload(view, caps, onDone) {
     const uploadedIds = [];
     const doneEntries = [];
     const aiFailedIds = [];
+    const queuedAiTasks = [];
     paintRun(0, total, 0, 0);
 
     try { wakeLock = await navigator.wakeLock?.request("screen"); } catch { /* best effort */ }
@@ -760,10 +1091,37 @@ export async function renderUpload(view, caps, onDone) {
         if (i >= list.length) return;
         const entry = list[i];
         try {
-          const result = await uploadOne(entry, common);
+          const entryCommon = entry.common || common;
+          const uploadCommon = entryCommon.ai ? { ...entryCommon, ai: false } : entryCommon;
+          const result = await uploadOne(entry, uploadCommon);
           done++;
           uploadedIds.push(result.id);
           doneEntries.push(entry);
+          if (entryCommon.ai) {
+            const aiTask = {
+              itemId: result.id,
+              common: entryCommon,
+              queueOrder: entry.queueOrder || Date.now(),
+              queuedAt: new Date().toISOString(),
+            };
+            try {
+              await saveQueuedAiTask(aiTask);
+              queuedAiTasks.push(aiTask);
+            } catch (error) {
+              aiFailed++;
+              aiFailedIds.push(result.id);
+              const queueError = new Error("AI fill could not be saved for background processing.");
+              if (!firstAiError) firstAiError = queueError.message;
+              await recordItemJobFailure(result.id, "ai_fill", queueError);
+              console.error("ai task persistence failed", error);
+            }
+          }
+          if (entry.persistent) {
+            await deleteQueuedPhoto(entry.key).catch((error) => {
+              console.error("completed upload queue cleanup failed", error);
+              showQueuePersistenceWarning();
+            });
+          }
           if (result.aiFailed) {
             aiFailed++;
             aiFailedIds.push(result.id);
@@ -781,7 +1139,7 @@ export async function renderUpload(view, caps, onDone) {
         paintRun(processed, total, done, failed, aiFailed);
       }
     };
-    await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+    await Promise.all(Array.from({ length: uploadConcurrency }, worker));
 
     try { await wakeLock?.release(); } catch {} wakeLock = null;
 
@@ -795,18 +1153,58 @@ export async function renderUpload(view, caps, onDone) {
 
     // Paused because the connection dropped — auto-resume the rest on reconnect.
     if (pausedOffline && entries.length) {
-      if (doneArea?.isConnected) {
-        setMode("done");
-        $("#doneMsg").innerHTML = `Paused — you're offline. <b>${done}</b> added${aiFailed ? `; ${aiFailed} need AI retry` : ""}; ${entries.length} will resume automatically when you're back online.`;
+        if (doneArea?.isConnected) {
+          setMode("done");
+        $("#doneMsg").innerHTML = `Paused — you're offline. <b>${done}</b> added${queuedAiTasks.length ? `; ${queuedAiTasks.length} AI read${queuedAiTasks.length === 1 ? "" : "s"} queued` : ""}${aiFailed ? `; ${aiFailed} need AI retry` : ""}; ${entries.length} will resume automatically when you're back online.`;
         $("#doneActions").innerHTML = "";
       }
-      window.addEventListener("online", () => startUpload(entries.slice()), { once: true });
+      window.addEventListener("online", () => {
+        void resumeSavedAiTasks();
+        void startUpload(entries.slice());
+      }, { once: true });
       return;
     }
-    finishUpload({ added: done, failed, aiFailed, firstError, firstAiError, uploadedIds, aiFailedIds });
+
+    let aiPending = queuedAiTasks.length;
+    if (queuedAiTasks.length && !stopFlag) {
+      stopBtn.disabled = false;
+      stopBtn.textContent = "Stop AI";
+      const aiResult = await scheduleAiTaskBatch(queuedAiTasks, {
+        shouldStop: () => stopFlag,
+        onProgress: ({ completed, total: aiTotal, failed: currentAiFailed }) => {
+          if (!runStats?.isConnected) return;
+          runStats.innerHTML = `<b>${done}</b> photos saved · AI read ${completed}/${aiTotal}${currentAiFailed ? ` · <span style="color:var(--review-txt)">${currentAiFailed} AI issue${currentAiFailed === 1 ? "" : "s"}</span>` : ""}`;
+        },
+      });
+      aiFailed += aiResult.failedIds.length;
+      aiFailedIds.push(...aiResult.failedIds);
+      aiPending = aiResult.pending;
+      if (!firstAiError) firstAiError = aiResult.firstError;
+    }
+    finishUpload({
+      added: done,
+      failed,
+      aiFailed,
+      aiPending,
+      firstError,
+      firstAiError,
+      uploadedIds,
+      aiFailedIds,
+    });
   }
 
-  function finishUpload({ added, failed, aiFailed, firstError, firstAiError, uploadedIds = [], aiFailedIds = [] }) {
+  // Present one truthful summary across storage, AI, stopped, and retryable work,
+  // while keeping any remaining queue available for a later continuation.
+  function finishUpload({
+    added,
+    failed,
+    aiFailed,
+    aiPending = 0,
+    firstError,
+    firstAiError,
+    uploadedIds = [],
+    aiFailedIds = [],
+  }) {
     if (!doneArea?.isConnected) return; // user navigated away mid-upload
     setMode("done");
     if (added) navigator.vibrate?.([12, 40, 12]); // affirmative "batch done" buzz
@@ -815,6 +1213,7 @@ export async function renderUpload(view, caps, onDone) {
       `<div class="up-summary">
         <span class="up-stat ok"><b>${added}</b><small>Added</small></span>
         ${aiFailed ? `<span class="up-stat warn"><b>${aiFailed}</b><small>AI issue${aiFailed === 1 ? "" : "s"}</small></span>` : ""}
+        ${aiPending ? `<span class="up-stat"><b>${aiPending}</b><small>AI queued</small></span>` : ""}
         ${failed ? `<span class="up-stat bad"><b>${failed}</b><small>Upload failed</small></span>` : ""}
         ${remaining ? `<span class="up-stat"><b>${remaining}</b><small>Remaining</small></span>` : ""}
       </div>` +
@@ -846,5 +1245,7 @@ export async function renderUpload(view, caps, onDone) {
 
   setMode("compose");
   renderIntakeSummary();
+  await restoreQueuedPhotoEntries();
+  void resumeSavedAiTasks();
   consumeSharedMedia(addFiles); // import any photos shared into the app (PWA share target)
 }

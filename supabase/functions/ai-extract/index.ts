@@ -56,9 +56,13 @@ const makeJson = (cors) => (body, status = 200) =>
 // (claude-sonnet-4-6 ~half the cost; claude-haiku-4-5 cheapest).
 const MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-opus-4-8";
 
-// Abuse / cost caps for this paid endpoint (audit S6). Override via secrets.
-const AI_RATE_PER_HOUR = Number(Deno.env.get("AI_RATE_PER_HOUR") || 60);
-const AI_RATE_PER_DAY = Number(Deno.env.get("AI_RATE_PER_DAY") || 500);
+// Abuse / cost caps for this paid endpoint (audit S6). The internal catalogue
+// uses large trusted-editor batches, so there is no application hourly ceiling
+// by default; the provider's account-tier limits still apply. Set a positive
+// AI_RATE_PER_HOUR secret to restore an app-level ceiling. Keep a generous daily
+// backstop by default so a broken client cannot spend without bound.
+const AI_RATE_PER_HOUR = Number(Deno.env.get("AI_RATE_PER_HOUR") || 0);
+const AI_RATE_PER_DAY = Number(Deno.env.get("AI_RATE_PER_DAY") || 2000);
 const MAX_FIELDS = 60;
 
 const TRANSIENT_ANTHROPIC_STATUSES = new Set([408, 409, 425, 429, 500, 502, 503, 504, 529]);
@@ -171,7 +175,9 @@ Deno.serve(async (req) => {
       admin.from("ai_usage").select("*", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", hourAgo),
       admin.from("ai_usage").select("*", { count: "exact", head: true }).gte("created_at", dayAgo),
     ]);
-    if ((hourCount ?? 0) >= AI_RATE_PER_HOUR) return json({ error: "Too many AI requests this hour. Try again later." }, 429);
+    if (AI_RATE_PER_HOUR > 0 && (hourCount ?? 0) >= AI_RATE_PER_HOUR) {
+      return json({ error: "Application AI hourly limit reached. Try again later." }, 429);
+    }
     if ((dayCount ?? 0) >= AI_RATE_PER_DAY) return json({ error: "Daily AI limit reached. Try again tomorrow." }, 429);
     // Count this attempt up-front so the cap bounds attempts, not just successes.
     await admin.from("ai_usage").insert({ user_id: user.id });
