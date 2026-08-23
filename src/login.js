@@ -1,4 +1,5 @@
 import { signIn } from "./auth.js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 
 // Eye / crossed-eye glyphs for the show-password toggle.
 const EYE = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
@@ -14,8 +15,8 @@ export function renderLogin(mount, onSuccess) {
       <form class="card" id="loginForm" autocomplete="on">
         <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
         <p class="sub">Photograph stock, let AI read each item, then price it for your shop — one photo, one unit.</p>
-        <label for="email">Email</label>
-        <input id="email" type="email" inputmode="email" autocomplete="username" required />
+        <label for="email">${isRailwayCatalogMode ? "Username" : "Email"}</label>
+        <input id="email" type="${isRailwayCatalogMode ? "text" : "email"}" ${isRailwayCatalogMode ? "" : 'inputmode="email"'} autocomplete="username" required />
         <label for="password">Password</label>
         <div class="pwwrap">
           <input id="password" type="password" autocomplete="current-password" required />

@@ -1,15 +1,67 @@
 import { supabase } from "./db.js";
+import { requestRailwayCatalog } from "./railwayCatalogApi.js";
+import {
+  isRailwayCatalogMode,
+  railwayCatalogBranchKey,
+  railwayCatalogTokenKey,
+  railwayCatalogUserKey,
+} from "./railwayCatalogConfig.js";
+
+const railwayAuthListeners = new Set();
+
+const readStoredRailwayUser = () => {
+  try {
+    return JSON.parse(localStorage.getItem(railwayCatalogUserKey) || "null");
+  } catch {
+    return null;
+  }
+};
+
+const clearRailwaySession = () => {
+  localStorage.removeItem(railwayCatalogTokenKey);
+  localStorage.removeItem(railwayCatalogUserKey);
+  localStorage.removeItem(railwayCatalogBranchKey);
+};
+
+const notifyRailwayAuthListeners = async (event, session) => {
+  for (const listener of railwayAuthListeners) listener(event, session);
+};
 
 // Thin auth layer over Supabase. The app uses email + password (simple, works
 // offline-installed, no email-deliverability dependency for day-to-day login).
 // Role information lives in the `profiles` table and is fetched after sign-in.
 
 export async function getSession() {
+  if (isRailwayCatalogMode) {
+    const token = localStorage.getItem(railwayCatalogTokenKey);
+    if (!token) return null;
+    try {
+      const payload = await requestRailwayCatalog("/auth/me");
+      const user = { ...readStoredRailwayUser(), ...payload.user };
+      localStorage.setItem(railwayCatalogUserKey, JSON.stringify(user));
+      return { access_token: token, user };
+    } catch (error) {
+      if (error?.status === 401) clearRailwaySession();
+      if (error?.status === 401) return null;
+      throw error;
+    }
+  }
   const { data } = await supabase.auth.getSession();
   return data.session ?? null;
 }
 
 export function onAuthChange(callback) {
+  if (isRailwayCatalogMode) {
+    railwayAuthListeners.add(callback);
+    queueMicrotask(async () => callback("INITIAL_SESSION", await getSession()));
+    return {
+      data: {
+        subscription: {
+          unsubscribe: () => railwayAuthListeners.delete(callback),
+        },
+      },
+    };
+  }
   // Fires on initial load, sign-in, sign-out, and token refresh.
   // IMPORTANT: callers must NOT run awaited Supabase calls synchronously inside
   // this callback — supabase-js holds an auth lock during it, and doing so can
@@ -19,11 +71,32 @@ export function onAuthChange(callback) {
 }
 
 export async function signIn(email, password) {
+  if (isRailwayCatalogMode) {
+    const payload = await requestRailwayCatalog("/auth/login", {
+      method: "POST",
+      body: { username: email, password },
+      authenticated: false,
+    });
+    localStorage.setItem(railwayCatalogTokenKey, payload.token);
+    localStorage.setItem(railwayCatalogUserKey, JSON.stringify(payload.user));
+    const branchId = payload.user?.default_branch_id || payload.user?.branches?.[0]?.id;
+    if (branchId) localStorage.setItem(railwayCatalogBranchKey, branchId);
+    await notifyRailwayAuthListeners("SIGNED_IN", {
+      access_token: payload.token,
+      user: payload.user,
+    });
+    return;
+  }
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) throw error;
 }
 
 export async function signOut() {
+  if (isRailwayCatalogMode) {
+    clearRailwaySession();
+    await notifyRailwayAuthListeners("SIGNED_OUT", null);
+    return;
+  }
   await supabase.auth.signOut();
 }
 
@@ -46,6 +119,10 @@ function capsFromRole(role) {
 }
 
 export async function getMyProfile() {
+  if (isRailwayCatalogMode) {
+    const payload = await requestRailwayCatalog("/catalog/session");
+    return payload.data;
+  }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;
 

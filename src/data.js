@@ -1,4 +1,6 @@
 import { supabase } from "./db.js";
+import { requestRailwayCatalog } from "./railwayCatalogApi.js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 import {
   branchVariantKey,
   defaultPosBranchId,
@@ -15,6 +17,24 @@ let cache = null;
 
 export async function loadRefData(force = false) {
   if (cache && !force) return cache;
+  if (isRailwayCatalogMode) {
+    const payload = await requestRailwayCatalog("/catalog/reference-data");
+    const categories = payload.data?.categories || [];
+    const fields = payload.data?.fields || [];
+    const vocabByField = {};
+    for (const vocabulary of payload.data?.vocabularies || []) {
+      if (vocabulary.active === false) continue;
+      (vocabByField[vocabulary.field] ||= []).push(vocabulary);
+    }
+    cache = {
+      categories,
+      byId: Object.fromEntries(categories.map((category) => [category.id, category])),
+      fields,
+      vocabByField,
+      settings: payload.data?.settings || {},
+    };
+    return cache;
+  }
   // Explicit cap so ref-data never silently truncates at PostgREST's 1,000-row
   // default — a shop with >1,000 categories/fields/vocab would otherwise load
   // incomplete data with no warning.
@@ -67,6 +87,23 @@ export function getSetting(key, def = "") {
  * migration 0018 isn't applied yet, so every caller degrades gracefully.
  */
 export async function loadPosMirror() {
+  if (isRailwayCatalogMode) {
+    // POS data is already live in the shared Railway database. The dedicated
+    // direct-stock read model belongs to the publication slice; return a neutral
+    // structure here so the Phase B gallery never consults Supabase mirrors.
+    return {
+      branches: [],
+      branchRows: [],
+      globalRows: [],
+      globalByVariant: new Map(),
+      byBranchVariant: new Map(),
+      byVariant: new Map(),
+      defaultBranchId: null,
+      selectedBranchId: null,
+      forBranch: () => new Map(),
+      lastMirror: null,
+    };
+  }
   const [mirror, branchStock, branchesResult, run] = await Promise.all([
     // select(*) so the call survives column additions that the deployed app
     // predates (e.g. the 0019 window columns) — callers default missing keys.

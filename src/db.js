@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 
 // Read the public Supabase credentials injected at build time by Vite.
 // These are intentionally client-visible; database Row Level Security is what
@@ -8,9 +9,10 @@ const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 // Surface a clear error early rather than letting createClient fail cryptically
 // when the .env file (or GitHub Actions secrets) were not configured.
-export const isConfigured = Boolean(url && anonKey && !url.includes("YOUR-PROJECT"));
+export const isSupabaseConfigured = Boolean(url && anonKey && !url.includes("YOUR-PROJECT"));
+export const isConfigured = isRailwayCatalogMode || isSupabaseConfigured;
 
-export const supabase = isConfigured
+export const supabase = isSupabaseConfigured
   ? createClient(url, anonKey, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     })

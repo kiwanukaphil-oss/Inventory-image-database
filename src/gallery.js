@@ -52,6 +52,8 @@ import {
 } from "./lib/navigation-state.js";
 import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./install.js";
 import { getThemePref, setThemePref } from "./theme.js";
+import { requestRailwayCatalog } from "./railwayCatalogApi.js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -190,13 +192,19 @@ export function renderApp(mount, profile, onSignOut) {
   const nav = mount.querySelector("#nav");
 
   // Build bottom nav buttons.
-  nav.innerHTML = NAV.map(
+  const availableNav = isRailwayCatalogMode
+    ? NAV.filter((navItem) => ["catalog", "review"].includes(navItem.id))
+    : NAV;
+  nav.innerHTML = availableNav.map(
     (n) => `<button data-view="${n.id}"><span class="ico">${ICON[n.ico] || ""}</span>${n.label}${
       n.badge ? `<span class="navbadge${n.id === "shop" ? " alert" : ""}" id="${n.id}Badge" hidden></span>` : ""
     }</button>`
   ).join("");
 
-  let currentViewId = APP_VIEWS.includes(appSession.view) ? appSession.view : "today";
+  const initialViewFallback = isRailwayCatalogMode ? "catalog" : "today";
+  let currentViewId = availableNav.some((navItem) => navItem.id === appSession.view)
+    ? appSession.view
+    : initialViewFallback;
   const refreshCurrent = () => setView(currentViewId, { historyMode: "replace", restoreScroll: true });
   function openReviewQueue(issueKey = "work", ids = []) {
     const next = REVIEW_FILTERS.includes(issueKey) ? issueKey : "work";
@@ -224,7 +232,7 @@ export function renderApp(mount, profile, onSignOut) {
   }
 
   async function setView(id, { historyMode = "push", restoreScroll = true } = {}) {
-    if (!APP_VIEWS.includes(id)) id = "today";
+    if (!availableNav.some((navItem) => navItem.id === id)) id = initialViewFallback;
     if (currentViewId && view.childElementCount && document.body.contains(view)) {
       appSession.scroll[currentViewId] = view.scrollTop;
     }
@@ -482,7 +490,10 @@ export function renderApp(mount, profile, onSignOut) {
     view: appSession.view,
     reviewFilter: browseState.review.issue,
   });
-  if (initialRoute.shared) initialRoute.view = "add";
+  if (initialRoute.shared) initialRoute.view = isRailwayCatalogMode ? "catalog" : "add";
+  if (!availableNav.some((navItem) => navItem.id === initialRoute.view)) {
+    initialRoute.view = initialViewFallback;
+  }
   browseState.review.issue = initialRoute.reviewFilter;
   browseState.review.stage = reviewStageForFilter(initialRoute.reviewFilter);
 
@@ -502,7 +513,7 @@ export function renderApp(mount, profile, onSignOut) {
   window.addEventListener("popstate", _appPopState);
   setView(initialRoute.view, { historyMode: "replace", restoreScroll: true }).then(() => {
     if (!initialRoute.itemId) return;
-    openEditor(initialRoute.itemId, caps, refreshCurrent).catch((error) => {
+    openCatalogItem(initialRoute.itemId, caps, refreshCurrent).catch((error) => {
       toast(`Couldn't restore item: ${error.message || error}`);
     });
   });
@@ -599,9 +610,60 @@ function signThumb(path) {
 }
 
 function signFullImage(path) {
+  if (isRailwayCatalogMode) {
+    const cachedImage = fullImageUrlCache.get(path);
+    return cachedImage?.promise || Promise.resolve(null);
+  }
   return cachedSignedUrl(fullImageUrlCache, path, () =>
     supabase.storage.from("product-images").createSignedUrl(path, SIGNED_URL_TTL_SECONDS)
   );
+}
+
+/**
+ * Fetch every server-paginated Railway page up to the existing honest gallery
+ * cap. The API owns filtering/pagination; this aggregation preserves the PWA's
+ * current whole-catalog facet counts during the incremental migration.
+ */
+async function fetchRailwayGalleryPayload(caps) {
+  await loadRefData();
+  const pageSize = 200;
+  const items = [];
+  let page = 1;
+  let total = 0;
+
+  while (items.length < GALLERY_LIMIT) {
+    const payload = await requestRailwayCatalog(
+      `/catalog/items?page=${page}&limit=${pageSize}`
+    );
+    const pageItems = payload.data || [];
+    total = Number(payload.pagination?.total || pageItems.length);
+    items.push(...pageItems);
+
+    for (const item of pageItems) {
+      if (!item.image_path || !item.image_url) continue;
+      const signedExpiry = new Date(item.image_url_expires_at || 0).getTime();
+      const refreshAt = Number.isFinite(signedExpiry)
+        ? Math.max(Date.now() + 30000, signedExpiry - 300000)
+        : Date.now() + SIGNED_URL_REFRESH_MS;
+      fullImageUrlCache.set(item.image_path, {
+        promise: Promise.resolve(item.image_url),
+        expiresAt: refreshAt,
+      });
+    }
+
+    if (!pageItems.length || items.length >= total || pageItems.length < pageSize) break;
+    page += 1;
+  }
+
+  return {
+    key: galleryCacheKey(caps),
+    loadedAt: Date.now(),
+    data: items.slice(0, GALLERY_LIMIT),
+    total,
+    posMirror: await loadPosMirror(),
+    syncCounts: { errors: 0, dirty: 0 },
+    savedViews: [],
+  };
 }
 
 function applyGalleryMeta(rows, failedAiJobs, activitySummaries, costPresence) {
@@ -615,6 +677,7 @@ function applyGalleryMeta(rows, failedAiJobs, activitySummaries, costPresence) {
 }
 
 async function fetchGalleryPayload(caps) {
+  if (isRailwayCatalogMode) return fetchRailwayGalleryPayload(caps);
   await loadRefData(); // category tree + field definitions drive the card summary
   const [{ data, error }, posMirror] = await Promise.all([
     supabase
@@ -671,6 +734,41 @@ async function loadGalleryPayload(caps, { force = false } = {}) {
   } finally {
     if (galleryPayloadPromise?.promise === promise) galleryPayloadPromise = null;
   }
+}
+
+/**
+ * Open the canonical editor on Supabase builds and a complete read-only evidence
+ * sheet on the Phase B Railway build. This keeps one card interaction path and
+ * avoids introducing a temporary duplicate gallery page during migration.
+ */
+async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
+  if (!isRailwayCatalogMode) {
+    return openEditor(id, caps, onSave, editorOptions);
+  }
+
+  const payload = await loadGalleryPayload(caps);
+  const item = payload.data?.find((candidate) => candidate.id === id);
+  if (!item) throw new Error("Catalog item not found.");
+
+  const imageUrl = item.image_url || (await signFullImage(item.image_path));
+  const attributeRows = Object.entries(item.attributes || {})
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .map(
+      ([key, value]) =>
+        `<div class="kv"><span>${esc(fieldLabel(key))}</span><b>${esc(String(value))}</b></div>`
+    )
+    .join("");
+  const sheet = openBottomSheet(todayItemTitle(item), `
+    <div class="readonly-catalog-item">
+      ${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(todayItemTitle(item))}" style="width:100%;max-height:52vh;object-fit:contain;border-radius:10px;background:var(--surface)">` : ""}
+      <div class="kv"><span>SKU</span><b>${esc(item.sku || "Not assigned")}</b></div>
+      <div class="kv"><span>Category</span><b>${esc(item.categories?.name || "Uncategorized")}</b></div>
+      <div class="kv"><span>Status</span><b>${esc(statusLabel(item.status))}</b></div>
+      <div class="kv"><span>Retail price</span><b>${item.price == null ? "Not priced" : esc(fmtPrice(item.price))}</b></div>
+      ${attributeRows}
+      <p class="muted" style="margin-top:14px">Read-only Railway migration preview</p>
+    </div>`);
+  return sheet;
 }
 
 // A grid of shimmering placeholder cards shown while data loads, so the screen
@@ -1681,7 +1779,7 @@ async function renderGallery(view, caps, opts = {}) {
     const currentIndex = filtered.findIndex((it) => it.id === id);
     const nextId = review && currentIndex >= 0 ? filtered[currentIndex + 1]?.id : "";
     let saved = false;
-    return openEditor(
+    return openCatalogItem(
       id,
       caps,
       async () => {
@@ -2096,7 +2194,9 @@ async function renderGallery(view, caps, opts = {}) {
       html += rowLink("date", "Added", dateLabel());
       html += `</div>`;
       if (moreFacets.length) html += `<div class="fs-list">${rowLink("more", "More filters", moreSummary())}</div>`;
-      html += `<div class="fs-list">${rowLink("saved", "Saved views", savedViews.length ? `${savedViews.length}` : "None")}</div>`;
+      if (!isRailwayCatalogMode) {
+        html += `<div class="fs-list">${rowLink("saved", "Saved views", savedViews.length ? `${savedViews.length}` : "None")}</div>`;
+      }
       setFilterBody(html);
       refreshShow();
     }
@@ -2928,7 +3028,7 @@ async function renderToday(view, caps, actions = {}) {
     }
     if (openBtn) {
       const id = openBtn.dataset.todayOpen;
-      openEditor(id, caps, () => actions.refreshCurrent?.());
+      openCatalogItem(id, caps, () => actions.refreshCurrent?.());
       return;
     }
     if (!actionBtn) return;

@@ -2,6 +2,7 @@ import "@fontsource-variable/inter"; // self-hosted (offline-capable PWA), no ex
 import "./styles.css";
 import { registerSW } from "virtual:pwa-register";
 import { isConfigured } from "./db.js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 import { initTheme } from "./theme.js";
 
 // Resolve light/dark/system and keep the status bar in sync. index.html applies
@@ -49,11 +50,12 @@ const mount = document.getElementById("app");
 if (!isConfigured) {
   mount.innerHTML = `<div class="auth"><div class="card">
     <h1>Setup needed</h1>
-    <p class="sub">Supabase credentials are not configured.</p>
+    <p class="sub">Catalog backend credentials are not configured.</p>
     <p style="font-size:13px;color:var(--muted)">
       Copy <code>.env.example</code> to <code>.env</code> and fill in
-      <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>
-      (or set them as GitHub Actions secrets for the deployed build), then rebuild.
+      <code>VITE_CATALOG_API_URL</code>, or the existing
+      <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>,
+      then rebuild.
     </p>
   </div></div>`;
 } else {
@@ -78,7 +80,22 @@ if (!isConfigured) {
         return;
       }
       const profile = await getMyProfile();
-      renderApp(mount, profile, () => signOut()); // sign-out UI handled by onAuthChange
+      // Phase B exposes a deliberately read-only Railway slice. Effective POS
+      // permissions remain visible in the session payload, but mutation controls
+      // stay hidden until their API endpoints arrive in later approved slices.
+      const renderedProfile = isRailwayCatalogMode
+        ? {
+            ...profile,
+            can_upload: false,
+            can_edit: false,
+            can_delete: false,
+            can_view_cost: false,
+            can_manage_users: false,
+            can_publish: false,
+            railway_read_only: true,
+          }
+        : profile;
+      renderApp(mount, renderedProfile, () => signOut()); // sign-out UI handled by onAuthChange
     } catch (err) {
       renderError(err);
     }

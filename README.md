@@ -5,7 +5,9 @@
 A mobile-first PWA for reviewing a clothing inventory: browse product photos
 alongside their data, edit fields fast (incl. bulk edits), upload new photos
 from a phone with AI-assisted field pre-fill, group by category/subcategory,
-and export the latest state to CSV. Backed by Supabase, deployed on GitHub Pages.
+and export the latest state to CSV. The production deployment is currently
+backed by Supabase and hosted on GitHub Pages; an opt-in Railway/POS adapter is
+being introduced under ADR-062 for the approved consolidation.
 
 ## Status
 Built in phases (see [`plans`](#) / `SETUP.md`):
@@ -20,9 +22,27 @@ Built in phases (see [`plans`](#) / `SETUP.md`):
 
 ## Stack
 - **Frontend:** Vite + vanilla JS/ES modules (no framework), dark theme.
-- **Backend:** Supabase — Postgres + RLS, Storage (private), Auth, Edge Functions.
+- **Backend (current production):** Supabase — Postgres + RLS, private Storage,
+  Auth, and Edge Functions.
+- **Backend (migration mode):** the existing POS Express API, PostgreSQL, POS
+  JWT auth, and private Railway object storage. Set `VITE_CATALOG_API_URL` at
+  build time to enable this adapter; leaving it unset preserves Supabase mode.
 - **Security:** roles `admin` / `editor` / `viewer`; cost data isolated in
   `item_costs` with admin-only RLS (invisible to others even via the API).
+
+## Railway migration status
+
+The implemented Railway slice is intentionally read-only: POS login, effective
+catalog permissions, branch-scoped catalog/reference-data reads, and short-lived
+private image URLs. Upload/edit/delete/cost/user-management/publish workflows and
+production data transfer remain later, separately approved phases. The PWA masks
+all mutation actions while Railway mode is enabled.
+
+For local migration-mode development, add this to `.env.local`:
+
+```env
+VITE_CATALOG_API_URL=http://localhost:5000/api
+```
 
 ## Getting started
 See [SETUP.md](SETUP.md).

@@ -55,6 +55,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_CATALOG_API_URL: ${{ secrets.VITE_CATALOG_API_URL }}
         run: npm run build
 
       - uses: actions/configure-pages@v5
