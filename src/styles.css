@@ -620,6 +620,14 @@ body { overflow:hidden; overscroll-behavior:none; }
 .sk-line.w70 { width:70%; }
 .sk-line.w45 { width:45%; }
 .cap-note { color:var(--muted); }
+.gallery-more {
+  display:flex; align-items:center; justify-content:center; gap:var(--space-md);
+  padding:var(--space-xl) 0 var(--space-md); color:var(--muted); font-size:var(--text-sm);
+}
+.gallery-more button { width:auto; min-width:132px; }
+@media (max-width:480px) {
+  .gallery-more { flex-direction:column; }
+}
 
 .card .thumb img { width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity .3s; }
 .card .thumb.loaded img { opacity:1; }

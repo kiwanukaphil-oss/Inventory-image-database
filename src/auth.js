@@ -8,6 +8,7 @@ import {
 } from "./railwayCatalogConfig.js";
 
 const railwayAuthListeners = new Set();
+let railwayCatalogProfileCache = null;
 
 const readStoredRailwayUser = () => {
   try {
@@ -18,6 +19,7 @@ const readStoredRailwayUser = () => {
 };
 
 const clearRailwaySession = () => {
+  railwayCatalogProfileCache = null;
   localStorage.removeItem(railwayCatalogTokenKey);
   localStorage.removeItem(railwayCatalogUserKey);
   localStorage.removeItem(railwayCatalogBranchKey);
@@ -36,8 +38,9 @@ export async function getSession() {
     const token = localStorage.getItem(railwayCatalogTokenKey);
     if (!token) return null;
     try {
-      const payload = await requestRailwayCatalog("/auth/me");
-      const user = { ...readStoredRailwayUser(), ...payload.user };
+      const payload = await requestRailwayCatalog("/catalog/session");
+      railwayCatalogProfileCache = payload.data;
+      const user = { ...readStoredRailwayUser(), ...payload.data };
       localStorage.setItem(railwayCatalogUserKey, JSON.stringify(user));
       return { access_token: token, user };
     } catch (error) {
@@ -77,6 +80,7 @@ export async function signIn(email, password) {
       body: { username: email, password },
       authenticated: false,
     });
+    railwayCatalogProfileCache = null;
     localStorage.setItem(railwayCatalogTokenKey, payload.token);
     localStorage.setItem(railwayCatalogUserKey, JSON.stringify(payload.user));
     const branchId = payload.user?.default_branch_id || payload.user?.branches?.[0]?.id;
@@ -120,8 +124,10 @@ function capsFromRole(role) {
 
 export async function getMyProfile() {
   if (isRailwayCatalogMode) {
+    if (railwayCatalogProfileCache) return railwayCatalogProfileCache;
     const payload = await requestRailwayCatalog("/catalog/session");
-    return payload.data;
+    railwayCatalogProfileCache = payload.data;
+    return railwayCatalogProfileCache;
   }
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return null;

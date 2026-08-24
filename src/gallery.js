@@ -41,6 +41,12 @@ import { shopState as libShopState, facetValue, buildFacets, searchText, matches
 import { mirrorForItem } from "./posbranches.js";
 import { parsePrice, stripPriceGrouping } from "./lib/price.js";
 import { classifyVerificationRisk, verificationRiskRank } from "./lib/review-risk.js";
+import { fetchBoundedRailwayCatalog } from "./lib/railway-catalog-pagination.js";
+import {
+  DEFAULT_GALLERY_RENDER_BATCH_SIZE,
+  initialGalleryRenderLimit,
+  nextGalleryRenderLimit,
+} from "./lib/gallery-render-window.js";
 import {
   APP_VIEWS,
   REVIEW_FILTERS,
@@ -571,8 +577,8 @@ function dateCutoff(v) {
 // over the whole set (the product's value), so paging the fetch would break them
 // — that would mean rebuilding faceting in Postgres. Instead we cap generously
 // (raised 1000→2000 for headroom as the catalogue grows) and stay honest about
-// truncation; render virtualization is the future lever if a single shop ever
-// exceeds this. (Phase 5 · P5 pagination decision — see roadmap §10.)
+// truncation. The render window below keeps the complete result set available
+// for exact facets and bulk actions while adding card DOM in small batches.
 const GALLERY_LIMIT = 2000;
 const GALLERY_CACHE_TTL_MS = 60 * 1000;
 const SIGNED_URL_TTL_SECONDS = 3600;
@@ -619,48 +625,47 @@ function signFullImage(path) {
   );
 }
 
+/** Cache server-signed image URLs as each Railway page completes. */
+function cacheRailwayImageUrls(items) {
+  for (const item of items) {
+    if (!item.image_path || !item.image_url) continue;
+    const signedExpiry = new Date(item.image_url_expires_at || 0).getTime();
+    const refreshAt = Number.isFinite(signedExpiry)
+      ? Math.max(Date.now() + 30000, signedExpiry - 300000)
+      : Date.now() + SIGNED_URL_REFRESH_MS;
+    fullImageUrlCache.set(item.image_path, {
+      promise: Promise.resolve(item.image_url),
+      expiresAt: refreshAt,
+    });
+  }
+}
+
 /**
- * Fetch every server-paginated Railway page up to the existing honest gallery
- * cap. The API owns filtering/pagination; this aggregation preserves the PWA's
- * current whole-catalog facet counts during the incremental migration.
+ * Load reference data alongside page one, then fan out the remaining bounded
+ * Railway pages. This preserves whole-catalog facets without serializing every
+ * network round trip.
  */
 async function fetchRailwayGalleryPayload(caps) {
-  await loadRefData();
   const pageSize = 200;
-  const items = [];
-  let page = 1;
-  let total = 0;
-
-  while (items.length < GALLERY_LIMIT) {
-    const payload = await requestRailwayCatalog(
-      `/catalog/items?page=${page}&limit=${pageSize}`
-    );
-    const pageItems = payload.data || [];
-    total = Number(payload.pagination?.total || pageItems.length);
-    items.push(...pageItems);
-
-    for (const item of pageItems) {
-      if (!item.image_path || !item.image_url) continue;
-      const signedExpiry = new Date(item.image_url_expires_at || 0).getTime();
-      const refreshAt = Number.isFinite(signedExpiry)
-        ? Math.max(Date.now() + 30000, signedExpiry - 300000)
-        : Date.now() + SIGNED_URL_REFRESH_MS;
-      fullImageUrlCache.set(item.image_path, {
-        promise: Promise.resolve(item.image_url),
-        expiresAt: refreshAt,
-      });
-    }
-
-    if (!pageItems.length || items.length >= total || pageItems.length < pageSize) break;
-    page += 1;
-  }
+  const [catalog, posMirror] = await Promise.all([
+    fetchBoundedRailwayCatalog({
+      requestPage: (page, limit) => requestRailwayCatalog(
+        `/catalog/items?page=${page}&limit=${limit}`
+      ),
+      pageSize,
+      itemLimit: GALLERY_LIMIT,
+      onPageItems: cacheRailwayImageUrls,
+    }),
+    loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
+    loadRefData(),
+  ]);
 
   return {
     key: galleryCacheKey(caps),
     loadedAt: Date.now(),
-    data: items.slice(0, GALLERY_LIMIT),
-    total,
-    posMirror: await loadPosMirror(),
+    data: catalog.data,
+    total: catalog.total,
+    posMirror,
     syncCounts: { errors: 0, dirty: 0 },
     savedViews: [],
   };
@@ -678,7 +683,6 @@ function applyGalleryMeta(rows, failedAiJobs, activitySummaries, costPresence) {
 
 async function fetchGalleryPayload(caps) {
   if (isRailwayCatalogMode) return fetchRailwayGalleryPayload(caps);
-  await loadRefData(); // category tree + field definitions drive the card summary
   const [{ data, error }, posMirror] = await Promise.all([
     supabase
       .from("items")
@@ -686,6 +690,7 @@ async function fetchGalleryPayload(caps) {
       .order("created_at", { ascending: false })
       .limit(GALLERY_LIMIT),
     loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
+    loadRefData(), // category tree + field definitions drive the card summary
   ]);
   if (error) throw error;
 
@@ -1147,7 +1152,7 @@ async function renderGallery(view, caps, opts = {}) {
   view.innerHTML = `
     <div class="galtop">
       <div class="ghdr" id="hdrNormal">
-        <input id="q" class="fb-search" type="search" placeholder="Search…" value="${esc(q)}">
+        <input id="q" class="fb-search" type="search" aria-label="Search inventory" placeholder="Search…" value="${esc(q)}">
         <button class="iconbtn" id="densityBtn" aria-label="${density === "list" ? "Switch to grid view" : "Switch to list view"}">${density === "list" ? ICON.grid : ICON.rows}</button>
         <button class="iconbtn" id="filterBtn" aria-label="Filters &amp; sort">${ICON.filter}<span class="fcount" id="fcount" hidden></span></button>
         ${canEdit ? `<button class="iconbtn" id="selectBtn" aria-label="Select">${ICON.check}</button>` : ""}
@@ -1459,6 +1464,17 @@ async function renderGallery(view, caps, opts = {}) {
   let gridInner = null;        // the live .grid / .scanlist container
   let cacheDensity = null;     // density the current nodes were built for
   const cardCache = new Map(); // id -> { el, html }
+  let renderedItemLimit = 0;
+  let renderCriteriaKey = "";
+  const progressiveRenderObserver = "IntersectionObserver" in window
+    ? new IntersectionObserver((entries, observer) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          observer.unobserve(entry.target);
+          revealNextResultBatch();
+        }
+      }, { rootMargin: "600px" })
+    : null;
 
   function elFromHtml(html) {
     const tpl = document.createElement("template");
@@ -1498,6 +1514,34 @@ async function renderGallery(view, caps, opts = {}) {
     }
     fadeInImages(gridInner);
     observeThumbs(gridInner);
+  }
+
+  // Keep an accessible manual control as the fallback, then let the same control
+  // act as a scroll sentinel when IntersectionObserver is available.
+  function renderProgressiveLoadControl(rows) {
+    const existingControl = grid.querySelector(".gallery-more");
+    if (existingControl) {
+      progressiveRenderObserver?.unobserve(existingControl);
+      existingControl.remove();
+    }
+    if (renderedItemLimit >= rows.length) return;
+    const remainingItems = rows.length - renderedItemLimit;
+    const nextBatchSize = Math.min(DEFAULT_GALLERY_RENDER_BATCH_SIZE, remainingItems);
+    const control = document.createElement("div");
+    control.className = "gallery-more";
+    control.innerHTML = `<span>${renderedItemLimit.toLocaleString()} of ${rows.length.toLocaleString()} shown</span>
+      <button type="button" class="ghost">Show ${nextBatchSize.toLocaleString()} more</button>`;
+    control.querySelector("button").onclick = () => revealNextResultBatch();
+    grid.appendChild(control);
+    progressiveRenderObserver?.observe(control);
+  }
+
+  // Extend only the visible DOM window. `filtered` remains the full result set,
+  // so counts, previews, lightbox order, and bulk actions retain exact behavior.
+  function revealNextResultBatch() {
+    renderedItemLimit = nextGalleryRenderLimit(renderedItemLimit, filtered.length);
+    reconcileGrid(filtered.slice(0, renderedItemLimit));
+    renderProgressiveLoadControl(filtered);
   }
 
   function renderReviewBrief(rows, failedAiShown = 0) {
@@ -1689,6 +1733,16 @@ async function renderGallery(view, caps, opts = {}) {
   function draw() {
     const rows = applySort(data.filter((it) => matches(it, null)));
     filtered = rows;          // expose current filtered+sorted set for bulk actions
+    const nextRenderCriteriaKey = JSON.stringify([
+      q, needsReview, issue, reviewStage, density, sortBy, priceMin, priceMax,
+      datePreset, noPrice, [...itemIds], Object.entries(active).map(([key, values]) => [key, [...values]]),
+    ]);
+    if (nextRenderCriteriaKey !== renderCriteriaKey || renderedItemLimit === 0) {
+      renderedItemLimit = initialGalleryRenderLimit(rows.length);
+      renderCriteriaKey = nextRenderCriteriaKey;
+    } else {
+      renderedItemLimit = Math.min(rows.length, Math.max(renderedItemLimit, initialGalleryRenderLimit(rows.length)));
+    }
     saveState();
     renderSmartShelves();
     const failedAiShown = rows.filter((it) => it.latest_ai_job?.status === "failed").length;
@@ -1752,13 +1806,15 @@ async function renderGallery(view, caps, opts = {}) {
           : "No items match your search or filters."}</div>
         ${(q || filterCount()) ? `<button class="ghost" id="clearFiltersBtn" style="margin-top:10px">Clear filters</button>` : ""}</div>`;
       renderPreviewPane([]);
+      progressiveRenderObserver?.disconnect();
       gridInner = null; cardCache.clear();   // next non-empty draw rebuilds the container
       const cf = grid.querySelector("#clearFiltersBtn");
       if (cf) cf.onclick = clearAllFilters;
       return;
     }
 
-    reconcileGrid(rows);
+    reconcileGrid(rows.slice(0, renderedItemLimit));
+    renderProgressiveLoadControl(rows);
     renderPreviewPane(rows);
     countEl.innerHTML = `${countText(rows.length)}${countNote}${priceCta}${issueCta}${openFirstCta}${approveCta}${swipeCta}${freshnessNote()}`;
   }
