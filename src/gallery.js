@@ -28,6 +28,11 @@ import { openBulkAi } from "./bulkai.js";
 import { openUsers } from "./users.js";
 import { renderExport } from "./exportcsv.js";
 import { renderShop } from "./shop.js";
+import {
+  catalogDetailFieldRows,
+  catalogItemTitle,
+  evidenceSourceLabel,
+} from "./lib/catalog-detail.js";
 import { openSyncCenter } from "./synccenter.js";
 import { openCategoryManager } from "./categories_admin.js";
 import { loadCostPresence } from "./costs.js";
@@ -846,10 +851,27 @@ async function loadGalleryPayload(caps, { force = false } = {}) {
   }
 }
 
+/** Render one legible value row with confidence and concise AI provenance. */
+function catalogDetailRowHtml(row) {
+  const confidence = row.confidence && ["High", "Medium", "Low"].includes(row.confidence)
+    ? `<span class="catalog-confidence confidence-${row.confidence.toLowerCase()}">${esc(row.confidence)} confidence</span>`
+    : "";
+  const evidence = row.evidence?.observation
+    ? `<small class="catalog-field-evidence"><b>${esc(evidenceSourceLabel(row.evidence.source))}:</b> ${esc(row.evidence.observation)}</small>`
+    : "";
+  return `<div class="catalog-detail-row${row.missing ? " is-missing" : ""}">
+    <div class="catalog-detail-label">${esc(row.label)}${row.required ? " <span title=\"Required\">*</span>" : ""}</div>
+    <div class="catalog-detail-value">
+      <span>${row.missing ? "Not detected" : esc(String(row.value))}</span>${confidence}
+      ${evidence}
+    </div>
+  </div>`;
+}
+
 /**
  * Open the canonical editor on rollback builds and a Railway evidence sheet.
- * ADR-065 adds the narrowly-scoped AI fill action here while general editing
- * remains masked until its own write contract is implemented.
+ * The Railway sheet exposes the complete server-owned field set, including
+ * missing values, confidence, evidence, and the reviewed stock breakdown.
  */
 async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
   if (!isRailwayCatalogMode) {
@@ -862,13 +884,25 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
   const allBranches = isAllCatalogBranches(readCatalogBranchId(caps));
 
   const imageUrl = item.image_url || (await signFullImage(item.image_path));
-  const attributeRows = Object.entries(item.attributes || {})
-    .filter(([, value]) => value !== null && value !== undefined && value !== "")
-    .map(
-      ([key, value]) =>
-        `<div class="kv"><span>${esc(fieldLabel(key))}</span><b>${esc(String(value))}</b></div>`
-    )
+  const attributeRows = catalogDetailFieldRows(item, resolveFields(item.category_id))
+    .map(catalogDetailRowHtml)
     .join("");
+  const identityRows = [
+    {
+      label: "Brand",
+      value: item.brand,
+      missing: !item.brand,
+      confidence: item.confidence?.brand,
+      evidence: item.ai_field_evidence?.brand,
+    },
+    {
+      label: "Product name",
+      value: item.name,
+      missing: !item.name,
+      confidence: item.confidence?.name,
+      evidence: item.ai_field_evidence?.name,
+    },
+  ].map(catalogDetailRowHtml).join("");
   const stockEntries = catalogStockDistributionEntries(item);
   const stockTotal = catalogStockDistributionTotal(stockEntries);
   const canEditStockDistribution = !!caps.can_edit_stock_distribution && !allBranches;
@@ -889,15 +923,25 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
     </div>`).join("");
   const sheet = openBottomSheet(todayItemTitle(item), `
     <div class="readonly-catalog-item">
-      ${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(todayItemTitle(item))}" style="width:100%;max-height:52vh;object-fit:contain;border-radius:10px;background:var(--surface)">` : ""}
-      <div class="kv"><span>SKU</span><b>${esc(item.sku || "Not assigned")}</b></div>
-      <div class="kv"><span>Category</span><b>${esc(item.categories?.name || "Uncategorized")}</b></div>
-      <div class="kv"><span>Branch</span><b>${esc(item.branch_code || catalogBranchLabel(caps, item.branch_id))}</b></div>
-      <div class="kv"><span>Status</span><b>${esc(statusLabel(item.status))}</b></div>
-      <div class="kv"><span>Retail price</span><b>${item.price == null ? "Not priced" : esc(fmtPrice(item.price))}</b></div>
-      ${attributeRows}
+      ${imageUrl ? `<img class="catalog-detail-photo" src="${esc(imageUrl)}" alt="${esc(todayItemTitle(item))}">` : ""}
+      <section class="catalog-detail-section">
+        <h3>Overview</h3>
+        <div class="catalog-detail-grid">
+          ${identityRows}
+          ${catalogDetailRowHtml({ label: "SKU", value: item.sku || "Not assigned", missing: false })}
+          ${catalogDetailRowHtml({ label: "Category", value: categoryPath(item.category_id) || item.categories?.name || "Uncategorized", missing: false })}
+          ${catalogDetailRowHtml({ label: "Branch", value: item.branch_code || catalogBranchLabel(caps, item.branch_id), missing: false })}
+          ${catalogDetailRowHtml({ label: "Status", value: statusLabel(item.status), missing: false })}
+          ${catalogDetailRowHtml({ label: "Retail price", value: item.price == null ? "Not priced" : fmtPrice(item.price), missing: item.price == null })}
+        </div>
+      </section>
+      <section class="catalog-detail-section">
+        <h3>Product details</h3>
+        <div class="catalog-detail-grid">${attributeRows || `<p class="muted">No category fields configured.</p>`}</div>
+      </section>
+      ${item.ai_visible_text ? `<details class="catalog-ai-evidence"><summary>Text detected in the photo</summary><p>${esc(item.ai_visible_text)}</p></details>` : ""}
       <section class="stock-dist ${item.stock_distribution_source === "ai_suggested" ? "needs-review" : ""}">
-        <div class="stock-dist-head"><div><b>Stock breakdown</b><small>${esc(stockSourceLabel)}</small></div><strong data-stock-total>${stockTotal} unit${stockTotal === 1 ? "" : "s"}</strong></div>
+        <div class="stock-dist-head"><div><b>Stock breakdown</b><small>${esc(stockSourceLabel)}${item.stock_distribution_confidence ? ` · ${esc(item.stock_distribution_confidence)} confidence` : ""}</small></div><strong data-stock-total>${stockTotal} unit${stockTotal === 1 ? "" : "s"}</strong></div>
         <div data-stock-rows>${stockRows}</div>
         <div class="stock-dist-summary" data-stock-summary>${esc(catalogStockDistributionSummary(stockEntries))}</div>
         ${canEditStockDistribution ? `<div class="stock-dist-actions">${supportsSizeDistribution ? `<button type="button" class="ghost" data-stock-add>+ Add size</button>` : ""}<button type="button" class="primary" data-stock-save>${item.stock_distribution_source === "ai_suggested" ? "Confirm breakdown" : "Save breakdown"}</button></div>` : ""}
@@ -3457,7 +3501,7 @@ function todayMetric(label, value, cls = "") {
 }
 
 function todayItemTitle(it) {
-  return [it.brand, it.name].filter(Boolean).join(" ") || it.sku || "Untitled item";
+  return catalogItemTitle(it);
 }
 
 function todayFreshness(lastMirror) {
