@@ -20,6 +20,7 @@ import { dHash, hammingHex } from "./imagehash.js";
 import { esc, toast, trapFocus, ICON } from "./ui.js";
 import { extractCatalogItemWithAi } from "./catalogAi.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
+import { requestRailwayCatalog } from "./railwayCatalogApi.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
 // grid you can prune), set fields common to the whole batch once, then upload
@@ -187,12 +188,18 @@ export async function renderUpload(view, caps, onDone) {
     return;
   }
 
-  const canEdit = !!caps.can_edit; // AI extraction requires editor/admin
+  const canRunAi = isRailwayCatalogMode ? !!caps.can_ai_extract : !!caps.can_edit;
   const [cache, posMirror] = await Promise.all([
     loadRefData(),
     loadPosMirror().catch(() => ({ branches: [] })),
   ]);
-  const posBranches = enabledBranches(posMirror.branches);
+  const posBranches = isRailwayCatalogMode && caps.branch?.id
+    ? [{
+        pos_branch_id: caps.branch.id,
+        code: caps.branch.code || "Branch",
+        name: caps.branch.name || caps.branch.code || "Current branch",
+      }]
+    : enabledBranches(posMirror.branches);
   const leaves = leafCategories(cache);
   let uploadDefaults = loadUploadDefaults();
   if (!leaves.some((l) => l.id === uploadDefaults.categoryId)) uploadDefaults = {};
@@ -227,7 +234,7 @@ export async function renderUpload(view, caps, onDone) {
           <span><b id="upPhotoCount">0</b><small>Photos</small></span>
           <span><b id="upCatState">Category</b><small id="upCatHint">Choose</small></span>
           <span><b id="upBranchState">${esc(initialBranch?.code || "Branch pending")}</b><small>Destination</small></span>
-          <span><b id="upAiState">${canEdit && uploadDefaults.ai ? "AI on" : "AI off"}</b><small>After upload</small></span>
+          <span><b id="upAiState">${canRunAi && uploadDefaults.ai ? "AI on" : "AI off"}</b><small>After upload</small></span>
         </div>
       </section>
       <div class="up-shared" id="sharedBanner" hidden></div>
@@ -273,7 +280,7 @@ export async function renderUpload(view, caps, onDone) {
               <select id="statusSel"><option value="draft"${uploadDefaults.status !== "needs-review" ? " selected" : ""}>draft</option><option value="needs-review"${uploadDefaults.status === "needs-review" ? " selected" : ""}>needs-review</option></select>
             </div>
           </div>
-          ${canEdit ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"${uploadDefaults.ai ? " checked" : ""}> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(runs separately; per-photo cost; AI-filled items go to Review)</span></label>` : ""}
+          ${canRunAi ? `<label class="cm-check up-ai"><input type="checkbox" id="aiAfter"${uploadDefaults.ai ? " checked" : ""}> <span class="ai-ico">${ICON.sparkle}</span> Auto AI-fill fields after upload <span class="muted">(runs separately; per-photo cost; AI-filled items go to Review)</span></label>` : ""}
           <div class="up-defaults" id="upDefaults" ${uploadDefaults.categoryId ? "" : "hidden"}>
             <span>Using last batch defaults.</span>
             <button type="button" class="linkbtn" id="clearDefaults">Clear</button>
@@ -353,7 +360,7 @@ export async function renderUpload(view, caps, onDone) {
     if (photoCount) photoCount.textContent = String(entries.length + pendingPreparationCount);
     if (catState) catState.textContent = catPath ? catPath.split(" › ").pop() : "Category";
     if (catHint) catHint.textContent = catPath || "Choose";
-    if (aiState) aiState.textContent = canEdit ? (aiOn ? "AI on" : "AI off") : "No AI";
+    if (aiState) aiState.textContent = canRunAi ? (aiOn ? "AI on" : "AI off") : "No AI";
     if (branchState) {
       branchState.textContent = posBranches.find((b) => b.pos_branch_id === posBranchSel?.value)?.code || "Branch pending";
     }
@@ -777,9 +784,13 @@ export async function renderUpload(view, caps, onDone) {
       if (!s) return;
       if (!s.id) { if (s.url) URL.revokeObjectURL(s.url); return; } // not uploaded yet
       try {
-        const { error } = await supabase.from("items").delete().eq("id", s.id);
-        if (error) throw error;
-        if (s.path) await supabase.storage.from("product-images").remove([s.path]);
+        if (isRailwayCatalogMode) {
+          await requestRailwayCatalog(`/catalog/items/${encodeURIComponent(s.id)}`, { method: "DELETE" });
+        } else {
+          const { error } = await supabase.from("items").delete().eq("id", s.id);
+          if (error) throw error;
+          if (s.path) await supabase.storage.from("product-images").remove([s.path]);
+        }
         if (s.url) URL.revokeObjectURL(s.url); // free the thumb only once the row is really gone
       } catch (e) {
         // R3: the unit is still in the DB — re-surfacing it keeps the captured
@@ -987,6 +998,56 @@ export async function renderUpload(view, caps, onDone) {
     const id = entry.itemId || uuid();
     const ext = prepared.ext;
     const path = `${common.slug}/${id}.${ext}`;
+    if (isRailwayCatalogMode) {
+      const formData = new FormData();
+      formData.append("id", id);
+      formData.append("category_id", common.categoryId);
+      formData.append("status", common.status);
+      formData.append("brand", common.brand || "");
+      formData.append("attributes", JSON.stringify(common.attributes || {}));
+      formData.append(
+        "image",
+        prepared.blob,
+        entry.originalName || entry.file.name || `${id}.${ext}`
+      );
+      const payload = await requestRailwayCatalog("/catalog/items", {
+        method: "POST",
+        body: formData,
+      });
+      const storedItem = payload.data;
+      if (!storedItem?.id || !storedItem?.image_path) {
+        throw new Error("Catalog service returned an incomplete upload result.");
+      }
+      onUploaded?.(storedItem.id);
+      if (common.ai) {
+        try {
+          const ai = await aiFillItem(storedItem.id, common);
+          return {
+            id: storedItem.id,
+            path: storedItem.image_path,
+            aiFailed: false,
+            aiError: "",
+            ai,
+          };
+        } catch (error) {
+          console.error("Railway AI fill failed after catalog intake", error);
+          return {
+            id: storedItem.id,
+            path: storedItem.image_path,
+            aiFailed: true,
+            aiError: error?.message || String(error),
+            ai: null,
+          };
+        }
+      }
+      return {
+        id: storedItem.id,
+        path: storedItem.image_path,
+        aiFailed: false,
+        aiError: "",
+        ai: null,
+      };
+    }
     const existingLookup = await supabase
       .from("items")
       .select("id,image_path")

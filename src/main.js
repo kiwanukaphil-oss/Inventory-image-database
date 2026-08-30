@@ -3,6 +3,7 @@ import "./styles.css";
 import { registerSW } from "virtual:pwa-register";
 import { isConfigured } from "./db.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
+import { buildRailwayCatalogProfile } from "./lib/railway-catalog-ui.js";
 import { initTheme } from "./theme.js";
 
 // Resolve light/dark/system and keep the status bar in sync. index.html applies
@@ -83,16 +84,7 @@ if (!isConfigured) {
       // Railway now exposes the narrow AI extraction capability separately.
       // General mutation controls stay hidden until their own API slices arrive.
       const renderedProfile = isRailwayCatalogMode
-        ? {
-            ...profile,
-            can_upload: false,
-            can_edit: false,
-            can_delete: false,
-            can_view_cost: false,
-            can_manage_users: false,
-            can_publish: false,
-            railway_read_only: true,
-          }
+        ? buildRailwayCatalogProfile(profile)
         : profile;
       renderApp(mount, renderedProfile, () => signOut()); // sign-out UI handled by onAuthChange
     } catch (err) {

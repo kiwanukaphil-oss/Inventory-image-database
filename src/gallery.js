@@ -61,6 +61,7 @@ import { getThemePref, setThemePref } from "./theme.js";
 import { requestRailwayCatalog } from "./railwayCatalogApi.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 import { extractCatalogItemWithAi } from "./catalogAi.js";
+import { selectRailwayCatalogNavigation } from "./lib/railway-catalog-ui.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -126,7 +127,7 @@ function summarizeItemRich(it) {
 // Export moved into the ⋮ menu (admin-ish, rarely daily) to make room for
 // Shop — the floor-facing reports surface (Phase 3 of the POS integration).
 const NAV = [
-  { id: "today", label: "Today", ico: "navToday" },
+  { id: "today", label: "Home", ico: "navToday" },
   { id: "catalog", label: "Catalog", ico: "navGallery" },
   { id: "add", label: "Add", ico: "navAdd" },
   { id: "review", label: "Review", ico: "navReview", badge: true },
@@ -200,7 +201,7 @@ export function renderApp(mount, profile, onSignOut) {
 
   // Build bottom nav buttons.
   const availableNav = isRailwayCatalogMode
-    ? NAV.filter((navItem) => ["catalog", "review"].includes(navItem.id))
+    ? selectRailwayCatalogNavigation(NAV, caps)
     : NAV;
   nav.innerHTML = availableNav.map(
     (n) => `<button data-view="${n.id}"><span class="ico">${ICON[n.ico] || ""}</span>${n.label}${
@@ -208,7 +209,7 @@ export function renderApp(mount, profile, onSignOut) {
     }</button>`
   ).join("");
 
-  const initialViewFallback = isRailwayCatalogMode ? "catalog" : "today";
+  const initialViewFallback = "today";
   let currentViewId = availableNav.some((navItem) => navItem.id === appSession.view)
     ? appSession.view
     : initialViewFallback;
@@ -258,6 +259,7 @@ export function renderApp(mount, profile, onSignOut) {
     else if (id === "catalog") await renderGallery(view, caps);
     else if (id === "add")
       await renderUpload(view, caps, (result = {}) => {
+        if (isRailwayCatalogMode) galleryPayloadCache = null;
         if (result.view === "review" && result.itemIds?.length) {
           openReviewQueue(result.issue, result.itemIds);
         } else {
@@ -2931,8 +2933,10 @@ async function renderToday(view, caps, actions = {}) {
       <section class="today-hero">
         <div>
           <div class="today-kicker">Operations</div>
-          <h2>Today</h2>
-          <p>Intake, review, pricing, and shop sync in one working surface.</p>
+          <h2>${isRailwayCatalogMode ? "Home" : "Today"}</h2>
+          <p>${isRailwayCatalogMode
+            ? "Catalog intake and review in one working surface."
+            : "Intake, review, pricing, and shop sync in one working surface."}</p>
         </div>
         <div class="today-loading" aria-hidden="true">
           <span></span><span></span><span></span>
@@ -2957,16 +2961,21 @@ async function renderToday(view, caps, actions = {}) {
   if (mySeq !== renderTodaySeq) return;
 
   const rows = galleryPayload.data || [];
+  const isRailwayHome = isRailwayCatalogMode;
   const syncCounts = galleryPayload.syncCounts || {};
   const posMirror = galleryPayload.posMirror || {};
   const byVariant = posMirror.byVariant instanceof Map ? posMirror.byVariant : new Map();
   const reviewCount = rows.filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length;
-  const freshness = todayFreshness(posMirror.lastMirror);
+  const freshness = isRailwayHome
+    ? { text: "Railway catalog connected", cls: "" }
+    : todayFreshness(posMirror.lastMirror);
   const freshnessNeedsWork = freshness.cls === "warn" || freshness.cls === "bad";
-  const shopIssueCount = (syncCounts.errors || 0) + (syncCounts.dirty || 0) + (freshnessNeedsWork ? 1 : 0);
+  const shopIssueCount = isRailwayHome
+    ? 0
+    : (syncCounts.errors || 0) + (syncCounts.dirty || 0) + (freshnessNeedsWork ? 1 : 0);
   let issueCounts = {};
   setReviewBadge(reviewCount);
-  setShopBadge(shopIssueCount);
+  setShopBadge(isRailwayHome ? 0 : shopIssueCount);
 
   if (!rows.length) {
     view.innerHTML = `
@@ -2974,7 +2983,7 @@ async function renderToday(view, caps, actions = {}) {
         <section class="today-hero">
           <div>
             <div class="today-kicker">Operations</div>
-            <h2>Today</h2>
+            <h2>${isRailwayCatalogMode ? "Home" : "Today"}</h2>
             <p>No inventory is loaded yet.</p>
           </div>
           <div class="today-hero-actions">
@@ -3019,10 +3028,20 @@ async function renderToday(view, caps, actions = {}) {
   const photoUrls = await Promise.all(photoRows.map((it) => signThumb(it.image_path)));
   if (mySeq !== renderTodaySeq) return;
 
-  const activityRows = rows
+  let activityRows = rows
     .filter((it) => it.activity?.latest_at)
     .sort((a, b) => new Date(b.activity.latest_at) - new Date(a.activity.latest_at))
     .slice(0, 4);
+  if (isRailwayHome && !activityRows.length) {
+    activityRows = rows.slice(0, 4).map((item) => ({
+      ...item,
+      activity: {
+        latest_at: item.created_at,
+        latest_source: "upload",
+        latest_summary: "Added to catalog",
+      },
+    }));
+  }
   let suppressTodayClick = false;
 
   view.innerHTML = `
@@ -3030,7 +3049,7 @@ async function renderToday(view, caps, actions = {}) {
       <section class="today-hero">
         <div class="today-hero-copy">
           <div class="today-kicker">Operations</div>
-          <h2>Today</h2>
+          <h2>${isRailwayHome ? "Home" : "Today"}</h2>
           <p>${esc(rows.length.toLocaleString())} catalog item${rows.length === 1 ? "" : "s"} loaded. ${esc(reviewCount.toLocaleString())} item${reviewCount === 1 ? "" : "s"} need${reviewCount === 1 ? "s" : ""} a decision.</p>
         </div>
         <div class="today-hero-actions">
@@ -3043,7 +3062,9 @@ async function renderToday(view, caps, actions = {}) {
         ${todayQueueCard("price", "Price queue", issueCounts.price || 0, priceSub, "price", ICON.navShop)}
         ${todayQueueCard("ai", "AI check", aiChecks, "Confidence, failed fill, and missing AI work", "ai-check", ICON.sparkle)}
         ${todayQueueCard("ready", "Ready", issueCounts.ready || 0, "Priced items ready to approve", "ready", ICON.tick)}
-        ${todayQueueCard("sync", "Shop sync", shopIssueCount, syncSub, "sync", ICON.refresh)}
+        ${isRailwayHome
+          ? todayQueueCard("sync", "Needs work", issueCounts.work || 0, "Items blocked by missing details, price, or review", "work", ICON.navReview)
+          : todayQueueCard("sync", "Shop sync", shopIssueCount, syncSub, "sync", ICON.refresh)}
       </section>
 
       <section class="today-main">
@@ -3060,7 +3081,7 @@ async function renderToday(view, caps, actions = {}) {
           </div>
         </div>
 
-        <div class="today-panel today-shop">
+        ${isRailwayHome ? "" : `<div class="today-panel today-shop">
           <div class="today-panel-head">
             <div>
               <h3>Shop floor</h3>
@@ -3076,7 +3097,7 @@ async function renderToday(view, caps, actions = {}) {
             ${todayMetric("Queued", queued)}
             ${todayMetric("Errors", Math.max(syncErrors, syncCounts.errors || 0), (syncErrors || syncCounts.errors) ? "bad" : "")}
           </div>
-        </div>
+        </div>`}
       </section>
 
       <section class="today-panel today-activity">
@@ -3085,7 +3106,7 @@ async function renderToday(view, caps, actions = {}) {
             <h3>Recent activity</h3>
             <p>Latest catalog changes</p>
           </div>
-          <button class="ghost small" data-today-action="activity">Open feed</button>
+          <button class="ghost small" data-today-action="${isRailwayHome ? "catalog" : "activity"}">${isRailwayHome ? "Open catalog" : "Open feed"}</button>
         </div>
         <div class="today-activity-list">
           ${activityRows.length ? activityRows.map(todayActivityHtml).join("") : `<div class="today-empty-inline">No recent activity.</div>`}

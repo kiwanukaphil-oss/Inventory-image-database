@@ -34,11 +34,12 @@ Built in phases (see [`plans`](#) / `SETUP.md`):
 ## Railway migration status
 
 The Railway slice includes POS login, effective catalog permissions,
-branch-scoped catalog/reference-data reads, short-lived private image URLs, and
-authenticated AI extraction that fills only empty fields and records usage,
-jobs, and item activity. General upload/edit/delete/cost/user-management/publish
-workflows remain separately approved write slices; the PWA keeps those unrelated
-controls masked while Railway mode is enabled.
+branch-scoped catalog/reference-data reads, short-lived private image URLs,
+authenticated photographed-unit intake, upload Undo, and AI extraction that
+fills only empty fields and records usage, jobs, and item activity. The Home,
+Catalog, Review, and permission-gated Add Images destinations are available in
+Railway mode. Shop sync and general edit/cost/user-management/publish workflows
+remain separately approved slices, so those unrelated controls stay masked.
 
 For local migration-mode development, add this to `.env.local`:
 

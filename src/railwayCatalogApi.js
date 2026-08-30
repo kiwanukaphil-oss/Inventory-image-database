@@ -27,7 +27,8 @@ export class RailwayCatalogApiError extends Error {
 export async function requestRailwayCatalog(path, options = {}) {
   const { method = "GET", body, authenticated = true } = options;
   const headers = { Accept: "application/json" };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  const isMultipartBody = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isMultipartBody) headers["Content-Type"] = "application/json";
 
   if (authenticated) {
     const token = localStorage.getItem(railwayCatalogTokenKey);
@@ -42,7 +43,7 @@ export async function requestRailwayCatalog(path, options = {}) {
     response = await fetch(`${railwayCatalogApiUrl}${path}`, {
       method,
       headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isMultipartBody ? body : JSON.stringify(body),
     });
   } catch (error) {
     throw new RailwayCatalogApiError(

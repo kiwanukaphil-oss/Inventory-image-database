@@ -1,4 +1,5 @@
 import { supabase } from "./db.js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 
 const JOB_CHUNK = 80;
 const JOB_CONCURRENCY = 4;
@@ -64,6 +65,9 @@ export function jobErrorHelp(category) {
 
 export async function recordItemJobFailure(itemId, jobType, err, attemptCount = 1) {
   if (!itemId) return;
+  // Railway records the complete provider attempt and outcome server-side. The
+  // browser ledger below exists only for rollback builds using the legacy DB.
+  if (isRailwayCatalogMode) return;
   const error_message = messageOf(err).slice(0, 1000);
   const error_category = classifyJobError(err);
   try {
@@ -83,6 +87,7 @@ export async function recordItemJobFailure(itemId, jobType, err, attemptCount = 
 
 export async function clearItemJobFailures(itemId, jobType) {
   if (!itemId) return;
+  if (isRailwayCatalogMode) return;
   try {
     await supabase
       .from("item_jobs")
@@ -94,6 +99,7 @@ export async function clearItemJobFailures(itemId, jobType) {
 }
 
 export async function loadLatestFailedJobs(itemIds, jobType) {
+  if (isRailwayCatalogMode) return new Map();
   const ids = [...new Set(itemIds || [])].filter(Boolean);
   if (!ids.length) return new Map();
   try {
