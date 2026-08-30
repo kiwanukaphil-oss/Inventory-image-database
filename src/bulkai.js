@@ -142,6 +142,7 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
         itemId: it.id,
         category: categoryPath(it.category_id),
         fields: defs,
+        branchId: it.branch_id,
       });
 
       if (isRailwayCatalogMode) {

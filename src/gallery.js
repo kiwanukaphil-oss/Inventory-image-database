@@ -66,6 +66,15 @@ import {
   canSelectCatalogItems,
   selectRailwayCatalogNavigation,
 } from "./lib/railway-catalog-ui.js";
+import {
+  ALL_CATALOG_BRANCHES,
+  availableCatalogBranches,
+  catalogBranchLabel,
+  isAllCatalogBranches,
+  readCatalogBranchId,
+  writeCatalogBranchId,
+} from "./lib/catalog-branch-scope.js";
+import { countQueuedPhotos } from "./uploadQueue.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -168,6 +177,7 @@ function setNavBadge(id, count, animate = false) {
 const setReviewBadge = (count) => setNavBadge("reviewBadge", count, true);
 const setShopBadge = (count) => setNavBadge("shopBadge", count, false);
 let renderTodaySeq = 0;
+let removeUploadQueueListener = () => {};
 
 /**
  * Render the full app shell for a signed-in user.
@@ -180,6 +190,10 @@ export function renderApp(mount, profile, onSignOut) {
   // the database independently enforces the same via RLS.
   const caps = profile || {};
   const role = caps.role || "viewer";
+  removeUploadQueueListener();
+  const catalogBranches = isRailwayCatalogMode ? availableCatalogBranches(caps) : [];
+  let selectedCatalogBranchId = isRailwayCatalogMode ? readCatalogBranchId(caps) : "";
+  if (selectedCatalogBranchId) writeCatalogBranchId(selectedCatalogBranchId);
   restoreAppSession(caps);
   mount.innerHTML = `
     <div class="shell">
@@ -187,6 +201,7 @@ export function renderApp(mount, profile, onSignOut) {
         <header class="topbar">
           <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
           <span class="rolechip ${role}">${role}</span>
+          ${isRailwayCatalogMode ? `<button class="branchchip" id="branchBtn" type="button">${esc(catalogBranchLabel(caps, selectedCatalogBranchId))}</button>` : ""}
           <span class="spacer"></span>
           <button class="iconbtn" id="cmdBtn" aria-label="Quick actions">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>
@@ -194,6 +209,10 @@ export function renderApp(mount, profile, onSignOut) {
           <button class="iconbtn" id="menuBtn" aria-label="Menu">${ICON.kebab}</button>
         </header>
         <div class="offline-banner" id="offlineBanner" hidden>● Offline — changes need a connection</div>
+        <div class="upload-recovery-banner" id="uploadRecoveryBanner" hidden>
+          <span><b id="uploadRecoveryCount">0</b> photos waiting safely on this device</span>
+          <button type="button" id="resumeUploadsBtn">Resume</button>
+        </div>
       </div>
       <main class="content" id="view"></main>
       <button class="fab-top" id="fabTop" hidden aria-label="Back to top">${ICON.up}</button>
@@ -218,6 +237,58 @@ export function renderApp(mount, profile, onSignOut) {
     ? appSession.view
     : initialViewFallback;
   const refreshCurrent = () => setView(currentViewId, { historyMode: "replace", restoreScroll: true });
+
+  function updateSelectedBranchUi() {
+    selectedCatalogBranchId = readCatalogBranchId(caps);
+    const branchButton = mount.querySelector("#branchBtn");
+    if (branchButton) branchButton.textContent = catalogBranchLabel(caps, selectedCatalogBranchId);
+  }
+
+  function selectCatalogBranch(branchId, { refresh = true } = {}) {
+    if (!branchId || branchId === selectedCatalogBranchId) return;
+    writeCatalogBranchId(branchId);
+    updateSelectedBranchUi();
+    galleryPayloadCache = null;
+    galleryPayloadPromise = null;
+    if (refresh) void setView(currentViewId, { historyMode: "replace", restoreScroll: false });
+  }
+
+  /** Present only backend-authorized scopes and refresh reads after selection. */
+  function openCatalogBranchPicker() {
+    const branchRows = catalogBranches.map((branch) => `
+      <button class="menu-item settings-row" data-catalog-branch="${esc(branch.id)}">
+        <span><b>${esc(branch.code)}</b><small>${esc(branch.name)}</small></span>
+        <span class="menu-val">${selectedCatalogBranchId === branch.id ? "Selected" : ""}</span>
+      </button>`).join("");
+    const allBranchesRow = caps.can_view_all_branches && catalogBranches.length > 0
+      ? `<button class="menu-item settings-row" data-catalog-branch="${ALL_CATALOG_BRANCHES}">
+          <span><b>All branches</b><small>Combined read-only catalog</small></span>
+          <span class="menu-val">${selectedCatalogBranchId === ALL_CATALOG_BRANCHES ? "Selected" : ""}</span>
+        </button>`
+      : "";
+    const sheet = openBottomSheet("Catalog branch", `${branchRows}${allBranchesRow}`);
+    sheet.body.addEventListener("click", (event) => {
+      const branchButton = event.target.closest("[data-catalog-branch]");
+      if (!branchButton) return;
+      sheet.close();
+      selectCatalogBranch(branchButton.dataset.catalogBranch);
+    });
+  }
+
+  /** Keep restart-safe photo work visible from every screen without loading blobs. */
+  async function refreshPendingUploadBanner() {
+    const banner = mount.querySelector("#uploadRecoveryBanner");
+    if (!banner) return;
+    try {
+      const pendingPhotoCount = await countQueuedPhotos();
+      if (!banner.isConnected) return;
+      banner.hidden = pendingPhotoCount === 0;
+      const count = banner.querySelector("#uploadRecoveryCount");
+      if (count) count.textContent = String(pendingPhotoCount);
+    } catch {
+      banner.hidden = true;
+    }
+  }
   function openReviewQueue(issueKey = "work", ids = []) {
     const next = REVIEW_FILTERS.includes(issueKey) ? issueKey : "work";
     browseState.review.itemIds = Array.isArray(ids) ? ids : [];
@@ -285,6 +356,25 @@ export function renderApp(mount, profile, onSignOut) {
   }
 
   // Currency editor (the one shop-wide setting), opened from Settings → Shop.
+  mount.querySelector("#branchBtn")?.addEventListener("click", openCatalogBranchPicker);
+  mount.querySelector("#resumeUploadsBtn")?.addEventListener("click", () => {
+    void setView("add", { restoreScroll: false });
+  });
+  removeUploadQueueListener();
+  const uploadQueueChanged = () => { void refreshPendingUploadBanner(); };
+  const catalogBranchChanged = () => {
+    updateSelectedBranchUi();
+    galleryPayloadCache = null;
+    galleryPayloadPromise = null;
+  };
+  globalThis.addEventListener("kline:upload-queue-changed", uploadQueueChanged);
+  globalThis.addEventListener("kline:catalog-branch-changed", catalogBranchChanged);
+  removeUploadQueueListener = () => {
+    globalThis.removeEventListener("kline:upload-queue-changed", uploadQueueChanged);
+    globalThis.removeEventListener("kline:catalog-branch-changed", catalogBranchChanged);
+  };
+  void refreshPendingUploadBanner();
+
   function openCurrencyEditor() {
     const cur = getSetting("currency", "");
     const sh = openBottomSheet("Currency", `
@@ -596,7 +686,10 @@ let galleryPayloadCache = null;
 let galleryPayloadPromise = null;
 const fullImageUrlCache = new Map(); // shared by thumbnails and the full-size viewer (see signThumb)
 
-const galleryCacheKey = (caps = {}) => `${caps.id || caps.email || "user"}:${caps.can_view_cost ? "cost" : "nocost"}`;
+const galleryCacheKey = (caps = {}) => {
+  const branchScope = isRailwayCatalogMode ? readCatalogBranchId(caps) : "legacy";
+  return `${caps.id || caps.email || "user"}:${caps.can_view_cost ? "cost" : "nocost"}:${branchScope}`;
+};
 
 function cachedSignedUrl(cache, path, signer) {
   if (!path) return Promise.resolve(null);
@@ -761,6 +854,7 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
   const payload = await loadGalleryPayload(caps);
   const item = payload.data?.find((candidate) => candidate.id === id);
   if (!item) throw new Error("Catalog item not found.");
+  const allBranches = isAllCatalogBranches(readCatalogBranchId(caps));
 
   const imageUrl = item.image_url || (await signFullImage(item.image_path));
   const attributeRows = Object.entries(item.attributes || {})
@@ -775,10 +869,11 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
       ${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(todayItemTitle(item))}" style="width:100%;max-height:52vh;object-fit:contain;border-radius:10px;background:var(--surface)">` : ""}
       <div class="kv"><span>SKU</span><b>${esc(item.sku || "Not assigned")}</b></div>
       <div class="kv"><span>Category</span><b>${esc(item.categories?.name || "Uncategorized")}</b></div>
+      <div class="kv"><span>Branch</span><b>${esc(item.branch_code || catalogBranchLabel(caps, item.branch_id))}</b></div>
       <div class="kv"><span>Status</span><b>${esc(statusLabel(item.status))}</b></div>
       <div class="kv"><span>Retail price</span><b>${item.price == null ? "Not priced" : esc(fmtPrice(item.price))}</b></div>
       ${attributeRows}
-      ${caps.can_ai_extract ? `<button class="primary" type="button" data-railway-ai style="width:100%;margin-top:14px">${ICON.sparkle} AI-fill empty fields</button>` : ""}
+      ${caps.can_ai_extract && !allBranches ? `<button class="primary" type="button" data-railway-ai style="width:100%;margin-top:14px">${ICON.sparkle} AI-fill empty fields</button>` : ""}
       <p class="muted" style="margin-top:14px">General editing remains read-only; AI fills only fields that are still blank.</p>
     </div>`);
   const aiButton = sheet.body.querySelector("[data-railway-ai]");
@@ -794,7 +889,7 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
       aiButton.disabled = true;
       aiButton.textContent = "Reading photoâ€¦";
       try {
-        const result = await extractCatalogItemWithAi({ itemId: id });
+        const result = await extractCatalogItemWithAi({ itemId: id, branchId: item.branch_id });
         const filled = result.applied_fields?.length || 0;
         galleryPayloadCache = null;
         sheet.close();
@@ -946,8 +1041,9 @@ async function renderGallery(view, caps, opts = {}) {
   const state = review ? browseState.review : browseState.gallery;
   const canEdit = !!caps.can_edit;
   const canDelete = !!caps.can_delete;
-  const canRunAi = canRunCatalogAi(caps, isRailwayCatalogMode);
-  const canSelect = canSelectCatalogItems(caps);
+  const allBranches = isRailwayCatalogMode && isAllCatalogBranches(readCatalogBranchId(caps));
+  const canRunAi = canRunCatalogAi(caps, isRailwayCatalogMode) && !allBranches;
+  const canSelect = canSelectCatalogItems(caps) && !allBranches;
   const appNav = document.querySelector(".bottomnav");
   if (appNav) appNav.style.display = ""; // restore if a prior selection hid it
   view.innerHTML = skeletonGrid();
@@ -1316,6 +1412,12 @@ async function renderGallery(view, caps, opts = {}) {
       if (el) el.disabled = n === 0;
     });
   }
+
+  function catalogBranchChipHtml(it) {
+    if (!allBranches) return "";
+    const label = it.branch_code || catalogBranchLabel(caps, it.branch_id);
+    return `<span class="catalog-branch-chip" title="${esc(it.branch_name || label)}">${esc(label)}</span>`;
+  }
   function enterSelection() {
     if (!canSelect) return;
     selectionMode = true;
@@ -1435,7 +1537,7 @@ async function renderGallery(view, caps, opts = {}) {
           <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
         </div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
-        <div class="issue-line">${issueBadgesHtml(it)}${activityBadgesHtml(it)}${posChipHtml(it)}</div>
+        <div class="issue-line">${catalogBranchChipHtml(it)}${issueBadgesHtml(it)}${activityBadgesHtml(it)}${posChipHtml(it)}</div>
         ${verificationDetailsHtml(it)}
         ${missingDetailsHtml(it)}
         <div class="cmeta">
@@ -1472,7 +1574,7 @@ async function renderGallery(view, caps, opts = {}) {
         ${verificationDetailsHtml(it)}
         ${missingDetailsHtml(it)}
         <div class="row-meta">
-          <span class="row-badges">${issueBadgesHtml(it, { compact: true })}${activityBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>${posChipHtml(it)}</span>
+          <span class="row-badges">${catalogBranchChipHtml(it)}${issueBadgesHtml(it, { compact: true })}${activityBadgesHtml(it, { compact: true })}<span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>${posChipHtml(it)}</span>
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
       </div>

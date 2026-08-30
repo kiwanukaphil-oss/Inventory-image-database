@@ -305,6 +305,18 @@ body { overflow:hidden; overscroll-behavior:none; }
 .rolechip.admin { color:var(--review-txt); border-color:var(--review-border); }
 .rolechip.editor { color:var(--accent-soft-txt); border-color:var(--editor-chip-border); }
 .rolechip.viewer { color:var(--muted); }
+.branchchip {
+  width:auto; max-width:112px; min-height:28px; padding:4px 9px;
+  border:1px solid var(--accent); border-radius:999px;
+  background:var(--control); color:var(--accent-soft-txt);
+  font-size:var(--text-2xs); font-weight:750; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis;
+}
+@media (max-width:480px) {
+  .topbar { gap:var(--space-sm); }
+  .topbar .rolechip { display:none; }
+  .branchchip { max-width:96px; }
+}
 
 /* THE app scroller. min-height:0 lets it shrink inside the flex column;
    overscroll containment stops edge-bounce from chaining anywhere. The large
@@ -316,6 +328,16 @@ body { overflow:hidden; overscroll-behavior:none; }
 /* Offline banner (thin bar under the top bar, inside .topwrap). */
 .offline-banner { text-align:center; font-size:var(--text-sm);
   padding:6px 10px; background:var(--notice-bg); color:var(--notice-txt); border-bottom:1px solid var(--notice-border); }
+.upload-recovery-banner {
+  display:flex; align-items:center; justify-content:center; gap:var(--space-lg);
+  padding:7px 12px; border-bottom:1px solid var(--ai-border);
+  background:var(--control); color:var(--ai-txt); font-size:var(--text-sm);
+}
+.upload-recovery-banner[hidden] { display:none; }
+.upload-recovery-banner button {
+  width:auto; min-height:30px; padding:4px 10px; border-color:var(--ai-border);
+  color:var(--ai-txt); background:transparent;
+}
 .app-update {
   position:fixed; z-index:120; left:12px; right:12px;
   bottom:calc(82px + var(--safe-bottom)); max-width:520px; margin:0 auto;
@@ -605,6 +627,12 @@ body { overflow:hidden; overscroll-behavior:none; }
 .card.selected { outline:2px solid var(--accent); outline-offset:-2px; }
 .card.previewing { outline:2px solid var(--accent); outline-offset:-2px; }
 .card.selected .selcheck { background:var(--accent); border-color:var(--accent); color:#fff; }
+.catalog-branch-chip {
+  display:inline-flex; align-items:center; min-height:20px; padding:2px 7px;
+  border:1px solid var(--accent); border-radius:999px;
+  color:var(--accent-soft-txt); background:var(--control);
+  font-size:var(--text-2xs); font-weight:750;
+}
 /* low-confidence triage dot */
 .card .lowdot { position:absolute; top:6px; right:6px; width:11px; height:11px; border-radius:50%;
   background:var(--warn); box-shadow:0 0 0 2px #0009; }

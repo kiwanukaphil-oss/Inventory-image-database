@@ -21,6 +21,11 @@ import { esc, toast, trapFocus, ICON } from "./ui.js";
 import { extractCatalogItemWithAi } from "./catalogAi.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 import { requestRailwayCatalog } from "./railwayCatalogApi.js";
+import {
+  availableCatalogBranches,
+  readCatalogBranchId,
+  writeCatalogBranchId,
+} from "./lib/catalog-branch-scope.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
 // grid you can prune), set fields common to the whole batch once, then upload
@@ -107,6 +112,7 @@ async function aiFillItem(id, common) {
     itemId: id,
     category: categoryPath(common.categoryId),
     fields: defs,
+    branchId: common.posBranchId,
   });
   if (!data?.values) throw new Error("AI returned no values.");
 
@@ -193,19 +199,23 @@ export async function renderUpload(view, caps, onDone) {
     loadRefData(),
     loadPosMirror().catch(() => ({ branches: [] })),
   ]);
-  const posBranches = isRailwayCatalogMode && caps.branch?.id
-    ? [{
-        pos_branch_id: caps.branch.id,
-        code: caps.branch.code || "Branch",
-        name: caps.branch.name || caps.branch.code || "Current branch",
-      }]
+  const posBranches = isRailwayCatalogMode
+    ? availableCatalogBranches(caps).map((branch) => ({
+        pos_branch_id: branch.id,
+        code: branch.code,
+        name: branch.name,
+        is_default: branch.is_default || branch.is_user_default,
+      }))
     : enabledBranches(posMirror.branches);
   const leaves = leafCategories(cache);
   let uploadDefaults = loadUploadDefaults();
   if (!leaves.some((l) => l.id === uploadDefaults.categoryId)) uploadDefaults = {};
+  const selectedRailwayBranchId = isRailwayCatalogMode ? readCatalogBranchId(caps) : "";
   const initialBranchId = posBranches.some((b) => b.pos_branch_id === uploadDefaults.posBranchId)
     ? uploadDefaults.posBranchId
-    : storedPosBranchId(posBranches, { allowAll: false });
+    : posBranches.some((b) => b.pos_branch_id === selectedRailwayBranchId)
+      ? selectedRailwayBranchId
+      : storedPosBranchId(posBranches, { allowAll: false });
   const initialBranch = posBranches.find((b) => b.pos_branch_id === initialBranchId) || null;
   const entries = []; // { key, itemId, file, originalName, ext, url, quality, queueOrder }
   const seen = new Set(); // dedupe key set
@@ -323,7 +333,8 @@ export async function renderUpload(view, caps, onDone) {
   const sharedBanner = $("#sharedBanner");
   $("#aiAfter")?.addEventListener("change", renderIntakeSummary);
   posBranchSel?.addEventListener("change", () => {
-    storePosBranchId(posBranchSel.value);
+    if (isRailwayCatalogMode) writeCatalogBranchId(posBranchSel.value);
+    else storePosBranchId(posBranchSel.value);
     renderIntakeSummary();
   });
   $("#clearDefaults")?.addEventListener("click", () => {
@@ -1013,6 +1024,7 @@ export async function renderUpload(view, caps, onDone) {
       const payload = await requestRailwayCatalog("/catalog/items", {
         method: "POST",
         body: formData,
+        branchId: common.posBranchId,
       });
       const storedItem = payload.data;
       if (!storedItem?.id || !storedItem?.image_path) {

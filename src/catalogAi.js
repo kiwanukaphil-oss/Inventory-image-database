@@ -31,11 +31,11 @@ function legacyEdgeErrorMessage(body, fallback = "") {
  * Function when the build has not enabled Railway mode. Railway deliberately
  * ignores client field/category authority and applies only still-empty values.
  */
-export async function extractCatalogItemWithAi({ itemId, category, fields }) {
+export async function extractCatalogItemWithAi({ itemId, category, fields, branchId }) {
   if (isRailwayCatalogMode) {
     const payload = await requestRailwayCatalog(
       `/catalog/items/${encodeURIComponent(itemId)}/ai-extract`,
-      { method: "POST", body: { only_empty: true } }
+      { method: "POST", body: { only_empty: true }, branchId }
     );
     return payload.data;
   }

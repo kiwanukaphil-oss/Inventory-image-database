@@ -44,4 +44,23 @@ describe("Railway catalog API client", () => {
     expect(options.headers.Authorization).toBe("Bearer test-pos-jwt");
     expect(options.headers["X-Branch-Id"]).toBe("branch-123");
   });
+
+  it("binds a recovered upload to its checkpointed branch", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { requestRailwayCatalog } = await import("../src/railwayCatalogApi.js");
+
+    await requestRailwayCatalog("/catalog/items", {
+      method: "POST",
+      body: new FormData(),
+      branchId: "branch-checkpointed",
+    });
+
+    expect(fetchMock.mock.calls[0][1].headers["X-Branch-Id"]).toBe("branch-checkpointed");
+  });
 });

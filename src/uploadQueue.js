@@ -5,6 +5,10 @@ const AI_TASK_STORE = "ai-tasks";
 
 let uploadQueueDatabasePromise;
 
+const notifyUploadQueueChanged = () => {
+  try { globalThis.dispatchEvent?.(new CustomEvent("kline:upload-queue-changed")); } catch {}
+};
+
 function requestResult(request) {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
@@ -52,6 +56,16 @@ export async function saveQueuedPhoto(photoRecord) {
   const transaction = database.transaction(PHOTO_STORE, "readwrite");
   transaction.objectStore(PHOTO_STORE).put(photoRecord);
   await transactionFinished(transaction);
+  notifyUploadQueueChanged();
+}
+
+export async function countQueuedPhotos() {
+  const database = await openUploadQueueDatabase();
+  const transaction = database.transaction(PHOTO_STORE, "readonly");
+  const completion = transactionFinished(transaction);
+  const count = await requestResult(transaction.objectStore(PHOTO_STORE).count());
+  await completion;
+  return count;
 }
 
 // Restore photos in their original selection order so a restarted batch still
@@ -70,6 +84,7 @@ export async function deleteQueuedPhoto(key) {
   const transaction = database.transaction(PHOTO_STORE, "readwrite");
   transaction.objectStore(PHOTO_STORE).delete(key);
   await transactionFinished(transaction);
+  notifyUploadQueueChanged();
 }
 
 export async function clearQueuedPhotos() {
@@ -77,6 +92,7 @@ export async function clearQueuedPhotos() {
   const transaction = database.transaction(PHOTO_STORE, "readwrite");
   transaction.objectStore(PHOTO_STORE).clear();
   await transactionFinished(transaction);
+  notifyUploadQueueChanged();
 }
 
 export async function saveQueuedAiTask(taskRecord) {

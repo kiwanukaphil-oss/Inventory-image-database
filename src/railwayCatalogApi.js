@@ -25,7 +25,7 @@ export class RailwayCatalogApiError extends Error {
  * disable auth only for login; all catalog endpoints use both headers.
  */
 export async function requestRailwayCatalog(path, options = {}) {
-  const { method = "GET", body, authenticated = true } = options;
+  const { method = "GET", body, authenticated = true, branchId } = options;
   const headers = { Accept: "application/json" };
   const isMultipartBody = typeof FormData !== "undefined" && body instanceof FormData;
   if (body !== undefined && !isMultipartBody) headers["Content-Type"] = "application/json";
@@ -34,8 +34,8 @@ export async function requestRailwayCatalog(path, options = {}) {
     const token = localStorage.getItem(railwayCatalogTokenKey);
     if (!token) throw new RailwayCatalogApiError("Authentication required.", 401);
     headers.Authorization = `Bearer ${token}`;
-    const branchId = localStorage.getItem(railwayCatalogBranchKey);
-    if (branchId) headers["X-Branch-Id"] = branchId;
+    const effectiveBranchId = branchId || localStorage.getItem(railwayCatalogBranchKey);
+    if (effectiveBranchId) headers["X-Branch-Id"] = effectiveBranchId;
   }
 
   let response;

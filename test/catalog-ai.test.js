@@ -41,6 +41,7 @@ describe("catalog AI adapter", () => {
       itemId: "item/with spaces",
       category: "Untrusted category",
       fields: [{ key: "untrusted", label: "Untrusted" }],
+      branchId: "branch-ai-item",
     });
 
     expect(result.applied_fields).toEqual(["name"]);
@@ -50,7 +51,7 @@ describe("catalog AI adapter", () => {
       "https://catalog-api.test/api/catalog/items/item%2Fwith%20spaces/ai-extract"
     );
     expect(options.headers.Authorization).toBe("Bearer test-pos-jwt");
-    expect(options.headers["X-Branch-Id"]).toBe("branch-123");
+    expect(options.headers["X-Branch-Id"]).toBe("branch-ai-item");
     expect(JSON.parse(options.body)).toEqual({ only_empty: true });
   });
 
