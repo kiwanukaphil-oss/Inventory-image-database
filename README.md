@@ -5,9 +5,9 @@
 A mobile-first PWA for reviewing a clothing inventory: browse product photos
 alongside their data, edit fields fast (incl. bulk edits), upload new photos
 from a phone with AI-assisted field pre-fill, group by category/subcategory,
-and export the latest state to CSV. The production deployment is currently
-backed by Supabase and hosted on GitHub Pages; an opt-in Railway/POS adapter is
-being introduced under ADR-062 for the approved consolidation.
+and export the latest state to CSV. The catalog backend, database, private
+image storage, authentication, and AI extraction are being consolidated on the
+existing Railway POS service under ADR-062 and ADR-065.
 
 ## Status
 Built in phases (see [`plans`](#) / `SETUP.md`):
@@ -22,21 +22,23 @@ Built in phases (see [`plans`](#) / `SETUP.md`):
 
 ## Stack
 - **Frontend:** Vite + vanilla JS/ES modules (no framework), dark theme.
-- **Backend (current production):** Supabase — Postgres + RLS, private Storage,
-  Auth, and Edge Functions.
-- **Backend (migration mode):** the existing POS Express API, PostgreSQL, POS
-  JWT auth, and private Railway object storage. Set `VITE_CATALOG_API_URL` at
-  build time to enable this adapter; leaving it unset preserves Supabase mode.
+- **Backend:** the existing POS Express API, PostgreSQL, POS JWT auth, private
+  Railway object storage, and server-side OpenAI GPT-5.6 Terra integration. Set
+  `VITE_CATALOG_API_URL` at build time to use this boundary.
+- **Rollback compatibility:** leaving `VITE_CATALOG_API_URL` unset preserves the
+  legacy backend during the approved observation window. It is a removal
+  candidate, not the target architecture.
 - **Security:** roles `admin` / `editor` / `viewer`; cost data isolated in
   `item_costs` with admin-only RLS (invisible to others even via the API).
 
 ## Railway migration status
 
-The implemented Railway slice is intentionally read-only: POS login, effective
-catalog permissions, branch-scoped catalog/reference-data reads, and short-lived
-private image URLs. Upload/edit/delete/cost/user-management/publish workflows and
-production data transfer remain later, separately approved phases. The PWA masks
-all mutation actions while Railway mode is enabled.
+The Railway slice includes POS login, effective catalog permissions,
+branch-scoped catalog/reference-data reads, short-lived private image URLs, and
+authenticated AI extraction that fills only empty fields and records usage,
+jobs, and item activity. General upload/edit/delete/cost/user-management/publish
+workflows remain separately approved write slices; the PWA keeps those unrelated
+controls masked while Railway mode is enabled.
 
 For local migration-mode development, add this to `.env.local`:
 

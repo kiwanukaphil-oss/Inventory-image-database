@@ -18,6 +18,8 @@ import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { diffItemValues, logItemActivity } from "./activity.js";
 import { dHash, hammingHex } from "./imagehash.js";
 import { esc, toast, trapFocus, ICON } from "./ui.js";
+import { extractCatalogItemWithAi } from "./catalogAi.js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 
 // The Add flow, built for large batches: pick/take many photos (with a preview
 // grid you can prune), set fields common to the whole batch once, then upload
@@ -100,12 +102,21 @@ async function aiFillItem(id, common) {
     { key: "name", label: "Product name" },
     ...resolveFields(common.categoryId).map((f) => ({ key: f.key, label: f.label, type: f.type, options: f.options, vocab: f.vocab })),
   ];
-  const { data, error } = await supabase.functions.invoke("ai-extract", {
-    body: { item_id: id, category: categoryPath(common.categoryId), fields: defs },
+  const data = await extractCatalogItemWithAi({
+    itemId: id,
+    category: categoryPath(common.categoryId),
+    fields: defs,
   });
-  if (error) throw error;
-  if (data?.error) throw new Error(data.error);
   if (!data?.values) throw new Error("AI returned no values.");
+
+  if (isRailwayCatalogMode) {
+    return {
+      brand: data.item?.brand || common.brand || null,
+      name: data.item?.name || null,
+      filled: data.applied_fields?.length || 0,
+      confidence: data.item?.confidence || data.confidence || {},
+    };
+  }
 
   const vocabByKey = { brand: "brand" };
   const typeByKey = {};

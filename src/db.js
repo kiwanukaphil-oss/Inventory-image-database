@@ -1,9 +1,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 
-// Read the public Supabase credentials injected at build time by Vite.
-// These are intentionally client-visible; database Row Level Security is what
-// actually protects the data (see supabase/migrations).
+// CANDIDATE FOR REMOVAL: legacy rollback client retained through the Railway
+// observation window. New production capabilities must use the POS API.
 const url = import.meta.env.VITE_SUPABASE_URL;
 const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 

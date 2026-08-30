@@ -3,8 +3,10 @@ import { resolveFields, normalizeValue, normalizeAttributeValue, categoryPath } 
 import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
 import { diffItemValues, logItemActivity } from "./activity.js";
 import { esc, trapFocus, isTopOverlay } from "./ui.js";
+import { extractCatalogItemWithAi } from "./catalogAi.js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 
-// Bulk AI fill: run the ai-extract Edge Function across a set of items (the
+// Bulk AI fill: run the active catalog AI backend across a set of items (the
 // gallery's currently-filtered rows), filling empty fields with AI suggestions.
 // Safe by default — only blank fields are written, existing values are never
 // overwritten; every change is audited and carries a confidence dot.
@@ -15,33 +17,6 @@ const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--
 function cleanAiVisibleText(value) {
   const text = String(value || "").trim();
   return text && !AI_PLACEHOLDER.has(text.toLowerCase()) ? text : "";
-}
-
-function edgeErrorMessage(body, fallback = "") {
-  if (!body || typeof body !== "object") return fallback;
-  const detail = body.detail;
-  const detailMessage =
-    detail?.error?.message ||
-    detail?.message ||
-    (typeof detail === "string" ? detail : "");
-  const status = body.anthropic_status ? ` (${body.anthropic_status})` : "";
-  const attempts = body.attempts && body.attempts > 1 ? ` after ${body.attempts} attempts` : "";
-  if (body.error && detailMessage) return `${body.error}${status}: ${detailMessage}${attempts}`;
-  return body.error || detailMessage || fallback;
-}
-
-async function invokeAiExtract(body) {
-  const { data, error } = await supabase.functions.invoke("ai-extract", { body });
-  if (error) {
-    let detail = error.message;
-    try {
-      const ctx = error.context?.clone ? error.context.clone() : error.context;
-      detail = edgeErrorMessage(await ctx.json(), detail);
-    } catch {}
-    throw new Error(detail);
-  }
-  if (data?.error) throw new Error(edgeErrorMessage(data, data.error));
-  return data;
 }
 
 /**
@@ -162,7 +137,23 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
           key: f.key, label: f.label, type: f.type, options: f.options, vocab: f.vocab,
         })),
       ];
-      const data = await invokeAiExtract({ item_id: it.id, category: categoryPath(it.category_id), fields: defs });
+      const data = await extractCatalogItemWithAi({
+        itemId: it.id,
+        category: categoryPath(it.category_id),
+        fields: defs,
+      });
+
+      if (isRailwayCatalogMode) {
+        const appliedCount = data.applied_fields?.length || 0;
+        if (appliedCount > 0) {
+          filled++;
+          logLine(`âœ“ ${label} â€” filled ${appliedCount} field${appliedCount === 1 ? "" : "s"}`);
+        } else {
+          skipped++;
+          logLine(`Â· ${label} â€” nothing to fill`);
+        }
+        return;
+      }
 
       // Vocab map for normalization.
       const vocabByKey = { brand: "brand" };

@@ -1,4 +1,5 @@
 import { supabase } from "./db.js";
+import { extractCatalogItemWithAi } from "./catalogAi.js";
 import {
   loadRefData,
   resolveFields,
@@ -647,19 +648,11 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
           { key: "name", label: "Product name" },
           ...fields.map((f) => ({ key: f.key, label: f.label, type: f.type, options: f.options })),
         ];
-        const { data, error } = await supabase.functions.invoke("ai-extract", {
-          body: { item_id: itemId, category: categoryPath(item.category_id), fields: defs },
+        const data = await extractCatalogItemWithAi({
+          itemId,
+          category: categoryPath(item.category_id),
+          fields: defs,
         });
-        if (error) {
-          // Surface the function's actual error body (FunctionsHttpError hides it).
-          let detail = error.message;
-          try {
-            const b = await error.context.json();
-            detail = b.detail ? `${b.error}: ${JSON.stringify(b.detail)}` : (b.error || detail);
-          } catch {}
-          throw new Error(detail);
-        }
-        if (data?.error) throw new Error(data.error);
         const visibleText = cleanAiVisibleText(data.visible_text);
         if (visibleText) {
           const { error: evidenceErr } = await supabase.from("items").update({ ai_visible_text: visibleText }).eq("id", itemId);

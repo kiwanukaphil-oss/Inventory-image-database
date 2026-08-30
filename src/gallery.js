@@ -60,6 +60,7 @@ import { installAvailable, canPromptInstall, promptInstall, isIOS } from "./inst
 import { getThemePref, setThemePref } from "./theme.js";
 import { requestRailwayCatalog } from "./railwayCatalogApi.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
+import { extractCatalogItemWithAi } from "./catalogAi.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -742,9 +743,9 @@ async function loadGalleryPayload(caps, { force = false } = {}) {
 }
 
 /**
- * Open the canonical editor on Supabase builds and a complete read-only evidence
- * sheet on the Phase B Railway build. This keeps one card interaction path and
- * avoids introducing a temporary duplicate gallery page during migration.
+ * Open the canonical editor on rollback builds and a Railway evidence sheet.
+ * ADR-065 adds the narrowly-scoped AI fill action here while general editing
+ * remains masked until its own write contract is implemented.
  */
 async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
   if (!isRailwayCatalogMode) {
@@ -771,8 +772,39 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
       <div class="kv"><span>Status</span><b>${esc(statusLabel(item.status))}</b></div>
       <div class="kv"><span>Retail price</span><b>${item.price == null ? "Not priced" : esc(fmtPrice(item.price))}</b></div>
       ${attributeRows}
-      <p class="muted" style="margin-top:14px">Read-only Railway migration preview</p>
+      ${caps.can_ai_extract ? `<button class="primary" type="button" data-railway-ai style="width:100%;margin-top:14px">${ICON.sparkle} AI-fill empty fields</button>` : ""}
+      <p class="muted" style="margin-top:14px">General editing remains read-only; AI fills only fields that are still blank.</p>
     </div>`);
+  const aiButton = sheet.body.querySelector("[data-railway-ai]");
+  if (aiButton) {
+    // Run the only currently approved Railway mutation, then close stale sheet
+    // state and force the branch gallery to re-read the server-applied values.
+    aiButton.onclick = async () => {
+      if (!navigator.onLine) {
+        toast("You're offline â€” AI needs a connection.");
+        return;
+      }
+      const originalLabel = aiButton.innerHTML;
+      aiButton.disabled = true;
+      aiButton.textContent = "Reading photoâ€¦";
+      try {
+        const result = await extractCatalogItemWithAi({ itemId: id });
+        const filled = result.applied_fields?.length || 0;
+        galleryPayloadCache = null;
+        sheet.close();
+        await onSave?.();
+        toast(
+          filled
+            ? `AI filled ${filled} field${filled === 1 ? "" : "s"} â€” review the item`
+            : "AI couldn't find any empty fields to fill"
+        );
+      } catch (error) {
+        toast("AI failed: " + (error?.message || error));
+        aiButton.disabled = false;
+        aiButton.innerHTML = originalLabel;
+      }
+    };
+  }
   return sheet;
 }
 
@@ -1213,6 +1245,10 @@ async function renderGallery(view, caps, opts = {}) {
   // cold-reloading the whole catalogue; no args = full reload (bulk/delete).
   const refresh = (changedIds) => {
     const y = view.scrollTop;
+    if (isRailwayCatalogMode) {
+      galleryPayloadCache = null;
+      return renderGallery(view, caps, { ...opts, force: true }).then(() => view.scrollTo(0, y));
+    }
     if (Array.isArray(changedIds) && changedIds.length) {
       return patchItems(changedIds).then(() => view.scrollTo(0, y));
     }

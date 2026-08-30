@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Mobile-first PWA for reviewing clothing inventory images, backed by Supabase.",
+  "description": "Mobile-first catalog PWA backed by the Railway POS API and private object storage.",
   "engines": {
     "node": ">=22.12.0"
   },

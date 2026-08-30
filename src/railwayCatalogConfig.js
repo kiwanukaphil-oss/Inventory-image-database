@@ -1,8 +1,8 @@
 /**
  * Railway Catalog Configuration
  *
- * Keeps the migration adapter explicit: production remains on Supabase until
- * VITE_CATALOG_API_URL is deliberately supplied at build time.
+ * Keeps the consolidated backend explicit. VITE_CATALOG_API_URL selects the
+ * Railway POS API; an unset value exists only for rollback-window builds.
  */
 
 const configuredApiUrl = String(import.meta.env.VITE_CATALOG_API_URL || "").trim();

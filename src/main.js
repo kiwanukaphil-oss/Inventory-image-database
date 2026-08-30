@@ -80,9 +80,8 @@ if (!isConfigured) {
         return;
       }
       const profile = await getMyProfile();
-      // Phase B exposes a deliberately read-only Railway slice. Effective POS
-      // permissions remain visible in the session payload, but mutation controls
-      // stay hidden until their API endpoints arrive in later approved slices.
+      // Railway now exposes the narrow AI extraction capability separately.
+      // General mutation controls stay hidden until their own API slices arrive.
       const renderedProfile = isRailwayCatalogMode
         ? {
             ...profile,

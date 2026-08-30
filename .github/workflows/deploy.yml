@@ -1,7 +1,8 @@
 name: Deploy to GitHub Pages
 
 # Builds the Vite app and publishes dist/ to GitHub Pages on every push to main.
-# Supabase URL + anon key are injected at build time from repository secrets.
+# The Railway catalog API URL selects the production backend. Legacy Supabase
+# values remain build-time rollback inputs during the observation window.
 # (Both are public-safe — they end up in the client bundle by design; RLS is
 # what protects the data.)
 
