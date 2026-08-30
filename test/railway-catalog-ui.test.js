@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildRailwayCatalogProfile,
+  canRunCatalogAi,
+  canSelectCatalogItems,
   selectRailwayCatalogNavigation,
 } from "../src/lib/railway-catalog-ui.js";
 
@@ -21,12 +23,27 @@ describe("Railway catalog capability surface", () => {
       role: "admin",
       can_upload: true,
       can_ai_extract: true,
+      can_select: true,
       can_edit: false,
       can_delete: false,
       can_view_cost: false,
       can_manage_users: false,
       can_publish: false,
     });
+    expect(canSelectCatalogItems(profile)).toBe(true);
+    expect(canRunCatalogAi(profile, true)).toBe(true);
+  });
+
+  it("does not turn Railway selection into unsupported general edit access", () => {
+    const profile = buildRailwayCatalogProfile({
+      can_upload: true,
+      can_edit: true,
+      can_ai_extract: false,
+    });
+
+    expect(canSelectCatalogItems(profile)).toBe(false);
+    expect(canRunCatalogAi(profile, true)).toBe(false);
+    expect(profile.can_edit).toBe(false);
   });
 
   it("shows Home and Add for upload-capable Railway users but keeps Shop hidden", () => {

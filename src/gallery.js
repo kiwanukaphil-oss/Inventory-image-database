@@ -61,7 +61,11 @@ import { getThemePref, setThemePref } from "./theme.js";
 import { requestRailwayCatalog } from "./railwayCatalogApi.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 import { extractCatalogItemWithAi } from "./catalogAi.js";
-import { selectRailwayCatalogNavigation } from "./lib/railway-catalog-ui.js";
+import {
+  canRunCatalogAi,
+  canSelectCatalogItems,
+  selectRailwayCatalogNavigation,
+} from "./lib/railway-catalog-ui.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -942,6 +946,8 @@ async function renderGallery(view, caps, opts = {}) {
   const state = review ? browseState.review : browseState.gallery;
   const canEdit = !!caps.can_edit;
   const canDelete = !!caps.can_delete;
+  const canRunAi = canRunCatalogAi(caps, isRailwayCatalogMode);
+  const canSelect = canSelectCatalogItems(caps);
   const appNav = document.querySelector(".bottomnav");
   if (appNav) appNav.style.display = ""; // restore if a prior selection hid it
   view.innerHTML = skeletonGrid();
@@ -1116,6 +1122,7 @@ async function renderGallery(view, caps, opts = {}) {
     ];
     return [
       { id: "price", label: "Missing price", count: data.filter((it) => it.price == null).length, on: noPrice, tone: "price" },
+      { id: "ai", label: "Needs AI fill", count: issueCount("ai"), on: issueOn("ai"), tone: "ai" },
       { id: "doubt", label: "AI doubt", count: issueCount("doubt"), on: issueOn("doubt"), tone: "ai" },
       { id: "ready", label: "Ready", count: issueCount("ready"), on: issueOn("ready"), tone: "ready" },
       { id: "in-shop", label: "In shop", count: data.filter((it) => shopState(it) === "In shop").length, on: !!active.shop?.has("In shop"), tone: "shop" },
@@ -1189,7 +1196,7 @@ async function renderGallery(view, caps, opts = {}) {
         <input id="q" class="fb-search" type="search" aria-label="Search inventory" placeholder="Search…" value="${esc(q)}">
         <button class="iconbtn" id="densityBtn" aria-label="${density === "list" ? "Switch to grid view" : "Switch to list view"}">${density === "list" ? ICON.grid : ICON.rows}</button>
         <button class="iconbtn" id="filterBtn" aria-label="Filters &amp; sort">${ICON.filter}<span class="fcount" id="fcount" hidden></span></button>
-        ${canEdit ? `<button class="iconbtn" id="selectBtn" aria-label="Select">${ICON.check}</button>` : ""}
+        ${canSelect ? `<button class="iconbtn" id="selectBtn" aria-label="Select">${ICON.check}</button>` : ""}
       </div>
       <div class="ghdr ghdr-sel" id="hdrSelect" hidden>
         <button class="iconbtn" id="selExit" aria-label="Cancel">${ICON.x}</button>
@@ -1210,11 +1217,11 @@ async function renderGallery(view, caps, opts = {}) {
       <div class="results" id="grid"></div>
       <aside class="item-preview" id="itemPreview" aria-label="${review ? "Review item preview" : "Catalog item preview"}"></aside>
     </div>
-    ${canEdit ? `<div class="actionbar" id="actionbar" hidden>
-      <button class="ab-btn ${review && reviewStage === "verify" ? "ab-verify" : "ab-approve"}" id="abApprove"><span class="ab-ico">${ICON.tick}</span>${review && reviewStage === "verify" ? "Verify" : "Approve"}</button>
-      <button class="ab-btn" id="abAi"><span class="ab-ico">${ICON.sparkle}</span>AI-fill</button>
-      <button class="ab-btn" id="abEdit"><span class="ab-ico">${ICON.pencil}</span>Edit</button>
-      <button class="ab-btn" id="abMore"><span class="ab-ico">${ICON.more}</span>More</button>
+    ${canSelect ? `<div class="actionbar" id="actionbar" hidden>
+      ${canEdit ? `<button class="ab-btn ${review && reviewStage === "verify" ? "ab-verify" : "ab-approve"}" id="abApprove"><span class="ab-ico">${ICON.tick}</span>${review && reviewStage === "verify" ? "Verify" : "Approve"}</button>` : ""}
+      ${canRunAi ? `<button class="ab-btn" id="abAi"><span class="ab-ico">${ICON.sparkle}</span>AI-fill</button>` : ""}
+      ${canEdit ? `<button class="ab-btn" id="abEdit"><span class="ab-ico">${ICON.pencil}</span>Edit</button>
+      <button class="ab-btn" id="abMore"><span class="ab-ico">${ICON.more}</span>More</button>` : ""}
       <button class="ab-btn" id="abDone"><span class="ab-ico">${ICON.x}</span>Done</button>
     </div>` : ""}`;
 
@@ -1310,7 +1317,7 @@ async function renderGallery(view, caps, opts = {}) {
     });
   }
   function enterSelection() {
-    if (!canEdit) return;
+    if (!canSelect) return;
     selectionMode = true;
     navigator.vibrate?.(15); // subtle "grab" feedback on mobile
     grid.classList.add("selecting");
@@ -1588,11 +1595,11 @@ async function renderGallery(view, caps, opts = {}) {
     const guide = reviewQueueGuide(issue);
     const actions = [];
     if (issue === "price" && canEdit && rows.length) actions.push(["setprices", "Price items"]);
-    else if (issue === "ai" && canEdit && rows.length) actions.push([failedAiShown ? "retryai" : "aifill", failedAiShown ? `Retry ${failedAiShown}` : "AI-fill"]);
-    else if (issue === "missing" && canEdit && rows.length) {
+    else if (issue === "ai" && canRunAi && rows.length) actions.push([failedAiShown ? "retryai" : "aifill", failedAiShown ? `Retry ${failedAiShown}` : "AI-fill"]);
+    else if (issue === "missing" && (canRunAi || canEdit) && rows.length) {
       const recoverable = rows.filter((it) => it.image_path && it.category_id).length;
-      if (recoverable) actions.push(["fillmissing", `AI-fill ${recoverable}`]);
-      actions.push(["selectmissing", "Bulk edit by category"]);
+      if (recoverable && canRunAi) actions.push(["fillmissing", `AI-fill ${recoverable}`]);
+      if (canEdit) actions.push(["selectmissing", "Bulk edit by category"]);
     }
     else if (issue === "sync" && canEdit && rows.length) actions.push(["sync", "Open sync"]);
     else if (issue === "ready" && canEdit && rows.length) actions.push(["approveall", `Approve ${rows.length}`]);
@@ -1761,7 +1768,7 @@ async function renderGallery(view, caps, opts = {}) {
         <div class="preview-actions">
           <button class="primary" data-preview-open>Open editor</button>
           ${it.image_path ? `<button class="ghost" data-preview-photo>Inspect photo</button>` : ""}
-          ${canEdit ? `<button class="ghost" data-preview-select>Select item</button>` : ""}
+          ${canSelect ? `<button class="ghost" data-preview-select>Select item</button>` : ""}
         </div>
       </div>`;
     observeThumbs(previewEl);
@@ -1973,7 +1980,7 @@ async function renderGallery(view, caps, opts = {}) {
     if (!previewSelectedId) return;
     if (e.target.closest("[data-preview-open]")) openItemEditor(previewSelectedId);
     else if (e.target.closest("[data-preview-photo]")) openPhotoLightbox(previewSelectedId);
-    else if (e.target.closest("[data-preview-select]") && canEdit) {
+    else if (e.target.closest("[data-preview-select]") && canSelect) {
       enterSelection();
       const card = cardElFor(previewSelectedId);
       if (card) setSelected(card, true);
@@ -1984,7 +1991,7 @@ async function renderGallery(view, caps, opts = {}) {
 
   let lpStart = null;
   grid.addEventListener("pointerdown", (e) => {
-    if (!canEdit) return;
+    if (!canSelect) return;
     const card = e.target.closest(".card[data-id]");
     if (!card) return;
     if (e.pointerType === "mouse") {
@@ -2840,7 +2847,7 @@ async function renderGallery(view, caps, opts = {}) {
   }
 
   // ---- wiring: selection header + action bar ----
-  if (canEdit) {
+  if (canSelect) {
     view.querySelector("#selExit").onclick = exitSelection;
     view.querySelector("#abDone").onclick = exitSelection; // exit from the bottom too
     view.querySelector("#selAll").onclick = () => {
@@ -2848,12 +2855,15 @@ async function renderGallery(view, caps, opts = {}) {
       grid.querySelectorAll(".card[data-id]").forEach((c) => c.classList.add("selected"));
       updateSelBar();
     };
-    view.querySelector("#abApprove").onclick = review && reviewStage === "verify" ? verifySelected : approveSelected;
-    view.querySelector("#abAi").onclick = () => {
+    const bulkAiButton = view.querySelector("#abAi");
+    if (bulkAiButton) bulkAiButton.onclick = () => {
       if (!selected.size) return;
       const items = [...selected].map((id) => byId[id]).filter(Boolean);
       openBulkAi(items, caps, refresh);
     };
+  }
+  if (canEdit) {
+    view.querySelector("#abApprove").onclick = review && reviewStage === "verify" ? verifySelected : approveSelected;
     view.querySelector("#abEdit").onclick = openBulkEdit;
     view.querySelector("#abMore").onclick = () => {
       if (!selected.size) return;

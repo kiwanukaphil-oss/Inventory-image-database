@@ -6,6 +6,7 @@ export function buildRailwayCatalogProfile(profile = {}) {
   return {
     ...profile,
     can_upload: !!profile.can_upload,
+    can_select: !!profile.can_ai_extract,
     can_edit: false,
     can_delete: false,
     can_view_cost: false,
@@ -13,6 +14,16 @@ export function buildRailwayCatalogProfile(profile = {}) {
     can_publish: false,
     railway_read_only: false,
   };
+}
+
+/** Resolve the narrow AI grant without treating it as general edit access. */
+export function canRunCatalogAi(capabilities = {}, railwayMode = false) {
+  return railwayMode ? !!capabilities.can_ai_extract : !!capabilities.can_edit;
+}
+
+/** Selection is safe when at least one supported bulk action is available. */
+export function canSelectCatalogItems(capabilities = {}) {
+  return !!capabilities.can_edit || !!capabilities.can_select;
 }
 
 /** Home/Catalog/Review are universal; Add follows the effective upload grant. */

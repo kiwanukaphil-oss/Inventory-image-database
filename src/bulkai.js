@@ -5,6 +5,7 @@ import { diffItemValues, logItemActivity } from "./activity.js";
 import { esc, trapFocus, isTopOverlay } from "./ui.js";
 import { extractCatalogItemWithAi } from "./catalogAi.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
+import { canRunCatalogAi } from "./lib/railway-catalog-ui.js";
 
 // Bulk AI fill: run the active catalog AI backend across a set of items (the
 // gallery's currently-filtered rows), filling empty fields with AI suggestions.
@@ -22,11 +23,11 @@ function cleanAiVisibleText(value) {
 /**
  * Open the bulk-AI modal for the given items.
  * @param {Array} items  item rows (need id, category_id, attributes, brand, image_path, status)
- * @param {object} caps  capability object (needs can_edit)
+ * @param {object} caps  capability object (Railway AI grant or legacy edit grant)
  * @param {Function} onDone called after the run (to refresh the gallery)
  */
 export function openBulkAi(items, caps, onDone) {
-  if (!caps?.can_edit) return;
+  if (!canRunCatalogAi(caps, isRailwayCatalogMode)) return;
   const withImages = items.filter((it) => it.image_path);
   const n = withImages.length;
   const LARGE = 25; // above this, require an explicit acknowledgement
