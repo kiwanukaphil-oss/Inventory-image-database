@@ -122,6 +122,9 @@ async function aiFillItem(id, common) {
       name: data.item?.name || null,
       filled: data.applied_fields?.length || 0,
       confidence: data.item?.confidence || data.confidence || {},
+      stockQuantity: Number(data.item?.stock_quantity) || 1,
+      stockDistribution: data.item?.stock_distribution || null,
+      stockDistributionSource: data.item?.stock_distribution_source || null,
     };
   }
 
@@ -775,7 +778,11 @@ export async function renderUpload(view, caps, onDone) {
           s.state = "aierr"; s.label = "AI issue"; s.aiFailed = true;
         } else {
           s.state = "done";
-          if (res.ai) { s.label = [res.ai.brand, res.ai.name].filter(Boolean).join(" · ") || "Saved"; s.conf = worstConf(res.ai.confidence); }
+          if (res.ai) {
+            const unitLabel = res.ai.stockQuantity > 1 ? `${res.ai.stockQuantity} units` : "";
+            s.label = [res.ai.brand, res.ai.name, unitLabel].filter(Boolean).join(" · ") || "Saved";
+            s.conf = worstConf(res.ai.confidence);
+          }
           else s.label = "Saved";
         }
       } catch (e) {

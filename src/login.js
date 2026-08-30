@@ -14,7 +14,7 @@ export function renderLogin(mount, onSuccess) {
     <div class="auth">
       <form class="card" id="loginForm" autocomplete="on">
         <h1>K-LINE MEN <span style="color:var(--muted);font-weight:400">Catalog</span></h1>
-        <p class="sub">Photograph stock, let AI read each item, then price it for your shop — one photo, one unit.</p>
+        <p class="sub">Photograph stock, let AI read labels and quantities, then review it for your shop — one photo can represent a labelled stock lot.</p>
         <label for="email">${isRailwayCatalogMode ? "Username" : "Email"}</label>
         <input id="email" type="${isRailwayCatalogMode ? "text" : "email"}" ${isRailwayCatalogMode ? "" : 'inputmode="email"'} autocomplete="username" required />
         <label for="password">Password</label>

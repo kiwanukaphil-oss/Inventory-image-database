@@ -8,7 +8,7 @@ import { ALL_POS_BRANCHES, enabledBranches, storePosBranchId } from "./posbranch
 
 // The Shop tab — answers, not analytics. Each card is a question floor staff
 // actually ask, answered with photos and plain words over the read-only POS
-// mirror. Unlike the gallery (one photo = one unit, by the evidence rule),
+// mirror. Unlike the gallery (one photo = one evidence record or labelled lot),
 // everything here is compressed to ONE ROW PER SKU/variant — a report counts
 // products, not photos. Filters (search / category / brand) apply across every
 // card, sections cap their rows with a "Show all", and Running low carries the

@@ -259,7 +259,7 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
         ${posOwnedNoticeHtml()}
         ${fieldRow({ key: "price", label: item.pos_sync_status === "synced" ? "Initial price (shop price is set in the POS)" : "Retail price", type: "number" }, item.price, conf, false, canEdit)}
         ${fieldRow(
-          { key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Units received (live stock lives in the POS)" : "Units in this batch (1 photo = 1 unit)", type: "number", inputmode: "numeric" },
+          { key: "stock_quantity", label: item.pos_sync_status === "synced" ? "Units received (live stock lives in the POS)" : "Units represented by this photo", type: "number", inputmode: "numeric" },
           item.stock_quantity, conf, false,
           // Frozen once pushed: the receipt is booked, the POS ledger owns
           // stock from here. Restocking = photograph the new units.
@@ -697,14 +697,13 @@ export async function openEditor(itemId, caps, onSaved, opts = {}) {
     if (!canEdit) return false;
     if (!navigator.onLine) { toast("You're offline — reconnect to save your changes."); return false; }
     if (targetStatus === "approved" && !(await guardApproval())) return false;
-    // One photo = one unit: a quantity above 1 is almost certainly a mistake
-    // under this shop's workflow (each identical unit gets its own photo as
-    // evidence), so make the person saying otherwise mean it.
+    // A higher total is valid for a labelled stock lot, but deserves an explicit
+    // second decision before it reaches stock sync.
     const qtyEl = sheet.querySelector('[data-key="stock_quantity"]');
     if (qtyEl && !qtyEl.disabled && Number(qtyEl.value) > 1) {
       const sure = await confirmSheet({
-        title: "More than 1 unit on one photo?",
-        message: "This shop counts one unit per photo — identical items each get their own photo. Only keep a higher number if this single photo really stands for several units.",
+        title: "Confirm stock lot quantity",
+        message: "Keep this total only when the photo represents the stated number of units, such as a written size range or quantity label.",
         confirmText: "Keep " + qtyEl.value.trim(),
       });
       if (!sure) return false;
@@ -1038,8 +1037,8 @@ async function saveItem(sheet, item, fields, conf, status, canViewCost, currentC
     name: sheet.querySelector('[data-key="name"]').value.trim() || null,
     brand,
     price: num("price"),
-    // One photo = one unit: a blanked field means the default (1), never
-    // "unknown" — blank rows once pushed with no stock receipt at all.
+    // A blank quantity still means the conservative single-unit intake default,
+    // never "unknown" — blank rows once pushed with no stock receipt at all.
     // "No stock on purpose" is an explicit 0.
     stock_quantity: num("stock_quantity") ?? 1,
     reorder_level: num("reorder_level"),

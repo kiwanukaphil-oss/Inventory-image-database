@@ -75,6 +75,11 @@ import {
   writeCatalogBranchId,
 } from "./lib/catalog-branch-scope.js";
 import { countQueuedPhotos } from "./uploadQueue.js";
+import {
+  catalogStockDistributionEntries,
+  catalogStockDistributionSummary,
+  catalogStockDistributionTotal,
+} from "./lib/stock-distribution.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -864,6 +869,24 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
         `<div class="kv"><span>${esc(fieldLabel(key))}</span><b>${esc(String(value))}</b></div>`
     )
     .join("");
+  const stockEntries = catalogStockDistributionEntries(item);
+  const stockTotal = catalogStockDistributionTotal(stockEntries);
+  const canEditStockDistribution = !!caps.can_edit_stock_distribution && !allBranches;
+  const supportsSizeDistribution = resolveFields(item.category_id)
+    .some((field) => field.key === "size");
+  const stockSourceLabel = item.stock_distribution_source === "ai_suggested"
+    ? "AI suggestion - review before publishing"
+    : item.stock_distribution_source === "human_confirmed"
+      ? "Confirmed"
+      : item.stock_distribution_source === "migrated"
+        ? "Migrated from existing quantity"
+        : "Single-unit default";
+  const stockRows = stockEntries.map((entry) => `
+    <div class="stock-dist-row${canEditStockDistribution && supportsSizeDistribution ? "" : " no-remove"}" data-stock-row>
+      <label>${supportsSizeDistribution ? "Size" : "Variant"}<input data-stock-size value="${esc(entry.variant_attributes?.size || "")}" placeholder="${supportsSizeDistribution ? "All / no size" : "All units"}"${supportsSizeDistribution ? "" : " disabled"}></label>
+      <label>Quantity<input data-stock-quantity type="number" inputmode="numeric" min="1" max="10000" value="${entry.quantity}"></label>
+      ${canEditStockDistribution && supportsSizeDistribution ? `<button type="button" class="iconbtn" data-stock-remove aria-label="Remove size">${ICON.x}</button>` : ""}
+    </div>`).join("");
   const sheet = openBottomSheet(todayItemTitle(item), `
     <div class="readonly-catalog-item">
       ${imageUrl ? `<img src="${esc(imageUrl)}" alt="${esc(todayItemTitle(item))}" style="width:100%;max-height:52vh;object-fit:contain;border-radius:10px;background:var(--surface)">` : ""}
@@ -873,9 +896,16 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
       <div class="kv"><span>Status</span><b>${esc(statusLabel(item.status))}</b></div>
       <div class="kv"><span>Retail price</span><b>${item.price == null ? "Not priced" : esc(fmtPrice(item.price))}</b></div>
       ${attributeRows}
+      <section class="stock-dist ${item.stock_distribution_source === "ai_suggested" ? "needs-review" : ""}">
+        <div class="stock-dist-head"><div><b>Stock breakdown</b><small>${esc(stockSourceLabel)}</small></div><strong data-stock-total>${stockTotal} unit${stockTotal === 1 ? "" : "s"}</strong></div>
+        <div data-stock-rows>${stockRows}</div>
+        <div class="stock-dist-summary" data-stock-summary>${esc(catalogStockDistributionSummary(stockEntries))}</div>
+        ${canEditStockDistribution ? `<div class="stock-dist-actions">${supportsSizeDistribution ? `<button type="button" class="ghost" data-stock-add>+ Add size</button>` : ""}<button type="button" class="primary" data-stock-save>${item.stock_distribution_source === "ai_suggested" ? "Confirm breakdown" : "Save breakdown"}</button></div>` : ""}
+      </section>
       ${caps.can_ai_extract && !allBranches ? `<button class="primary" type="button" data-railway-ai style="width:100%;margin-top:14px">${ICON.sparkle} AI-fill empty fields</button>` : ""}
-      <p class="muted" style="margin-top:14px">General editing remains read-only; AI fills only fields that are still blank.</p>
+      <p class="muted" style="margin-top:14px">General editing remains read-only. Stock breakdown is a narrow reviewed write; AI cannot replace it after confirmation.</p>
     </div>`);
+  bindCatalogStockDistributionEditor(sheet, item, onSave);
   const aiButton = sheet.body.querySelector("[data-railway-ai]");
   if (aiButton) {
     // Run the only currently approved Railway mutation, then close stale sheet
@@ -907,6 +937,79 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
     };
   }
   return sheet;
+}
+
+/**
+ * Bind add/remove/save controls for the narrow Railway stock-lot editor. The
+ * server revalidates sizes and quantities and derives the total atomically.
+ */
+function bindCatalogStockDistributionEditor(sheet, item, onSave) {
+  const rows = sheet.body.querySelector("[data-stock-rows]");
+  const addButton = sheet.body.querySelector("[data-stock-add]");
+  const saveButton = sheet.body.querySelector("[data-stock-save]");
+  if (!rows || !saveButton) return;
+  const readVisibleStockEntries = () => [...rows.querySelectorAll("[data-stock-row]")].map((row) => {
+    const size = row.querySelector("[data-stock-size]")?.value.trim() || "";
+    return {
+      variant_attributes: size ? { size } : {},
+      quantity: Number(row.querySelector("[data-stock-quantity]")?.value),
+    };
+  });
+  const refreshVisibleStockSummary = () => {
+    const entries = readVisibleStockEntries();
+    const total = catalogStockDistributionTotal(entries);
+    const totalElement = sheet.body.querySelector("[data-stock-total]");
+    const summaryElement = sheet.body.querySelector("[data-stock-summary]");
+    if (totalElement) totalElement.textContent = `${total} unit${total === 1 ? "" : "s"}`;
+    if (summaryElement) summaryElement.textContent = catalogStockDistributionSummary(entries);
+  };
+  const appendStockRow = () => {
+    const row = document.createElement("div");
+    row.className = "stock-dist-row";
+    row.dataset.stockRow = "";
+    row.innerHTML = `<label>Size<input data-stock-size placeholder="All / no size"></label>
+      <label>Quantity<input data-stock-quantity type="number" inputmode="numeric" min="1" max="10000" value="1"></label>
+      <button type="button" class="iconbtn" data-stock-remove aria-label="Remove size">${ICON.x}</button>`;
+    rows.appendChild(row);
+    row.querySelector("[data-stock-size]")?.focus();
+    refreshVisibleStockSummary();
+  };
+  addButton?.addEventListener("click", appendStockRow);
+  rows.addEventListener("input", refreshVisibleStockSummary);
+  rows.addEventListener("click", (event) => {
+    if (!event.target.closest("[data-stock-remove]")) return;
+    const row = event.target.closest("[data-stock-row]");
+    if (rows.querySelectorAll("[data-stock-row]").length === 1) {
+      toast("Keep at least one stock row.");
+      return;
+    }
+    row?.remove();
+    refreshVisibleStockSummary();
+  });
+  saveButton.addEventListener("click", async () => {
+    const entries = readVisibleStockEntries();
+    if (entries.some((entry) => !Number.isInteger(entry.quantity) || entry.quantity < 1)) {
+      toast("Every quantity must be a whole number of at least 1.");
+      return;
+    }
+    saveButton.disabled = true;
+    saveButton.textContent = "Saving...";
+    try {
+      const payload = await requestRailwayCatalog(
+        `/catalog/items/${encodeURIComponent(item.id)}/stock-distribution`,
+        { method: "PATCH", body: { entries }, branchId: item.branch_id }
+      );
+      galleryPayloadCache = null;
+      sheet.close();
+      await onSave?.();
+      const total = Number(payload.data?.stock_quantity) || catalogStockDistributionTotal(entries);
+      toast(`Stock breakdown confirmed: ${total} unit${total === 1 ? "" : "s"}.`);
+    } catch (error) {
+      toast("Stock breakdown failed: " + (error?.message || error));
+      saveButton.disabled = false;
+      saveButton.textContent = "Save breakdown";
+    }
+  });
 }
 
 // A grid of shimmering placeholder cards shown while data loads, so the screen
