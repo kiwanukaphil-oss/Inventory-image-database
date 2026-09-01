@@ -89,6 +89,22 @@ describe("matchesItem", () => {
     expect(matchesItem({ ...base, price: null }, { ...empty, noPrice: true }, ctx)).toBe(true);
     expect(matchesItem(base, { ...empty, noPrice: true }, ctx)).toBe(false);
   });
+  it("can use variant price coverage for the missing-price filter", () => {
+    const variantContext = {
+      ...ctx,
+      hasMissingPrice: (item) => item.pricing_ready !== true,
+    };
+    expect(matchesItem(
+      { ...base, price: null, pricing_ready: true },
+      { ...empty, noPrice: true },
+      variantContext
+    )).toBe(false);
+    expect(matchesItem(
+      { ...base, price: 100, pricing_ready: false },
+      { ...empty, noPrice: true },
+      variantContext
+    )).toBe(true);
+  });
   it("facets: AND across keys, OR within a key", () => {
     const active = { brand: new Set(["Nike", "Puma"]), color: new Set(["Red"]) };
     expect(matchesItem(base, { ...empty, active }, ctx)).toBe(true);

@@ -3,6 +3,8 @@ import {
   catalogStockDistributionEntries,
   catalogStockDistributionSummary,
   catalogStockDistributionTotal,
+  catalogVariantLotMetrics,
+  catalogVariantLotSummary,
 } from "../src/lib/stock-distribution.js";
 
 describe("catalog stock distributions", () => {
@@ -30,5 +32,22 @@ describe("catalog stock distributions", () => {
     expect(catalogStockDistributionEntries({ stock_quantity: 0 })).toEqual([
       { variant_attributes: {}, quantity: 0 },
     ]);
+  });
+
+  it("makes a one-photo multi-variant lot explicit in review", () => {
+    const item = {
+      variant_count: 2,
+      unit_count: 11,
+      priced_variant_count: 1,
+    };
+
+    expect(catalogVariantLotMetrics(item)).toEqual({
+      photoCount: 1,
+      variantCount: 2,
+      unitCount: 11,
+      pricedVariantCount: 1,
+    });
+    expect(catalogVariantLotSummary(item, { includePricing: true }))
+      .toBe("1 photo · 2 variants · 11 units · 1/2 priced");
   });
 });

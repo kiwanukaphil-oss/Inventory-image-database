@@ -674,6 +674,7 @@ body { overflow:hidden; overscroll-behavior:none; }
 }
 .preview-body h3 { margin:0; font-size:var(--text-xl); line-height:1.15; }
 .preview-sub, .preview-attrs { color:var(--muted); font-size:var(--text-sm); line-height:1.35; }
+.catalog-lot-summary { color:var(--muted) !important; font-size:var(--text-xs) !important; }
 .preview-chipline { display:flex; flex-wrap:wrap; align-items:center; gap:var(--space-xs); }
 .preview-price { color:var(--accent-soft-txt); font-size:var(--text-lg); font-weight:750; }
 .preview-readiness {
@@ -1272,6 +1273,28 @@ body { overflow:hidden; overscroll-behavior:none; }
 .stock-dist-row.no-remove { grid-template-columns:minmax(0,1fr) 92px; }
 .stock-dist-row label { display:flex; flex-direction:column; gap:4px; color:var(--muted); font-size:var(--text-xs); }
 .stock-dist-row .iconbtn { width:36px; height:40px; padding:7px; }
+
+.railway-price-body { display:flex; flex-direction:column; gap:14px; }
+.rail-price-evidence { display:grid; grid-template-columns:76px minmax(0,1fr); gap:12px; align-items:center; }
+.rail-price-evidence img { width:76px; height:76px; border-radius:var(--radius-md); object-fit:cover; background:var(--surface-2); }
+.rail-price-evidence div { min-width:0; display:flex; flex-direction:column; gap:4px; }
+.rail-price-evidence b { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rail-price-evidence span, .rail-price-evidence small { color:var(--muted); }
+.rail-price-defaults, .rail-price-lines { border:1px solid var(--line); border-radius:var(--radius-md); padding:12px; background:var(--surface); }
+.rail-price-defaults h3, .rail-price-lines h3 { margin:0 0 4px; font-size:var(--text-sm); }
+.rail-price-defaults p { margin:0 0 10px; color:var(--muted); font-size:var(--text-xs); }
+.rail-price-defaults label, .rail-price-line label { display:flex; flex-direction:column; gap:4px; color:var(--muted); font-size:var(--text-xs); }
+.rail-price-defaults { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.rail-price-defaults h3, .rail-price-defaults p { grid-column:1 / -1; }
+.rail-price-line { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:10px 0; border-top:1px solid var(--line); }
+.rail-price-line:first-of-type { border-top:0; }
+.rail-price-line-title { grid-column:1 / -1; display:flex; justify-content:space-between; gap:8px; font-size:var(--text-sm); }
+.rail-price-line-title span { color:var(--muted); white-space:nowrap; }
+.rail-price-foot { justify-content:space-between; }
+@media (max-width:520px) {
+  .rail-price-defaults, .rail-price-line { grid-template-columns:1fr; }
+  .rail-price-defaults h3, .rail-price-defaults p, .rail-price-line-title { grid-column:1; }
+}
 .stock-dist-actions { display:flex; gap:8px; }
 .stock-dist-actions button { flex:1; }
 .be-note { font-size:var(--text-xs); }

@@ -23,6 +23,23 @@ describe("missingCoreFields", () => {
     const item = { image_path: "x", category_id: "shirts", name: "Shirt", attributes: { size: "M" } };
     expect(missingCoreFields(item, [{ key: "size", label: "Size", required: true }])).toEqual([]);
   });
+  it("accepts a confirmed per-line size distribution as the required size", () => {
+    const item = {
+      image_path: "x",
+      category_id: "shirts",
+      name: "Shirt",
+      attributes: { color: "Blue" },
+      stock_distribution_source: "human_confirmed",
+      variant_lines: [
+        { variant_attributes: { size: "S" }, quantity: 1 },
+        { variant_attributes: { size: "XL" }, quantity: 5 },
+      ],
+    };
+    expect(missingCoreFields(item, [
+      { key: "size", label: "Size", required: true },
+      { key: "color", label: "Color", required: true },
+    ])).toEqual([]);
+  });
 });
 
 describe("aiDoubtFields", () => {
@@ -75,6 +92,18 @@ describe("getItemReadiness", () => {
     const r = getItemReadiness({ ...complete, price: null }, { fields });
     expect(r.canApprove).toBe(false);
     expect(r.blockers.some((b) => b.issue === "price")).toBe(true);
+  });
+  it("accepts complete per-line retail overrides without an item default", () => {
+    const variantPriced = {
+      ...complete,
+      price: null,
+      pricing_ready: true,
+      variant_lines: [
+        { quantity: 1, effective_price: 100 },
+        { quantity: 1, effective_price: 120 },
+      ],
+    };
+    expect(getItemReadiness(variantPriced, { fields }).canApprove).toBe(true);
   });
   it("blocks on missing category", () => {
     const r = getItemReadiness({ ...complete, category_id: null }, { fields });

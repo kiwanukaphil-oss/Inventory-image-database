@@ -76,13 +76,16 @@ export function searchText(it, r) {
 // ignore its own selection (standard faceted counting).
 //   criteria = { q, itemIds(Set|null), noPrice, priceMin, priceMax, cutoff(Date|null),
 //                active({ key: Set(values) }) }
-//   ctx      = { textOf(it), valueOf(it,key), passesQueue(it) }
+//   ctx      = { textOf(it), valueOf(it,key), passesQueue(it), hasMissingPrice?(it) }
 export function matchesItem(it, criteria, ctx, excludeKey) {
   const { q, itemIds, noPrice, priceMin, priceMax, cutoff, active } = criteria;
   if (q && !ctx.textOf(it).includes(q)) return false;
   if (itemIds && itemIds.size && !itemIds.has(it.id)) return false;
   if (!ctx.passesQueue(it)) return false;
-  if (noPrice && it.price != null) return false;
+  const hasMissingPrice = ctx.hasMissingPrice
+    ? ctx.hasMissingPrice(it)
+    : it.price == null;
+  if (noPrice && !hasMissingPrice) return false;
   const min = (priceMin ?? "") !== "" ? parsePrice(priceMin) : null;
   const max = (priceMax ?? "") !== "" ? parsePrice(priceMax) : null;
   if (min !== null && (it.price == null || it.price < min)) return false;

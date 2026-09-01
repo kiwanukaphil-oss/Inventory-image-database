@@ -4,6 +4,8 @@ import { esc, toast, trapFocus, openBottomSheet, bindPriceInput, ICON } from "./
 import { openPricing } from "./pricing.js";
 import { logManyItemActivities } from "./activity.js";
 import { costFromRetail, formatPriceInput, parsePrice, stripPriceGrouping } from "./lib/price.js";
+import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
+import { openRailwayPricing } from "./railwayPricing.js";
 
 // ============================================================================
 //  Guided pricing — "price like you'd say it".
@@ -28,6 +30,7 @@ import { costFromRetail, formatPriceInput, parsePrice, stripPriceGrouping } from
 const isNumericish = (v) => v !== undefined && v !== null && v !== "" && Number.isFinite(Number(v));
 
 export async function openGuidedPricing(caps, onClose, opts = {}) {
+  if (isRailwayCatalogMode) return openRailwayPricing(caps, onClose, opts);
   // Show the overlay immediately with a spinner so "Price items" feels responsive
   // while the catalogue (up to 5000 rows) loads; real content replaces it below.
   const el = document.createElement("div");

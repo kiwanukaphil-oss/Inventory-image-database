@@ -24,25 +24,27 @@ describe("Railway catalog capability surface", () => {
       can_upload: true,
       can_ai_extract: true,
       can_select: true,
+      can_price: true,
       can_edit: false,
       can_delete: false,
-      can_view_cost: false,
+      can_view_cost: true,
       can_manage_users: false,
-      can_publish: false,
+      can_publish: true,
     });
     expect(canSelectCatalogItems(profile)).toBe(true);
     expect(canRunCatalogAi(profile, true)).toBe(true);
   });
 
-  it("does not turn Railway selection into unsupported general edit access", () => {
+  it("enables selection for pricing without exposing unsupported general editing", () => {
     const profile = buildRailwayCatalogProfile({
       can_upload: true,
       can_edit: true,
       can_ai_extract: false,
     });
 
-    expect(canSelectCatalogItems(profile)).toBe(false);
+    expect(canSelectCatalogItems(profile)).toBe(true);
     expect(canRunCatalogAi(profile, true)).toBe(false);
+    expect(profile.can_price).toBe(true);
     expect(profile.can_edit).toBe(false);
   });
 

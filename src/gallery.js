@@ -84,6 +84,7 @@ import {
   catalogStockDistributionEntries,
   catalogStockDistributionSummary,
   catalogStockDistributionTotal,
+  catalogVariantLotSummary,
 } from "./lib/stock-distribution.js";
 
 // Build the at-a-glance summary line for a card from its category's own field
@@ -455,7 +456,7 @@ export function renderApp(mount, profile, onSignOut) {
       { id: "review-ai", label: "Needs AI fill", sub: "Find photos that need AI fill or retry", icon: ICON.sparkle, show: true },
       { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
       { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
-      { id: "pricing", label: "Price items", sub: "Set prices in bulk", icon: ICON.pencil, show: !!caps.can_edit },
+      { id: "pricing", label: "Price items", sub: "Set default and size prices", icon: ICON.pencil, show: !!caps.can_edit || !!caps.can_price },
       { id: "audit", label: "Catalog health check", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
       { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
       { id: "shop", label: "Shop floor", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
@@ -905,6 +906,13 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
   ].map(catalogDetailRowHtml).join("");
   const stockEntries = catalogStockDistributionEntries(item);
   const stockTotal = catalogStockDistributionTotal(stockEntries);
+  const variantLines = Array.isArray(item.variant_lines) && item.variant_lines.length
+    ? item.variant_lines
+    : stockEntries;
+  const variantCount = Number(item.variant_count || variantLines.filter((line) => Number(line.quantity) > 0).length);
+  const pricedVariantCount = Number(item.priced_variant_count || variantLines.filter(
+    (line) => Number(line.effective_price ?? line.price_override ?? item.price) > 0
+  ).length);
   const canEditStockDistribution = !!caps.can_edit_stock_distribution && !allBranches;
   const supportsSizeDistribution = resolveFields(item.category_id)
     .some((field) => field.key === "size");
@@ -932,7 +940,7 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
           ${catalogDetailRowHtml({ label: "Category", value: categoryPath(item.category_id) || item.categories?.name || "Uncategorized", missing: false })}
           ${catalogDetailRowHtml({ label: "Branch", value: item.branch_code || catalogBranchLabel(caps, item.branch_id), missing: false })}
           ${catalogDetailRowHtml({ label: "Status", value: statusLabel(item.status), missing: false })}
-          ${catalogDetailRowHtml({ label: "Retail price", value: item.price == null ? "Not priced" : fmtPrice(item.price), missing: item.price == null })}
+          ${catalogDetailRowHtml({ label: "Pricing", value: `${pricedVariantCount}/${variantCount} variants priced${item.price == null ? "" : ` · default ${fmtPrice(item.price)}`}`, missing: pricedVariantCount < variantCount })}
         </div>
       </section>
       <section class="catalog-detail-section">
@@ -941,15 +949,48 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
       </section>
       ${item.ai_visible_text ? `<details class="catalog-ai-evidence"><summary>Text detected in the photo</summary><p>${esc(item.ai_visible_text)}</p></details>` : ""}
       <section class="stock-dist ${item.stock_distribution_source === "ai_suggested" ? "needs-review" : ""}">
-        <div class="stock-dist-head"><div><b>Stock breakdown</b><small>${esc(stockSourceLabel)}${item.stock_distribution_confidence ? ` · ${esc(item.stock_distribution_confidence)} confidence` : ""}</small></div><strong data-stock-total>${stockTotal} unit${stockTotal === 1 ? "" : "s"}</strong></div>
+        <div class="stock-dist-head"><div><b>Stock breakdown</b><small>1 photo · ${variantCount} variant${variantCount === 1 ? "" : "s"} · ${esc(stockSourceLabel)}${item.stock_distribution_confidence ? ` · ${esc(item.stock_distribution_confidence)} confidence` : ""}</small></div><strong data-stock-total>${stockTotal} unit${stockTotal === 1 ? "" : "s"}</strong></div>
         <div data-stock-rows>${stockRows}</div>
         <div class="stock-dist-summary" data-stock-summary>${esc(catalogStockDistributionSummary(stockEntries))}</div>
         ${canEditStockDistribution ? `<div class="stock-dist-actions">${supportsSizeDistribution ? `<button type="button" class="ghost" data-stock-add>+ Add size</button>` : ""}<button type="button" class="primary" data-stock-save>${item.stock_distribution_source === "ai_suggested" ? "Confirm breakdown" : "Save breakdown"}</button></div>` : ""}
       </section>
+      ${caps.can_price ? `<button class="ghost" type="button" data-railway-pricing style="width:100%">${ICON.pencil} Edit default &amp; size prices</button>` : ""}
+      ${caps.can_publish && !item.is_published ? `<button class="primary" type="button" data-railway-publish style="width:100%">${ICON.tick} Approve &amp; import ${variantCount} variant${variantCount === 1 ? "" : "s"} / ${stockTotal} unit${stockTotal === 1 ? "" : "s"}</button>` : ""}
       ${caps.can_ai_extract && !allBranches ? `<button class="primary" type="button" data-railway-ai style="width:100%;margin-top:14px">${ICON.sparkle} AI-fill empty fields</button>` : ""}
-      <p class="muted" style="margin-top:14px">General editing remains read-only. Stock breakdown is a narrow reviewed write; AI cannot replace it after confirmation.</p>
+      <p class="muted" style="margin-top:14px">Confirmed breakdown lines become individual POS variants. Publication writes their exact quantities to this branch and is retry-safe.</p>
     </div>`);
   bindCatalogStockDistributionEditor(sheet, item, onSave);
+  const pricingButton = sheet.body.querySelector("[data-railway-pricing]");
+  if (pricingButton) pricingButton.onclick = () => {
+    sheet.close();
+    openGuidedPricing(caps, onSave, { itemIds: [id] });
+  };
+  const publishButton = sheet.body.querySelector("[data-railway-publish]");
+  // Direct detail publication uses the same idempotent server transaction as
+  // bulk approval and keeps the sheet open if readiness validation rejects it.
+  if (publishButton) publishButton.onclick = async () => {
+    const confirmed = await confirmSheet({
+      title: "Approve & import to POS?",
+      message: `This will create ${variantCount} sellable POS variant${variantCount === 1 ? "" : "s"} and receive ${stockTotal} unit${stockTotal === 1 ? "" : "s"} into ${item.branch_name || "this branch"}.`,
+      confirmText: "Approve & import",
+      cancelText: "Keep reviewing",
+    });
+    if (!confirmed) return;
+    publishButton.disabled = true;
+    publishButton.textContent = "Importing to POS…";
+    try {
+      const response = await requestRailwayCatalog(`/catalog/items/${id}/publish`, { method: "POST" });
+      galleryPayloadCache = null;
+      sheet.close();
+      await onSave?.();
+      toast(`Imported ${response.data.variant_count} variant${response.data.variant_count === 1 ? "" : "s"} · ${response.data.total_units} units`);
+    } catch (error) {
+      const detail = error?.details?.[0]?.message;
+      toast(detail || error?.message || "POS import failed.");
+      publishButton.disabled = false;
+      publishButton.innerHTML = `${ICON.tick} Approve &amp; import`;
+    }
+  };
   const aiButton = sheet.body.querySelector("[data-railway-ai]");
   if (aiButton) {
     // Run the only currently approved Railway mutation, then close stale sheet
@@ -1186,7 +1227,9 @@ async function renderGallery(view, caps, opts = {}) {
   const mySeq = ++renderGallerySeq;
   const review = !!opts.review; // Review tab = this surface pre-filtered to triage
   const state = review ? browseState.review : browseState.gallery;
-  const canEdit = !!caps.can_edit;
+  const canEdit = !isRailwayCatalogMode && !!caps.can_edit;
+  const canPrice = isRailwayCatalogMode ? !!caps.can_price : canEdit;
+  const canApprove = isRailwayCatalogMode ? !!caps.can_publish : canEdit;
   const canDelete = !!caps.can_delete;
   const allBranches = isRailwayCatalogMode && isAllCatalogBranches(readCatalogBranchId(caps));
   const canRunAi = canRunCatalogAi(caps, isRailwayCatalogMode) && !allBranches;
@@ -1364,7 +1407,9 @@ async function renderGallery(view, caps, opts = {}) {
       { id: "ready", label: "Ready to approve", count: issueCount("ready"), on: issueOn("ready"), tone: "ready" },
     ];
     return [
-      { id: "price", label: "Missing price", count: data.filter((it) => it.price == null).length, on: noPrice, tone: "price" },
+      { id: "price", label: "Missing price", count: data.filter((it) => (
+        isRailwayCatalogMode ? it.pricing_ready !== true : it.price == null
+      )).length, on: noPrice, tone: "price" },
       { id: "ai", label: "Needs AI fill", count: issueCount("ai"), on: issueOn("ai"), tone: "ai" },
       { id: "doubt", label: "AI doubt", count: issueCount("doubt"), on: issueOn("doubt"), tone: "ai" },
       { id: "ready", label: "Ready", count: issueCount("ready"), on: issueOn("ready"), tone: "ready" },
@@ -1461,10 +1506,10 @@ async function renderGallery(view, caps, opts = {}) {
       <aside class="item-preview" id="itemPreview" aria-label="${review ? "Review item preview" : "Catalog item preview"}"></aside>
     </div>
     ${canSelect ? `<div class="actionbar" id="actionbar" hidden>
-      ${canEdit ? `<button class="ab-btn ${review && reviewStage === "verify" ? "ab-verify" : "ab-approve"}" id="abApprove"><span class="ab-ico">${ICON.tick}</span>${review && reviewStage === "verify" ? "Verify" : "Approve"}</button>` : ""}
+      ${canApprove ? `<button class="ab-btn ab-approve" id="abApprove"><span class="ab-ico">${ICON.tick}</span>${isRailwayCatalogMode ? "Approve & import" : (review && reviewStage === "verify" ? "Verify" : "Approve")}</button>` : ""}
       ${canRunAi ? `<button class="ab-btn" id="abAi"><span class="ab-ico">${ICON.sparkle}</span>AI-fill</button>` : ""}
-      ${canEdit ? `<button class="ab-btn" id="abEdit"><span class="ab-ico">${ICON.pencil}</span>Edit</button>
-      <button class="ab-btn" id="abMore"><span class="ab-ico">${ICON.more}</span>More</button>` : ""}
+      ${canEdit ? `<button class="ab-btn" id="abEdit"><span class="ab-ico">${ICON.pencil}</span>Edit</button>` : ""}
+      ${canPrice || canEdit ? `<button class="ab-btn" id="abMore"><span class="ab-ico">${ICON.more}</span>More</button>` : ""}
       <button class="ab-btn" id="abDone"><span class="ab-ico">${ICON.x}</span>Done</button>
     </div>` : ""}`;
 
@@ -1616,6 +1661,9 @@ async function renderGallery(view, caps, opts = {}) {
     textOf: (it) => searchText(it, facetResolvers),
     valueOf,
     passesQueue,
+    hasMissingPrice: (it) => isRailwayCatalogMode
+      ? it.pricing_ready !== true
+      : it.price == null,
   };
   // excludeKey lets a facet's own counts ignore its own selection (faceted counting).
   const matches = (it, excludeKey) => matchesItem(it, {
@@ -1663,6 +1711,9 @@ async function renderGallery(view, caps, opts = {}) {
     const hasImg = !!it.image_path;
     const cat = it.categories?.name || "";
     const variant = summarizeItem(it); // category-driven summary line
+    const lotSummary = isRailwayCatalogMode
+      ? catalogVariantLotSummary(it, { includePricing: true })
+      : "";
     const brand = it.brand || it.name || "—";
     // Thumbnail src is set lazily by observeThumbs (same original image the
     // lightbox uses). data-img marks an image-bearing thumb; the
@@ -1684,6 +1735,7 @@ async function renderGallery(view, caps, opts = {}) {
           <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
         </div>
         ${variant ? `<div class="cattr">${esc(variant)}</div>` : ""}
+        ${lotSummary ? `<div class="cattr catalog-lot-summary">${esc(lotSummary)}</div>` : ""}
         <div class="issue-line">${catalogBranchChipHtml(it)}${issueBadgesHtml(it)}${activityBadgesHtml(it)}${posChipHtml(it)}</div>
         ${verificationDetailsHtml(it)}
         ${missingDetailsHtml(it)}
@@ -1705,6 +1757,9 @@ async function renderGallery(view, caps, opts = {}) {
     const cat = it.categories?.name || "";
     const brand = it.brand || it.name || "—";
     const variant = summarizeItemRich(it);
+    const lotSummary = isRailwayCatalogMode
+      ? catalogVariantLotSummary(it, { includePricing: true })
+      : "";
     const inner = hasImg
       ? `<img class="cardthumb" data-thumb="${esc(it.image_path)}" alt="${esc(brand)}">`
       : `<span class="row-noimg">—</span>`;
@@ -1718,6 +1773,7 @@ async function renderGallery(view, caps, opts = {}) {
           ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
         </div>
         ${variant ? `<div class="row-sub"><span class="row-attr">${variant}</span></div>` : ""}
+        ${lotSummary ? `<div class="row-sub catalog-lot-summary">${esc(lotSummary)}</div>` : ""}
         ${verificationDetailsHtml(it)}
         ${missingDetailsHtml(it)}
         <div class="row-meta">
@@ -1843,7 +1899,7 @@ async function renderGallery(view, caps, opts = {}) {
     if (!review) { reviewBriefEl.hidden = true; return; }
     const guide = reviewQueueGuide(issue);
     const actions = [];
-    if (issue === "price" && canEdit && rows.length) actions.push(["setprices", "Price items"]);
+    if (issue === "price" && canPrice && rows.length) actions.push(["setprices", "Price items"]);
     else if (issue === "ai" && canRunAi && rows.length) actions.push([failedAiShown ? "retryai" : "aifill", failedAiShown ? `Retry ${failedAiShown}` : "AI-fill"]);
     else if (issue === "missing" && (canRunAi || canEdit) && rows.length) {
       const recoverable = rows.filter((it) => it.image_path && it.category_id).length;
@@ -1851,7 +1907,7 @@ async function renderGallery(view, caps, opts = {}) {
       if (canEdit) actions.push(["selectmissing", "Bulk edit by category"]);
     }
     else if (issue === "sync" && canEdit && rows.length) actions.push(["sync", "Open sync"]);
-    else if (issue === "ready" && canEdit && rows.length) actions.push(["approveall", `Approve ${rows.length}`]);
+    else if (issue === "ready" && canApprove && rows.length) actions.push(["approveall", isRailwayCatalogMode ? `Approve & import ${rows.length}` : `Approve ${rows.length}`]);
     if (reviewStage === "verify" && canEdit) {
       const quickCount = rows.filter((it) => verificationRiskOf(it).bulkEligible).length;
       if (quickCount) actions.push(["selectquick", `Select ${quickCount} quick checks`]);
@@ -1980,6 +2036,9 @@ async function renderGallery(view, caps, opts = {}) {
     const brand = it.brand || it.name || "-";
     const cat = it.categories?.name || "";
     const variant = summarizeItem(it);
+    const lotSummary = isRailwayCatalogMode
+      ? catalogVariantLotSummary(it, { includePricing: true })
+      : "";
     const readiness = getItemReadiness(it, { canViewCost: !!caps.can_view_cost });
     const tone = readiness.blockers.length ? "blocked" : readiness.warnings.length ? "warn" : "ready";
     const title = readiness.blockers.length
@@ -2002,6 +2061,7 @@ async function renderGallery(view, caps, opts = {}) {
         <h3>${esc(brand)}</h3>
         ${cat ? `<div class="preview-sub">${esc(cat)}</div>` : ""}
         ${variant ? `<div class="preview-attrs">${esc(variant)}</div>` : ""}
+        ${lotSummary ? `<div class="preview-attrs catalog-lot-summary">${esc(lotSummary)}</div>` : ""}
         <div class="preview-chipline">
           <span class="stbadge ${stClass[it.status] || ""}">${esc(statusLabel(it.status))}</span>
           ${issueBadgesHtml(it)}
@@ -2015,7 +2075,7 @@ async function renderGallery(view, caps, opts = {}) {
         </div>
         ${previewAiDoubts(it)}
         <div class="preview-actions">
-          <button class="primary" data-preview-open>Open editor</button>
+          <button class="primary" data-preview-open>${isRailwayCatalogMode ? "Open details" : "Open editor"}</button>
           ${it.image_path ? `<button class="ghost" data-preview-photo>Inspect photo</button>` : ""}
           ${canSelect ? `<button class="ghost" data-preview-select>Select item</button>` : ""}
         </div>
@@ -2045,9 +2105,11 @@ async function renderGallery(view, caps, opts = {}) {
     // Pricing is the gate to approval, so the count line doubles as its
     // doorway: a tap on "N without a price" applies the no-price filter, and
     // once you're looking at the unpriced, "Price items" is right there.
-    const unpricedShown = rows.filter((it) => it.price == null).length;
+    const unpricedShown = rows.filter((it) => (
+      isRailwayCatalogMode ? it.pricing_ready !== true : it.price == null
+    )).length;
     const priceCta = review ? "" : noPrice
-      ? (canEdit ? ` · <button class="count-cta" data-cta="setprices">Price items ›</button>` : "")
+      ? (canPrice ? ` · <button class="count-cta" data-cta="setprices">Price items ›</button>` : "")
       : unpricedShown
         ? ` · <button class="count-cta" data-cta="noprice">${unpricedShown} without a price</button>`
         : "";
@@ -3050,6 +3112,41 @@ async function renderGallery(view, caps, opts = {}) {
 
     if (!(await confirmApprovalSummaryWarnings(summary))) return;
 
+    if (isRailwayCatalogMode) {
+      const publishItems = approveIds.map((id) => byId[id]).filter(Boolean);
+      const variantTotal = publishItems.reduce((total, item) => total + Number(item.variant_count || 0), 0);
+      const unitTotal = publishItems.reduce((total, item) => total + Number(item.total_units ?? item.stock_quantity ?? 0), 0);
+      const confirmed = await confirmSheet({
+        title: `Approve & import ${publishItems.length} photo${publishItems.length === 1 ? "" : "s"}?`,
+        message: `POS will receive ${variantTotal} sellable variant${variantTotal === 1 ? "" : "s"} and ${unitTotal} physical unit${unitTotal === 1 ? "" : "s"}. Retrying cannot duplicate stock.`,
+        confirmText: "Approve & import",
+        cancelText: "Keep reviewing",
+      });
+      if (!confirmed) return;
+      const failures = [];
+      let importedVariants = 0;
+      let importedUnits = 0;
+      for (const id of approveIds) {
+        try {
+          const response = await requestRailwayCatalog(`/catalog/items/${id}/publish`, { method: "POST" });
+          importedVariants += Number(response.data.variant_count || 0);
+          importedUnits += Number(response.data.total_units || 0);
+        } catch (error) {
+          failures.push({ id, error });
+        }
+      }
+      galleryPayloadCache = null;
+      if (selectionMode) exitSelection();
+      await refresh();
+      if (failures.length) {
+        const detail = failures[0].error?.details?.[0]?.message || failures[0].error?.message;
+        toast(`Imported ${approveIds.length - failures.length}; ${failures.length} failed${detail ? `: ${detail}` : ""}`);
+      } else {
+        toast(`Imported ${importedVariants} variant${importedVariants === 1 ? "" : "s"} · ${importedUnits} units`);
+      }
+      return;
+    }
+
     const prior = approveIds.map((id) => ({ id, status: byId[id]?.status }));
     const { error } = await supabase.from("items").update({ status: "approved" }).in("id", approveIds);
     if (error) { toast("Approve failed: " + error.message); return; }
@@ -3111,9 +3208,13 @@ async function renderGallery(view, caps, opts = {}) {
       openBulkAi(items, caps, refresh);
     };
   }
+  if (canApprove) {
+    view.querySelector("#abApprove").onclick = !isRailwayCatalogMode && review && reviewStage === "verify" ? verifySelected : approveSelected;
+  }
   if (canEdit) {
-    view.querySelector("#abApprove").onclick = review && reviewStage === "verify" ? verifySelected : approveSelected;
     view.querySelector("#abEdit").onclick = openBulkEdit;
+  }
+  if (canPrice || canEdit) {
     view.querySelector("#abMore").onclick = () => {
       if (!selected.size) return;
       const body = `

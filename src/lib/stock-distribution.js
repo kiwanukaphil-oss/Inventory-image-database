@@ -29,6 +29,41 @@ export function catalogStockDistributionTotal(entries) {
   );
 }
 
+/** Derive the photo, variant, unit, and priced-line counts shown in catalog review. */
+export function catalogVariantLotMetrics(item) {
+  const normalizedLines = Array.isArray(item?.variant_lines) && item.variant_lines.length
+    ? item.variant_lines
+    : catalogStockDistributionEntries(item);
+  const variantCount = Number.isInteger(Number(item?.variant_count))
+    ? Number(item.variant_count)
+    : normalizedLines.filter((line) => Number(line?.quantity) > 0).length;
+  const reportedUnitCount = item?.total_units ?? item?.unit_count;
+  const unitCount = Number.isInteger(Number(reportedUnitCount))
+    ? Number(reportedUnitCount)
+    : catalogStockDistributionTotal(normalizedLines);
+  const pricedVariantCount = Number.isInteger(Number(item?.priced_variant_count))
+    ? Number(item.priced_variant_count)
+    : normalizedLines.filter((line) => (
+      Number(line?.quantity) > 0
+      && (line?.effective_price != null || line?.price_override != null || item?.price != null)
+    )).length;
+  return { photoCount: 1, variantCount, unitCount, pricedVariantCount };
+}
+
+/** Build a concise review label that makes a multi-unit photo explicit. */
+export function catalogVariantLotSummary(item, { includePricing = false } = {}) {
+  const metrics = catalogVariantLotMetrics(item);
+  const parts = [
+    "1 photo",
+    `${metrics.variantCount} variant${metrics.variantCount === 1 ? "" : "s"}`,
+    `${metrics.unitCount} unit${metrics.unitCount === 1 ? "" : "s"}`,
+  ];
+  if (includePricing && metrics.variantCount > 0) {
+    parts.push(`${metrics.pricedVariantCount}/${metrics.variantCount} priced`);
+  }
+  return parts.join(" · ");
+}
+
 /** Build a compact mobile label such as "S ×1 · M ×1 · XL ×10". */
 export function catalogStockDistributionSummary(entries) {
   return (entries || []).map((entry) => {

@@ -6,12 +6,13 @@ export function buildRailwayCatalogProfile(profile = {}) {
   return {
     ...profile,
     can_upload: !!profile.can_upload,
-    can_select: !!profile.can_ai_extract,
+    can_select: !!profile.can_ai_extract || !!profile.can_edit || !!profile.can_publish,
+    can_price: !!profile.can_edit,
     can_edit: false,
     can_delete: false,
-    can_view_cost: false,
+    can_view_cost: !!profile.can_view_cost,
     can_manage_users: false,
-    can_publish: false,
+    can_publish: !!profile.can_publish,
     railway_read_only: false,
   };
 }

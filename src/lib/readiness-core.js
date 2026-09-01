@@ -36,10 +36,32 @@ function hasValue(v) {
 }
 
 function hasCostPrice(it) {
+  if (it.cost_ready === true) return true;
+  if (it.cost_ready === false) return false;
   if (hasValue(it.cost_price)) return true;
   if (it.has_cost_price === true) return true;
   if (it.has_cost_price === false) return false;
   return true;
+}
+
+function hasConfirmedLineAttribute(it, key) {
+  if (it.stock_distribution_source !== "human_confirmed") return false;
+  const lines = Array.isArray(it.variant_lines) && it.variant_lines.length
+    ? it.variant_lines
+    : it.stock_distribution;
+  const positiveLines = (lines || []).filter((line) => Number(line?.quantity) > 0);
+  return positiveLines.length > 0 && positiveLines.every(
+    (line) => hasValue(line?.variant_attributes?.[key])
+  );
+}
+
+function hasRetailPriceCoverage(it) {
+  if (it.pricing_ready === true) return true;
+  if (!Array.isArray(it.variant_lines) || !it.variant_lines.length) return it.price != null;
+  const positiveLines = it.variant_lines.filter((line) => Number(line?.quantity) > 0);
+  return positiveLines.length > 0 && positiveLines.every(
+    (line) => Number(line?.effective_price ?? line?.price_override ?? it.price) > 0
+  );
 }
 
 export function hasAiSignal(it) {
@@ -66,7 +88,9 @@ export function missingCoreFields(it, fields = []) {
 
   const required = (fields || []).filter((f) => f.required);
   for (const f of required) {
-    if (!hasValue(attrs[f.key])) missing.push(f.label || f.key);
+    if (!hasValue(attrs[f.key]) && !hasConfirmedLineAttribute(it, f.key)) {
+      missing.push(f.label || f.key);
+    }
   }
 
   if (!required.length && !Object.keys(attrs).some((k) => hasValue(attrs[k]))) {
@@ -129,7 +153,7 @@ export function getItemReadiness(it, deps = {}) {
     blockers.push(makeIssue("missing", ISSUE_META.missing.label, `Missing ${missing.join(", ")}.`));
   }
 
-  if (it.price == null) {
+  if (!hasRetailPriceCoverage(it)) {
     blockers.push(makeIssue("price", ISSUE_META.price.label, "Set a retail price before approval."));
   }
 
