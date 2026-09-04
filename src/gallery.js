@@ -47,6 +47,7 @@ import { mirrorForItem } from "./posbranches.js";
 import { parsePrice, stripPriceGrouping } from "./lib/price.js";
 import { classifyVerificationRisk, verificationRiskRank } from "./lib/review-risk.js";
 import { fetchBoundedRailwayCatalog } from "./lib/railway-catalog-pagination.js";
+import { catalogItemNeedsRetailPrice } from "./lib/catalog-pricing-plan.js";
 import {
   DEFAULT_GALLERY_RENDER_BATCH_SIZE,
   initialGalleryRenderLimit,
@@ -1408,7 +1409,7 @@ async function renderGallery(view, caps, opts = {}) {
     ];
     return [
       { id: "price", label: "Missing price", count: data.filter((it) => (
-        isRailwayCatalogMode ? it.pricing_ready !== true : it.price == null
+        isRailwayCatalogMode ? catalogItemNeedsRetailPrice(it) : it.price == null
       )).length, on: noPrice, tone: "price" },
       { id: "ai", label: "Needs AI fill", count: issueCount("ai"), on: issueOn("ai"), tone: "ai" },
       { id: "doubt", label: "AI doubt", count: issueCount("doubt"), on: issueOn("doubt"), tone: "ai" },
@@ -1662,7 +1663,7 @@ async function renderGallery(view, caps, opts = {}) {
     valueOf,
     passesQueue,
     hasMissingPrice: (it) => isRailwayCatalogMode
-      ? it.pricing_ready !== true
+      ? catalogItemNeedsRetailPrice(it)
       : it.price == null,
   };
   // excludeKey lets a facet's own counts ignore its own selection (faceted counting).
@@ -2106,7 +2107,7 @@ async function renderGallery(view, caps, opts = {}) {
     // doorway: a tap on "N without a price" applies the no-price filter, and
     // once you're looking at the unpriced, "Price items" is right there.
     const unpricedShown = rows.filter((it) => (
-      isRailwayCatalogMode ? it.pricing_ready !== true : it.price == null
+      isRailwayCatalogMode ? catalogItemNeedsRetailPrice(it) : it.price == null
     )).length;
     const priceCta = review ? "" : noPrice
       ? (canPrice ? ` · <button class="count-cta" data-cta="setprices">Price items ›</button>` : "")
@@ -3374,9 +3375,15 @@ async function renderToday(view, caps, actions = {}) {
   const mirrorRows = [...byVariant.values()];
   const soldToday = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_today || row.sold_today || 0), 0);
   const soldWeek = mirrorRows.reduce((sum, row) => sum + Number(row.units_sold_7d || row.sold_7d || row.units_sold_week || 0), 0);
-  const aiChecks = (issueCounts.doubt || 0) + (issueCounts.ai || 0);
-  const missingRetail = rows.filter((it) => it.price == null).length;
-  const missingCost = caps.can_view_cost ? rows.filter((it) => it.has_cost_price === false).length : 0;
+  const aiChecks = rows.filter((item) => (
+    queueMatches(item, "doubt") || queueMatches(item, "ai")
+  )).length;
+  const missingRetail = rows.filter((it) => (
+    isRailwayHome ? catalogItemNeedsRetailPrice(it) : it.price == null
+  )).length;
+  const missingCost = caps.can_view_cost
+    ? rows.filter((it) => isRailwayHome ? it.cost_ready !== true : it.has_cost_price === false).length
+    : 0;
   const priceSub = caps.can_view_cost && missingCost
     ? `${missingRetail.toLocaleString()} missing retail, ${missingCost.toLocaleString()} missing cost`
     : "Items blocked by missing prices";

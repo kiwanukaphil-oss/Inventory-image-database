@@ -177,6 +177,14 @@ export function getItemReadiness(it, deps = {}) {
   return summarizeReadiness(issue, blockers, warnings);
 }
 
+/** Match overlapping work queues instead of hiding secondary blockers. */
+export function matchesReadinessQueue(readiness, issue) {
+  if (issue === "work") return readiness.blockers.length > 0;
+  if (issue === "ready") return readiness.isReady;
+  return [...readiness.blockers, ...readiness.warnings]
+    .some((entry) => entry.issue === issue);
+}
+
 function summarizeReadiness(issue, blockers, warnings) {
   const meta = issue ? (ISSUE_META[issue] || ISSUE_META.work) : null;
   return {

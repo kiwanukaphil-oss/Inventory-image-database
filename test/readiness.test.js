@@ -4,6 +4,7 @@ import {
   aiDoubtFields,
   hasAiSignal,
   getItemReadiness,
+  matchesReadinessQueue,
   statusLabel,
 } from "../src/lib/readiness-core.js";
 
@@ -129,6 +130,25 @@ describe("getItemReadiness", () => {
       attributes: {}, confidence: {}, price: 100, has_cost_price: true,
     };
     expect(getItemReadiness(noSignal, { fields: [] }).blockers.some((b) => b.issue === "ai")).toBe(true);
+  });
+
+  it("keeps a secondary missing-price blocker in the price queue", () => {
+    const readiness = getItemReadiness({
+      status: "draft",
+      image_path: "x",
+      category_id: "shirts",
+      name: "",
+      brand: "",
+      attributes: {},
+      confidence: {},
+      pricing_ready: false,
+      cost_ready: false,
+    }, { fields: [] });
+
+    expect(readiness.issue).toBe("ai");
+    expect(matchesReadinessQueue(readiness, "price")).toBe(true);
+    expect(matchesReadinessQueue(readiness, "ai")).toBe(true);
+    expect(matchesReadinessQueue(readiness, "work")).toBe(true);
   });
 });
 

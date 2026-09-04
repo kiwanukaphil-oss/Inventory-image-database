@@ -45,9 +45,7 @@ export function issueState(it) {
 
 export function queueMatches(it, issue) {
   if (issue === "edited") return hasRecentEdit(it);
-  const st = issueState(it);
-  if (issue === "work") return !!st && st !== "ready";
-  return st === issue;
+  return core.matchesReadinessQueue(getItemReadiness(it), issue);
 }
 
 export function needsReviewItem(it) {
