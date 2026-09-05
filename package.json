@@ -15,12 +15,10 @@
     "test:db": "node scripts/verify-migrations.mjs",
     "verify:railway-only": "node scripts/verify-railway-only.mjs",
     "test:watch": "vitest",
-    "audit:prod": "npm audit --omit=dev --audit-level=high",
-    "seed": "node --env-file=.env scripts/seed.mjs"
+    "audit:prod": "npm audit --omit=dev --audit-level=high"
   },
   "dependencies": {
-    "@fontsource-variable/inter": "5.2.8",
-    "@supabase/supabase-js": "2.110.2"
+    "@fontsource-variable/inter": "5.2.8"
   },
   "devDependencies": {
     "exceljs": "4.4.0",

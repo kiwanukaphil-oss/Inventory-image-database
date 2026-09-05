@@ -2,7 +2,7 @@
 node_modules/
 dist/
 
-# Local environment (Supabase keys live here; never commit)
+# Local environment (secrets never belong in source control)
 .env
 .env.local
 .env.*.local

@@ -3,8 +3,8 @@
 // category fields, the AI-blind-field set, and the job-error help text — so
 // callers keep the same simple signatures they always had.
 import { AI_BLIND_FIELDS, resolveFields } from "./data.js";
-import { hasRecentEdit } from "./activity.js";
-import { jobErrorHelp } from "./joblog.js";
+import { hasRecentEdit } from "./lib/activity-labels.js";
+import { jobErrorHelp } from "./lib/job-error-help.js";
 import * as core from "./lib/readiness-core.js";
 
 // Re-export the pure constants + dependency-free helpers unchanged.

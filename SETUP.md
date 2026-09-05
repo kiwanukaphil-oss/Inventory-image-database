@@ -79,8 +79,10 @@ Then verify in a browser:
 
 ## Retirement boundary
 
-Historical migration sources are retained temporarily for reconciliation and
-rollback evidence. They are not part of the browser import graph. Remove those
-files, their SDK dependency, obsolete repository secrets, and the disabled
-keepalive workflow only after the production image migration and post-deploy
-zero-legacy-network check are explicitly approved.
+The retired SDK, browser modules, Edge Functions, seed/calibration commands and
+keepalive workflow have been removed. Historical SQL migrations and their local
+security tests remain as immutable evidence, not deployment configuration.
+Recovery archives are stored outside the repository under the owner's
+`KLineMigrationEvidence/ADR-070` directory. Runtime configuration uses only the
+Railway API. Restoring an old archive does not authorize reconnecting the former
+provider or replaying a completed production import.

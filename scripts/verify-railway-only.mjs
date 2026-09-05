@@ -13,8 +13,7 @@ const forbiddenRuntimePatterns = [
 
 /**
  * Follow local static imports from the browser entry point. This checks the
- * deployable module graph rather than archival migration sources, which remain
- * in the repository until their separately approved cleanup phase.
+ * deployable module graph; historical SQL fixtures never enter this graph.
  */
 function readBrowserModuleGraph(entryRelativePath) {
   const pendingPaths = [entryRelativePath];
@@ -29,7 +28,8 @@ function readBrowserModuleGraph(entryRelativePath) {
     for (const match of source.matchAll(importPattern)) {
       const importedPath = path.normalize(path.join(path.dirname(relativePath), match[1]));
       const resolvedPath = path.extname(importedPath) ? importedPath : `${importedPath}.js`;
-      if (fs.existsSync(path.join(repositoryRoot, resolvedPath))) pendingPaths.push(resolvedPath);
+      if (!fs.existsSync(path.join(repositoryRoot, resolvedPath))) throw new Error(`Missing browser import: ${resolvedPath}`);
+      pendingPaths.push(resolvedPath);
     }
   }
   return [...visitedPaths];
@@ -49,8 +49,10 @@ function findForbiddenRuntimeReferences(relativePaths) {
 const browserPaths = readBrowserModuleGraph(path.join("src", "main.js"));
 const operationalPaths = [
   ...browserPaths,
+  ...fs.readdirSync(path.join(repositoryRoot, "src"), { recursive: true })
+    .filter(relativePath => /\.(?:js|css)$/.test(relativePath))
+    .map(relativePath => path.join("src", relativePath)),
   ".github/workflows/deploy.yml",
-  ".github/workflows/keepalive.yml",
   ".env.example",
   "index.html",
   "vite.config.js",
@@ -64,6 +66,17 @@ if (fs.existsSync(distributionRoot)) {
 }
 
 const failures = findForbiddenRuntimeReferences([...new Set(operationalPaths)]);
+for (const retiredPath of ["src/db.js", "supabase/config.toml", "supabase/functions", ".github/workflows/keepalive.yml"]) {
+  if (fs.existsSync(path.join(repositoryRoot, retiredPath)) &&
+      (!fs.statSync(path.join(repositoryRoot, retiredPath)).isDirectory() ||
+       fs.readdirSync(path.join(repositoryRoot, retiredPath), { recursive: true }).some(entry => entry.endsWith(".ts")))) {
+    failures.push(`${retiredPath}: retired deployment path returned`);
+  }
+}
+const manifest = JSON.parse(fs.readFileSync(path.join(repositoryRoot, "package.json"), "utf8"));
+if (Object.keys({ ...manifest.dependencies, ...manifest.devDependencies }).some(name => /supabase/i.test(name))) {
+  failures.push("package.json: retired provider dependency returned");
+}
 if (failures.length) {
   console.error(`Railway-only verification failed:\n${failures.map((failure) => `- ${failure}`).join("\n")}`);
   process.exit(1);

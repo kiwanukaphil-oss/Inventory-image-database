@@ -11,6 +11,10 @@ const ACTIVITY_SOURCE_LABELS = {
   history: "Edited",
 };
 
+export function hasRecentEdit(item) {
+  return !!item?.activity?.recent_edit;
+}
+
 export function activitySourceLabel(source) {
   return ACTIVITY_SOURCE_LABELS[source] || source || "Updated";
 }
