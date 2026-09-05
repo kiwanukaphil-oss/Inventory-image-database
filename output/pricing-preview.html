@@ -1,0 +1,177 @@
+﻿<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>K-Line pricing concept</title><style>:root{color-scheme:dark}body{margin:0}#kl-pricing{max-width:1024px;margin:auto}</style></head><body><style>
+#kl-pricing { --kl-bg:light-dark(#f4f6f8,#10131a); --kl-panel:light-dark(#ffffff,#1b212c); --kl-input:light-dark(#f0f3f6,#161b24); --kl-line:light-dark(#ccd3dc,#333c4c); --kl-text:light-dark(#182534,#eef1f7); --kl-muted:light-dark(#526174,#a7b1c2); --kl-accent:light-dark(#087d92,#22c7e0); --kl-on:light-dark(#ffffff,#04222a); --kl-soft:light-dark(#e1f4f7,#10303a); color:var(--kl-text); background:var(--kl-bg); font:14px/1.5 Inter,system-ui,sans-serif; border-radius:16px; overflow:clip; }
+#kl-pricing * { box-sizing:border-box; }
+#kl-pricing header { padding:18px 24px; background:var(--kl-panel); border-bottom:1px solid var(--kl-line); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+#kl-pricing h2 { margin:0; font-size:23px; letter-spacing:-.6px; } #kl-pricing h3 { margin:0 0 12px; font-size:16px; }
+#kl-pricing .kl-caption { color:var(--kl-muted); font-size:12px; } #kl-pricing .kl-brand { letter-spacing:2px; font-weight:700; }
+#kl-pricing .kl-intro { padding:22px 24px 12px; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+#kl-pricing .kl-scope { padding:0 24px 20px; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+#kl-pricing label { display:grid; gap:6px; color:var(--kl-muted); font-size:12px; }
+#kl-pricing select,#kl-pricing input { min-width:0; width:100%; min-height:44px; font:inherit; font-size:16px; color:var(--kl-text); background:var(--kl-input); border:1px solid var(--kl-line); border-radius:8px; padding:9px 10px; }
+#kl-pricing button { min-height:44px; font:inherit; color:var(--kl-text); background:var(--kl-panel); border:1px solid var(--kl-line); border-radius:8px; padding:8px 13px; cursor:pointer; }
+#kl-pricing button:disabled { opacity:.5; cursor:default; } #kl-pricing .kl-primary { background:var(--kl-accent); color:var(--kl-on); border-color:var(--kl-accent); font-weight:650; }
+#kl-pricing .kl-views { display:flex; gap:6px; } #kl-pricing button[aria-pressed="true"] { background:var(--kl-soft); color:var(--kl-accent); border-color:var(--kl-accent); }
+#kl-pricing .kl-work { display:grid; grid-template-columns:minmax(230px,.8fr) minmax(0,1.45fr); border-top:1px solid var(--kl-line); }
+#kl-pricing .kl-rules { padding:22px 24px; border-right:1px solid var(--kl-line); background:var(--kl-panel); display:grid; align-content:start; gap:18px; }
+#kl-pricing .kl-preview { padding:22px 24px; min-width:0; } #kl-pricing .kl-preview-head { display:flex; align-items:start; justify-content:space-between; gap:12px; margin-bottom:14px; }
+#kl-pricing .kl-preview h3 { margin:0; } #kl-pricing .kl-pill { display:inline-block; color:var(--kl-accent); background:var(--kl-soft); border-radius:6px; padding:3px 8px; font-size:12px; }
+#kl-pricing .kl-exception { padding-left:13px; border-left:2px solid var(--kl-accent); display:grid; gap:12px; }
+#kl-pricing .kl-check { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--kl-text); } #kl-pricing .kl-check input { width:18px; min-height:18px; flex:none; }
+#kl-pricing details { border-bottom:1px solid var(--kl-line); } #kl-pricing summary { cursor:pointer; padding:14px 0; } #kl-pricing summary .kl-lot { display:inline-flex; align-items:center; gap:10px; max-width:calc(100% - 22px); vertical-align:middle; }
+#kl-pricing .kl-photo { display:grid; place-content:center; width:40px; height:46px; flex:none; border-radius:6px; background:var(--kl-panel); color:var(--kl-muted); font-size:11px; }
+#kl-pricing .kl-price { font-variant-numeric:tabular-nums; font-weight:650; } #kl-pricing .kl-lot small { display:block; color:var(--kl-muted); font-size:12px; }
+#kl-pricing table { width:100%; border-collapse:collapse; font-size:13px; margin-bottom:12px; } #kl-pricing th { color:var(--kl-muted); font-weight:500; font-size:12px; text-align:left; } #kl-pricing th,#kl-pricing td { padding:9px 4px; border-bottom:1px solid var(--kl-line); vertical-align:top; } #kl-pricing td small { display:block; color:var(--kl-muted); font-size:11px; } #kl-pricing .kl-money { text-align:right; font-variant-numeric:tabular-nums; }
+#kl-pricing footer { display:flex; justify-content:space-between; align-items:center; gap:14px; flex-wrap:wrap; padding:16px 24px; background:var(--kl-panel); border-top:1px solid var(--kl-line); }
+#kl-pricing .kl-group { display:grid; grid-template-columns:1fr 120px; gap:10px; align-items:center; padding:12px 0; border-bottom:1px solid var(--kl-line); }
+#kl-pricing .kl-review { padding:20px 24px; } #kl-pricing .kl-review p { margin:0 0 12px; } #kl-pricing [hidden] { display:none!important; }
+@media(max-width:620px) { #kl-pricing .kl-work { grid-template-columns:1fr; } #kl-pricing .kl-rules { border-right:0; border-bottom:1px solid var(--kl-line); } #kl-pricing .kl-scope { grid-template-columns:1fr; } #kl-pricing header,#kl-pricing .kl-intro,#kl-pricing .kl-preview,#kl-pricing .kl-rules,#kl-pricing footer,#kl-pricing .kl-review { padding:16px; } #kl-pricing .kl-scope { padding:0 16px 16px; } }
+</style>
+<div id="kl-pricing" aria-label="K-Line pricing workspace concept">
+  <header><div class="kl-brand">K-LINE MEN</div><span class="kl-caption">Current branch · Illustrative inventory</span></header>
+  <div class="kl-intro"><div><h2>Price items</h2><span class="kl-caption">Choose the merchandise. Set the differences. Check every price.</span></div><span class="kl-pill">Draft</span></div>
+  <div class="kl-scope">
+    <div><span class="kl-caption">Category</span><div style="padding:10px 0">Formal shirts</div></div>
+    <label>Brand<select id="kl-brand-filter"><option value="all">All brands</option><option>Essential</option><option>Classic</option></select></label>
+    <label>Material<select id="kl-material-filter"><option value="all">All materials</option><option>Cotton</option><option>Linen</option></select></label>
+  </div>
+  <div class="kl-work" id="kl-editor">
+    <section class="kl-rules" aria-label="Pricing draft">
+      <div class="kl-views"><button type="button" id="kl-guided" aria-pressed="true">Build a rule</button><button type="button" id="kl-grouped" aria-pressed="false">Group table</button></div>
+      <label>Pricing intent<select id="kl-intent"><option value="fill">Fill missing prices</option><option value="revise">Revise prices</option></select></label>
+      <label id="kl-preserve-wrap" class="kl-check" hidden><input type="checkbox" id="kl-preserve" checked>Keep individual size prices</label>
+      <div id="kl-rule-fields">
+        <label>Shared retail price · per unit<input id="kl-base" inputmode="numeric" value="90000" aria-label="Shared retail price"></label>
+        <div class="kl-exception" style="margin-top:18px">
+          <label class="kl-check"><input type="checkbox" id="kl-linen-on" checked>Linen costs more</label>
+          <label>Retail for linen<input id="kl-linen" inputmode="numeric" value="120000"></label>
+        </div>
+      </div>
+      <div id="kl-group-fields" hidden></div>
+      <div class="kl-exception">
+        <label class="kl-check"><input type="checkbox" id="kl-size-on" checked>Different price for 2XL</label>
+        <label>Add to the matching group price<input id="kl-size" inputmode="numeric" value="10000"></label>
+      </div>
+      <div class="kl-caption">Costs unchanged · Retail-only draft</div>
+    </section>
+    <section class="kl-preview" aria-label="Live pricing preview"><div class="kl-preview-head"><div><h3>Your price preview</h3><div id="kl-scope-count" class="kl-caption" aria-live="polite"></div></div><span class="kl-pill">Per unit</span></div><div id="kl-lots"></div></section>
+  </div>
+  <section class="kl-review" id="kl-review" hidden aria-label="Review price changes"></section>
+  <footer><div><b id="kl-impact" aria-live="polite"></b><div class="kl-caption" id="kl-footnote">Sample prices in whole currency units · No inventory changes</div></div><div class="kl-views"><button type="button" id="kl-back" hidden>Back to draft</button><button type="button" id="kl-next" class="kl-primary">Review changes</button></div></footer>
+</div>
+<script>
+// Keep the illustrative draft local and wire the proposed pricing interactions.
+(() => {
+  const root = document.getElementById('kl-pricing');
+  const find = (id) => root.querySelector('#kl-' + id);
+  const money = (value) => !Number.isFinite(value) ? 'Not set' : value.toLocaleString('en-US');
+  const lots = [
+    { name:'Essential · Cotton shirt', brand:'Essential', material:'Cotton', base:null, lines:[{size:'M',qty:2},{size:'XL',qty:4},{size:'2XL',qty:1}] },
+    { name:'Essential · Linen shirt', brand:'Essential', material:'Linen', base:null, lines:[{size:'M',qty:1},{size:'XL',qty:2,override:125000},{size:'2XL',qty:1}] },
+    { name:'Classic · Cotton shirt', brand:'Classic', material:'Cotton', base:85000, lines:[{size:'M',qty:1},{size:'XL',qty:3},{size:'2XL',qty:2}] }
+  ];
+  const draft = { view:'guided', step:'edit', groupPrices:new Map(), showReasons:true, compact:false };
+  const selectedLots = () => lots.filter(lot => (find('brand-filter').value === 'all' || lot.brand === find('brand-filter').value) && (find('material-filter').value === 'all' || lot.material === find('material-filter').value));
+  const groupKey = (lot) => lot.brand + ' / ' + lot.material;
+  const positiveValue = (id, allowZero = false) => {
+    const raw = find(id).value.trim();
+    return /^\d+$/.test(raw) && (allowZero ? Number(raw) >= 0 : Number(raw) > 0) ? Number(raw) : null;
+  };
+  const groupPrice = (lot) => draft.groupPrices.get(groupKey(lot)) ?? (lot.material === 'Linen' && find('linen-on').checked ? positiveValue('linen') : positiveValue('base'));
+  // Resolve effective prices before protection, so inherited prices are protected too.
+  function proposedLines() {
+    return selectedLots().flatMap((lot, lotIndex) => lot.lines.map(line => {
+      const before = line.override ?? lot.base;
+      const existing = before != null && find('intent').value === 'fill';
+      const keepOverride = line.override != null && find('intent').value === 'revise' && find('preserve').checked;
+      const addition = line.size === '2XL' && find('size-on').checked ? positiveValue('size', true) : 0;
+      const base = groupPrice(lot);
+      const after = existing || keepOverride ? before : base == null || addition == null ? null : base + addition;
+      const reason = existing ? 'Existing price protected' : keepOverride ? 'Individual price kept' : addition ? 'Group price + 2XL difference' : 'Group price';
+      return { ...line, lot, lotIndex, before, after, reason, protected:existing || keepOverride, changed:before !== after };
+    }));
+  }
+  // Each expandable photo keeps all of its size decisions visible in one place.
+  function lotMarkup(lot, rows, index, open) {
+    const prices = rows.map(row => row.after).filter(value => Number.isFinite(value));
+    const low = Math.min(...prices), high = Math.max(...prices);
+    const range = prices.length ? low === high ? money(low) : money(low) + '–' + money(high) : 'Price needed';
+    const units = rows.reduce((total,row) => total + row.qty, 0);
+    return `<details ${open ? 'open' : ''}><summary><span class="kl-lot"><span class="kl-photo" aria-label="Shared photo placeholder">Photo<br>${index+1}</span><span><b>${lot.name}</b><small>${rows.length} sizes · ${units} units · <span class="kl-price">${range}</span></small></span></span></summary><table><thead><tr><th>Size / qty</th><th class="kl-money">Current</th><th class="kl-money">Proposed</th></tr></thead><tbody>${rows.map(row => `<tr><td>${row.size}<small>${row.qty} units</small></td><td class="kl-money">${money(row.before)}</td><td class="kl-money"><b>${money(row.after)}</b>${draft.showReasons ? `<small>${row.reason}</small>` : ''}</td></tr>`).join('')}</tbody></table></details>`;
+  }
+  // Recalculate impact on every edit, keeping the visible review tied to the draft.
+  function renderPreview() {
+    const rows = proposedLines();
+    const selected = selectedLots();
+    const changed = rows.filter(row => row.changed);
+    const protectedCount = rows.filter(row => row.protected).length;
+    const invalid = rows.some(row => !Number.isFinite(row.after) || row.after <= 0);
+    const unitCount = rows.reduce((total,row) => total + row.qty,0);
+    find('scope-count').textContent = `${selected.length} photo${selected.length === 1 ? '' : 's'} · ${rows.length} variants · ${unitCount} units`;
+    find('lots').innerHTML = selected.map((lot,index) => lotMarkup(lot, rows.filter(row => row.lot === lot), index, index === 0 && !draft.compact)).join('') || '<p>No items match these filters.</p>';
+    find('impact').textContent = invalid ? 'Enter valid whole-unit prices' : `${changed.length} variants change · ${protectedCount} protected`;
+    find('preserve-wrap').hidden = find('intent').value !== 'revise';
+    find('next').disabled = invalid || !changed.length;
+    find('rule-fields').hidden = draft.view !== 'guided' || draft.groupPrices.size > 0;
+    find('group-fields').hidden = draft.view !== 'grouped' && draft.groupPrices.size === 0;
+    find('guided').setAttribute('aria-pressed', String(draft.view === 'guided'));
+    find('grouped').setAttribute('aria-pressed', String(draft.view === 'grouped'));
+  }
+  // Group edits and guided rules share resolved values when switching views.
+  function renderGroupFields() {
+    find('group-fields').innerHTML = selectedLots().map((lot,index) => `<label class="kl-group"><span>${groupKey(lot)}</span><input inputmode="numeric" data-group="${index}" aria-label="${groupKey(lot)} retail price" value="${groupPrice(lot) ?? ''}"></label>`).join('');
+    find('group-fields').querySelectorAll('input').forEach(input => input.addEventListener('input', () => {
+      const raw = input.value.trim();
+      draft.groupPrices.set(groupKey(selectedLots()[Number(input.dataset.group)]), /^\d+$/.test(raw) && Number(raw) > 0 ? Number(raw) : NaN);
+      renderPreview();
+    }));
+  }
+  // Review and apply are a local simulation; no catalog or POS service is contacted.
+  function showReview() {
+    const rows = proposedLines();
+    const changed = rows.filter(row => row.changed);
+    draft.step = 'review';
+    find('editor').hidden = true;
+    find('review').hidden = false;
+    find('scope-count').textContent = '';
+    find('review').innerHTML = `<h3>Review ${changed.length} price changes</h3><p class="kl-caption">Formal shirts · ${find('brand-filter').value === 'all' ? 'All brands' : find('brand-filter').value} · ${find('material-filter').value === 'all' ? 'All materials' : find('material-filter').value} · ${find('intent').selectedOptions[0].text}</p>${selectedLots().map((lot,index) => lotMarkup(lot,rows.filter(row => row.lot === lot),index,true)).join('')}<p class="kl-caption" style="margin-top:16px">Costs and stock quantities stay unchanged. Pricing does not publish to POS.</p>`;
+    root.querySelectorAll('.kl-scope select').forEach(select => select.disabled = true);
+    find('back').hidden = false;
+    find('next').textContent = `Apply ${changed.length} prices · demo`;
+  }
+  // Return to the same draft after review or a simulated application.
+  function returnToDraft() {
+    draft.step = 'edit';
+    find('editor').hidden = false;
+    find('review').hidden = true;
+    find('back').hidden = true;
+    find('back').textContent = 'Back to draft';
+    find('next').hidden = false;
+    find('next').textContent = 'Review changes';
+    root.querySelectorAll('.kl-scope select').forEach(select => select.disabled = false);
+    renderPreview();
+  }
+  ['base','linen','size','linen-on','size-on','intent','preserve'].forEach(id => find(id).addEventListener('input', () => {
+    if (id === 'base' || id === 'linen' || id === 'linen-on') draft.groupPrices.clear();
+    renderPreview();
+  }));
+  ['brand-filter','material-filter'].forEach(id => find(id).addEventListener('change', () => { renderGroupFields(); renderPreview(); }));
+  find('guided').onclick = () => { draft.view = 'guided'; renderGroupFields(); renderPreview(); };
+  find('grouped').onclick = () => { draft.view = 'grouped'; renderGroupFields(); renderPreview(); };
+  find('back').onclick = returnToDraft;
+  find('next').onclick = () => {
+    if (draft.step === 'edit') return showReview();
+    draft.step = 'done';
+    find('review').innerHTML = '<h3>Pricing review complete</h3><p>This demonstrates the application step. No real prices have been saved.</p>';
+    find('impact').textContent = 'Demo complete';
+    find('next').hidden = true;
+    find('back').textContent = 'Explore another plan';
+  };
+  renderPreview();
+  if (globalThis.Tweak) {
+    const tweaks = new Tweak({ container:root, onChange:renderPreview });
+    tweaks.addToggle(draft,'showReasons',{label:'Show price reasons'});
+    tweaks.addToggle(draft,'compact',{label:'Collapse size details initially'});
+  }
+})();
+</script>
+</body></html>

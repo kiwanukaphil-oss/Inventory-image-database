@@ -54,7 +54,8 @@ function categoryPricingScopes(items) {
  * Open a restart-safe bulk planner. The browser previews a finite list of item
  * IDs, while Railway validates and commits the complete plan atomically.
  */
-export async function openRailwayPricing(caps, onClose, opts = {}) {
+// CANDIDATE FOR REMOVAL: superseded by the reviewed workspace; retained for comparison until review.
+export async function openLegacyRailwayPricing(caps, onClose, opts = {}) {
   const overlay = document.createElement("div");
   overlay.className = "calib pricing railway-pricing";
   overlay.innerHTML = `<div class="calib-panel"><div class="calib-head">
@@ -336,3 +337,5 @@ export async function openRailwayPricing(caps, onClose, opts = {}) {
 
   renderPricingPlan();
 }
+
+export { openPricingWorkspace as openRailwayPricing } from './railwayPricingWorkspace.js';
