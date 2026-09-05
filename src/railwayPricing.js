@@ -3,7 +3,7 @@
  *
  * Responsible for: Building and applying one branch-scoped default pricing plan
  *                  with optional per-size retail and cost exceptions.
- * NOT responsible for: Legacy Supabase pricing or published POS price changes.
+ * NOT responsible for: retired-provider pricing or published POS price changes.
  */
 
 import { requestRailwayCatalog } from "./railwayCatalogApi.js";

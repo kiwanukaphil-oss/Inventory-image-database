@@ -1,10 +1,7 @@
 name: Deploy to GitHub Pages
 
 # Builds the Vite app and publishes dist/ to GitHub Pages on every push to main.
-# The Railway catalog API URL selects the production backend. Legacy Supabase
-# values remain build-time rollback inputs during the observation window.
-# (Both are public-safe — they end up in the client bundle by design; RLS is
-# what protects the data.)
+# The browser bundle receives only the public Railway catalog API origin.
 
 on:
   push:
@@ -54,10 +51,10 @@ jobs:
 
       - name: Build
         env:
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_CATALOG_API_URL: ${{ secrets.VITE_CATALOG_API_URL }}
         run: npm run build
+      - name: Verify Railway-only browser bundle
+        run: npm run verify:railway-only
 
       - uses: actions/configure-pages@v5
 

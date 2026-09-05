@@ -13,6 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:db": "node scripts/verify-migrations.mjs",
+    "verify:railway-only": "node scripts/verify-railway-only.mjs",
     "test:watch": "vitest",
     "audit:prod": "npm audit --omit=dev --audit-level=high",
     "seed": "node --env-file=.env scripts/seed.mjs"

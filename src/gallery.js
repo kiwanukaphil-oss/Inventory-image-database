@@ -1,6 +1,4 @@
-import { supabase } from "./db.js";
 import { signOut } from "./auth.js";
-import { openEditor } from "./editor.js";
 import { renderUpload } from "./upload.js";
 import { loadRefData, refreshRefData, resolveFields, categoryPath, fieldLabel, getSetting, normalizeValue, normalizeAttributeValue, vocabSuggestions, AI_BLIND_FIELDS, loadPosMirror } from "./data.js";
 import {
@@ -19,27 +17,15 @@ import {
   readyItem,
   statusLabel,
 } from "./readiness.js";
-import { openCalibration } from "./calibration.js";
-import { openGuidedPricing } from "./pricing_guided.js";
-import { openActivityFeed } from "./activityfeed.js";
-import { openSwipeReview } from "./swipereview.js";
-import { loadSyncCounts } from "./syncstate.js";
 import { openBulkAi } from "./bulkai.js";
-import { openUsers } from "./users.js";
-import { renderExport } from "./exportcsv.js";
-import { renderShop } from "./shop.js";
+import { openRailwayPricing } from "./railwayPricing.js";
 import {
   catalogDetailFieldRows,
   catalogItemTitle,
   evidenceSourceLabel,
 } from "./lib/catalog-detail.js";
-import { openSyncCenter } from "./synccenter.js";
-import { openCategoryManager } from "./categories_admin.js";
-import { loadCostPresence } from "./costs.js";
-import { loadLatestFailedJobs } from "./joblog.js";
-import { openConsistencyAudit } from "./consistency.js";
 import { approvalReasonText, confirmApprovalSummaryWarnings } from "./approval.js";
-import { activitySourceClass, activitySourceLabel, diffItemValues, loadItemActivitySummaries, logManyItemActivities } from "./activity.js";
+import { activitySourceClass, activitySourceLabel } from "./lib/activity-labels.js";
 import { esc, toast, openBottomSheet, confirmSheet, promptSheet, trapFocus, anyOverlayOpen, openLightbox, bindPriceInput, ICON } from "./ui.js";
 import { sortItems } from "./lib/itemsort.js";
 import { shopState as libShopState, facetValue, buildFacets, searchText, matchesItem } from "./lib/facets.js";
@@ -48,6 +34,7 @@ import { parsePrice, stripPriceGrouping } from "./lib/price.js";
 import { classifyVerificationRisk, verificationRiskRank } from "./lib/review-risk.js";
 import { fetchBoundedRailwayCatalog } from "./lib/railway-catalog-pagination.js";
 import { catalogItemNeedsRetailPrice } from "./lib/catalog-pricing-plan.js";
+import { catalogPriceRange } from './lib/pricing-workspace.js';
 import {
   DEFAULT_GALLERY_RENDER_BATCH_SIZE,
   initialGalleryRenderLimit,
@@ -87,6 +74,15 @@ import {
   catalogStockDistributionTotal,
   catalogVariantLotSummary,
 } from "./lib/stock-distribution.js";
+
+// CANDIDATE FOR REMOVAL: unreachable legacy-only mutation branches remain in
+// this file for one review phase. This local guard has no credentials or network
+// transport and makes any accidental entry fail closed.
+const retiredMutationPath = new Proxy({}, {
+  get() {
+    throw new Error("This catalog action was retired during the Railway migration.");
+  },
+});
 
 // Build the at-a-glance summary line for a card from its category's own field
 // definitions, so each category shows the fields that matter to it (a pant shows
@@ -354,8 +350,6 @@ export function renderApp(mount, profile, onSignOut) {
           setView("catalog", { restoreScroll: false });
         }
       });
-    else if (id === "export") renderExport(view, caps); // routed from the ⋮ menu
-    else if (id === "shop") await renderShop(view, caps, refreshCurrent);
     else if (id === "review") await renderReview(view, caps);
     else renderComingSoon(view, id);
     if (currentViewId !== id) return;
@@ -367,7 +361,6 @@ export function renderApp(mount, profile, onSignOut) {
     });
   }
 
-  // Currency editor (the one shop-wide setting), opened from Settings → Shop.
   mount.querySelector("#branchBtn")?.addEventListener("click", openCatalogBranchPicker);
   mount.querySelector("#resumeUploadsBtn")?.addEventListener("click", () => {
     void setView("add", { restoreScroll: false });
@@ -387,64 +380,21 @@ export function renderApp(mount, profile, onSignOut) {
   };
   void refreshPendingUploadBanner();
 
-  function openCurrencyEditor() {
-    const cur = getSetting("currency", "");
-    const sh = openBottomSheet("Currency", `
-      <div class="cm-label">Prefix shown before prices (e.g. UGX, $, KSh)</div>
-      <input id="setCurrency" value="${esc(cur)}" placeholder="e.g. UGX">
-      <button class="primary up-go" id="setSave">Save</button>`);
-    sh.body.querySelector("#setSave").onclick = async () => {
-      const v = sh.body.querySelector("#setCurrency").value.trim();
-      const { error } = await supabase.from("app_settings").upsert({ key: "currency", value: v });
-      if (error) { toast("Save failed: " + error.message); return; }
-      sh.close();
-      toast("Currency saved");
-      refreshRefData();
-      await loadRefData();
-      setView(currentViewId); // re-render so prices show the new prefix
-    };
-  }
-
   // Settings — the single home for configuration, data tools, and admin, grouped
   // and gated by capability. Replaces the old ~12-item account grab-bag; day-to-
   // day actions live in Quick actions (the command palette) instead.
   function openSettings() {
     const install = installAvailable() ? `<button class="menu-item" data-s="install">Install app</button>` : "";
-    const currencyRow = caps.can_manage_users
-      ? `<button class="menu-item settings-row" data-s="currency"><span><b>Currency</b><small>Prefix shown before shop prices</small></span><span class="menu-val">${esc(getSetting("currency", "") || "not set")}</span></button>`
-      : "";
-    const dataTools = [
-      `<button class="menu-item settings-row" data-s="activity"><span><b>Recent activity</b><small>Human, AI, pricing, approval, undo, and shop events</small></span></button>`,
-      `<button class="menu-item settings-row" data-s="export"><span><b>Export CSV</b><small>Catalog snapshot and audit log downloads</small></span></button>`,
-      caps.can_edit ? `<button class="menu-item settings-row" data-s="calib"><span><b>AI quality check</b><small>Mark AI fields correct or wrong from photos</small></span></button>` : "",
-      caps.can_edit ? `<button class="menu-item settings-row" data-s="audit"><span><b>Catalog health check</b><small>Find variants, missing details, duplicates, and outliers</small></span></button>` : "",
-    ].filter(Boolean).join("");
-    const adminTools = caps.can_manage_users
-      ? `<button class="menu-item settings-row" data-s="users"><span><b>Users & permissions</b><small>Roles, capability matrix, active accounts</small></span></button>
-         <button class="menu-item settings-row" data-s="cats"><span><b>Categories & fields</b><small>Reference data that drives forms, AI, and SKUs</small></span></button>
-         <button class="menu-item settings-row" data-s="sync"><span><b>Shop recovery</b><small>Send to shop, refresh numbers, and check drift</small></span></button>`
-      : "";
     const sh = openBottomSheet("Settings", `
       <div class="sheet-sec">Device & app</div>
       <button class="menu-item" data-s="theme">Appearance<span class="menu-val">${esc(themeLabel())}</span></button>
-      ${install}
-      ${currencyRow ? `<div class="sheet-sec">Shop settings</div>${currencyRow}` : ""}
-      ${dataTools ? `<div class="sheet-sec">Data tools</div>${dataTools}` : ""}
-      ${adminTools ? `<div class="sheet-sec">Admin</div>${adminTools}` : ""}`);
+      ${install}`);
     sh.body.addEventListener("click", (e) => {
       const b = e.target.closest("[data-s]");
       if (!b) return;
       const s = b.dataset.s;
       if (s === "theme") { sh.close(); openAppearance(); }
-      else if (s === "currency") { sh.close(); openCurrencyEditor(); }
       else if (s === "install") { sh.close(); installApp(); }
-      else if (s === "export") { sh.close(); setView("export"); }
-      else if (s === "activity") { sh.close(); openActivityFeed(caps); }
-      else if (s === "calib") { sh.close(); openCalibration(caps, () => setView(currentViewId)); }
-      else if (s === "audit") { sh.close(); openConsistencyAudit(caps, openReviewQueue); }
-      else if (s === "users") { sh.close(); openUsers(caps); }
-      else if (s === "cats") { sh.close(); openCategoryManager(caps); }
-      else if (s === "sync") { sh.close(); openSyncCenter(caps, refreshCurrent); }
     });
   }
 
@@ -458,11 +408,6 @@ export function renderApp(mount, profile, onSignOut) {
       { id: "review-price", label: "Missing price", sub: "Price items blocking approval", icon: ICON.navShop, show: true },
       { id: "review-ready", label: "Ready to approve", sub: "Final review queue", icon: ICON.tick, show: true },
       { id: "pricing", label: "Price items", sub: "Set default and size prices", icon: ICON.pencil, show: !!caps.can_edit || !!caps.can_price },
-      { id: "audit", label: "Catalog health check", sub: "Check sizes, brands, missing data, and outliers", icon: ICON.check, show: !!caps.can_edit },
-      { id: "sync", label: "Shop sync", sub: "Recover shop errors and pending updates", icon: ICON.refresh, show: !!caps.can_manage_users },
-      { id: "shop", label: "Shop floor", sub: "View stock, queued items, and shop health", icon: ICON.navShop, show: true },
-      { id: "activity", label: "Recent activity", sub: "Who changed what, lately", icon: ICON.refresh, show: true },
-      { id: "export", label: "Export CSV", sub: "Download catalog data", icon: ICON.navExport, show: true },
     ].filter((a) => a.show);
     const sh = openBottomSheet("Quick actions", `
       <div class="cmd-list">
@@ -484,12 +429,7 @@ export function renderApp(mount, profile, onSignOut) {
       else if (cmd === "review-ai") openReviewQueue("ai");
       else if (cmd === "review-price") openReviewQueue("price");
       else if (cmd === "review-ready") openReviewQueue("ready");
-      else if (cmd === "pricing") openGuidedPricing(caps, refreshCurrent);
-      else if (cmd === "audit") openConsistencyAudit(caps, openReviewQueue);
-      else if (cmd === "sync") openSyncCenter(caps, refreshCurrent);
-      else if (cmd === "shop") setView("shop");
-      else if (cmd === "activity") openActivityFeed(caps);
-      else if (cmd === "export") setView("export");
+      else if (cmd === "pricing") openRailwayPricing(caps, refreshCurrent);
     });
   }
 
@@ -692,49 +632,25 @@ const GALLERY_LIMIT = 2000;
 const GALLERY_CACHE_TTL_MS = 60 * 1000;
 const SIGNED_URL_TTL_SECONDS = 3600;
 const SIGNED_URL_REFRESH_MS = (SIGNED_URL_TTL_SECONDS - 300) * 1000;
-const GALLERY_ITEM_SELECT = "id, name, brand, sku, price, stock_quantity, status, image_path, attributes, confidence, category_id, created_at, pos_sync_status, pos_sync_error, pos_variant_id, pos_branch_id, pos_dirty, categories(name)";
-
 let galleryPayloadCache = null;
 let galleryPayloadPromise = null;
 const fullImageUrlCache = new Map(); // shared by thumbnails and the full-size viewer (see signThumb)
 
 const galleryCacheKey = (caps = {}) => {
-  const branchScope = isRailwayCatalogMode ? readCatalogBranchId(caps) : "legacy";
+  const branchScope = readCatalogBranchId(caps);
   return `${caps.id || caps.email || "user"}:${caps.can_view_cost ? "cost" : "nocost"}:${branchScope}`;
 };
 
-function cachedSignedUrl(cache, path, signer) {
-  if (!path) return Promise.resolve(null);
-  const now = Date.now();
-  const hit = cache.get(path);
-  if (hit && hit.expiresAt > now) return hit.promise;
-  const promise = signer()
-    .then(({ data }) => data?.signedUrl || null)
-    .catch(() => {
-      cache.delete(path);
-      return null;
-    });
-  cache.set(path, { promise, expiresAt: now + SIGNED_URL_REFRESH_MS });
-  return promise;
-}
-
 // Thumbnails reuse the untransformed original: uploads are already client-side
-// compressed to ≤1280px WebP (imageCompress.js), and Supabase image transforms
-// are metered at 100 origin images/month on Pro — the catalog alone exceeds
-// that. Sharing signFullImage's URL also lets the full-size viewer open from
-// browser cache after the grid has loaded the image.
+// compressed to ≤1280px WebP. Sharing signFullImage's URL also lets the
+// full-size viewer open from browser cache after the grid has loaded the image.
 function signThumb(path) {
   return signFullImage(path);
 }
 
 function signFullImage(path) {
-  if (isRailwayCatalogMode) {
-    const cachedImage = fullImageUrlCache.get(path);
-    return cachedImage?.promise || Promise.resolve(null);
-  }
-  return cachedSignedUrl(fullImageUrlCache, path, () =>
-    supabase.storage.from("product-images").createSignedUrl(path, SIGNED_URL_TTL_SECONDS)
-  );
+  const cachedImage = fullImageUrlCache.get(path);
+  return cachedImage?.promise || Promise.resolve(null);
 }
 
 /** Cache server-signed image URLs as each Railway page completes. */
@@ -783,54 +699,8 @@ async function fetchRailwayGalleryPayload(caps) {
   };
 }
 
-function applyGalleryMeta(rows, failedAiJobs, activitySummaries, costPresence) {
-  for (const it of rows || []) {
-    const job = failedAiJobs.get(it.id);
-    if (job) it.latest_ai_job = job;
-    const activity = activitySummaries.get(it.id);
-    if (activity) it.activity = activity;
-    if (costPresence.has(it.id)) it.has_cost_price = costPresence.get(it.id);
-  }
-}
-
 async function fetchGalleryPayload(caps) {
-  if (isRailwayCatalogMode) return fetchRailwayGalleryPayload(caps);
-  const [{ data, error }, posMirror] = await Promise.all([
-    supabase
-      .from("items")
-      .select(GALLERY_ITEM_SELECT)
-      .order("created_at", { ascending: false })
-      .limit(GALLERY_LIMIT),
-    loadPosMirror().catch(() => ({ byVariant: new Map(), lastMirror: null })),
-    loadRefData(), // category tree + field definitions drive the card summary
-  ]);
-  if (error) throw error;
-
-  const rows = data || [];
-  const itemIdsForMeta = rows.map((it) => it.id);
-  const [failedAiJobs, activitySummaries, costPresence, syncCounts, savedViewsRes] = await Promise.all([
-    loadLatestFailedJobs(itemIdsForMeta, "ai_fill"),
-    loadItemActivitySummaries(itemIdsForMeta),
-    loadCostPresence(itemIdsForMeta, { canViewCost: !!caps.can_view_cost }),
-    loadSyncCounts(["errors", "dirty"]).catch(() => ({ errors: 0, dirty: 0 })),
-    (async () => {
-      try {
-        return await supabase.from("saved_views").select("id, name, payload").order("created_at");
-      } catch {
-        return { data: [] };
-      }
-    })(),
-  ]);
-  applyGalleryMeta(rows, failedAiJobs, activitySummaries, costPresence);
-
-  return {
-    key: galleryCacheKey(caps),
-    loadedAt: Date.now(),
-    data: rows,
-    posMirror,
-    syncCounts,
-    savedViews: savedViewsRes?.data || [],
-  };
+  return fetchRailwayGalleryPayload(caps);
 }
 
 async function loadGalleryPayload(caps, { force = false } = {}) {
@@ -871,15 +741,10 @@ function catalogDetailRowHtml(row) {
 }
 
 /**
- * Open the canonical editor on rollback builds and a Railway evidence sheet.
- * The Railway sheet exposes the complete server-owned field set, including
- * missing values, confidence, evidence, and the reviewed stock breakdown.
+ * Open the Railway evidence sheet with the complete server-owned field set,
+ * including missing values, confidence, evidence, and stock breakdown.
  */
-async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
-  if (!isRailwayCatalogMode) {
-    return openEditor(id, caps, onSave, editorOptions);
-  }
-
+async function openCatalogItem(id, caps, onSave) {
   const payload = await loadGalleryPayload(caps);
   const item = payload.data?.find((candidate) => candidate.id === id);
   if (!item) throw new Error("Catalog item not found.");
@@ -964,7 +829,7 @@ async function openCatalogItem(id, caps, onSave, editorOptions = {}) {
   const pricingButton = sheet.body.querySelector("[data-railway-pricing]");
   if (pricingButton) pricingButton.onclick = () => {
     sheet.close();
-    openGuidedPricing(caps, onSave, { itemIds: [id] });
+    openRailwayPricing(caps, onSave, { itemIds: [id] });
   };
   const publishButton = sheet.body.querySelector("[data-railway-publish]");
   // Direct detail publication uses the same idempotent server transaction as
@@ -1538,58 +1403,12 @@ async function renderGallery(view, caps, opts = {}) {
     persistAppSession(appSession.view);
   };
 
-  // Re-render after an edit/bulk action without losing the user's scroll place.
-  // Pass changedIds to patch ONLY those rows in place (Q1 step 6b) instead of
-  // cold-reloading the whole catalogue; no args = full reload (bulk/delete).
-  const refresh = (changedIds) => {
+  // Re-read the authoritative Railway catalog without losing scroll position.
+  const refresh = () => {
     const y = view.scrollTop;
-    if (isRailwayCatalogMode) {
-      galleryPayloadCache = null;
-      return renderGallery(view, caps, { ...opts, force: true }).then(() => view.scrollTo(0, y));
-    }
-    if (Array.isArray(changedIds) && changedIds.length) {
-      return patchItems(changedIds).then(() => view.scrollTo(0, y));
-    }
+    galleryPayloadCache = null;
     return renderGallery(view, caps, { ...opts, force: true }).then(() => view.scrollTo(0, y));
   };
-
-  // Targeted refresh: re-fetch only the changed rows + their meta and patch the
-  // in-memory model (byId/data), then redraw — the reconciler updates just
-  // the affected cards and draw() recomputes the segment counts. Re-fetching the
-  // authoritative rows avoids local drift; any error falls back to a full reload.
-  async function patchItems(ids) {
-    const { data: fresh, error } = await supabase
-      .from("items")
-      .select(GALLERY_ITEM_SELECT)
-      .in("id", ids);
-    if (error) return renderGallery(view, caps, { ...opts, force: true });
-    const [jobs, acts, costs] = await Promise.all([
-      loadLatestFailedJobs(ids, "ai_fill"),
-      loadItemActivitySummaries(ids),
-      loadCostPresence(ids, { canViewCost: !!caps.can_view_cost }),
-    ]);
-    const returned = new Set();
-    for (const row of fresh || []) {
-      returned.add(row.id);
-      const job = jobs.get(row.id); if (job) row.latest_ai_job = job;
-      const activity = acts.get(row.id); if (activity) row.activity = activity;
-      if (costs.has(row.id)) row.has_cost_price = costs.get(row.id);
-      const idx = data.findIndex((d) => d.id === row.id);
-      if (idx >= 0) data[idx] = row; else data.unshift(row);
-      byId[row.id] = row;
-    }
-    for (const id of ids) { // requested but not returned = deleted
-      if (returned.has(id)) continue;
-      delete byId[id];
-      const idx = data.findIndex((d) => d.id === id);
-      if (idx >= 0) data.splice(idx, 1);
-    }
-    draw();
-    // draw() keeps the in-surface seg counts live; the two nav badges are set
-    // once per full render, so refresh them here too.
-    setReviewBadge((data || []).filter((it) => needsReviewItem(it) || readyItem(it) || queueMatches(it, "edited")).length);
-    loadSyncCounts(["errors", "dirty"]).then((sc) => setShopBadge((sc.errors || 0) + (sc.dirty || 0))).catch(() => {});
-  }
 
   // ---- selection mode (phone-gallery style multi-select) ----
   const byId = Object.fromEntries(data.map((d) => [d.id, d]));
@@ -2408,8 +2227,8 @@ async function renderGallery(view, caps, opts = {}) {
       // One model everywhere: guided pricing. In Review it opens scoped to the
       // items on screen (selection mode); elsewhere it starts at the category
       // picker. The table tool stays reachable inside guided.
-      if (review) openGuidedPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
-      else openGuidedPricing(caps, refresh);
+      if (review) openRailwayPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
+      else openRailwayPricing(caps, refresh);
     }
     else if (cta.dataset.cta === "swipe") openSwipeReview(filtered, caps, { onChanged: refresh });
     else if (cta.dataset.cta === "retryai") {
@@ -2733,20 +2552,6 @@ async function renderGallery(view, caps, opts = {}) {
         apply();
         return;
       }
-      const del = e.target.closest("[data-del]");
-      if (del) {
-        e.stopPropagation();
-        const v = savedViews.find((x) => x.id === del.dataset.del);
-        const ok = await confirmSheet({ title: "Delete saved view?", message: v ? `“${v.name}” will be removed from all your devices.` : "", confirmText: "Delete", danger: true });
-        if (!ok) return;
-        const { error } = await supabase.from("saved_views").delete().eq("id", del.dataset.del);
-        if (error) { toast("Couldn't delete view: " + error.message); return; }
-        savedViews = savedViews.filter((x) => x.id !== del.dataset.del);
-        galleryPayload.savedViews = savedViews;
-        renderSmartShelves();
-        showSaved(); toast("View deleted");
-        return;
-      }
       const applyV = e.target.closest("[data-apply]");
       if (applyV) {
         const v = savedViews.find((x) => x.id === applyV.dataset.apply);
@@ -2759,19 +2564,6 @@ async function renderGallery(view, caps, opts = {}) {
         priceMin = p.priceMin || ""; priceMax = p.priceMax || ""; noPrice = !!p.noPrice; datePreset = p.datePreset || "all";
         apply(); showMaster(); toast(`Applied “${v.name}”`);
         return;
-      }
-      if (e.target.closest("#fsSaveView")) {
-        const name = await promptSheet({ title: "Save this view", label: "View name", placeholder: "e.g. Low stock, New arrivals", confirmText: "Save view" });
-        if (!name) return;
-        const serial = {};
-        for (const k in active) if (active[k]?.size) serial[k] = [...active[k]];
-        const payload = { active: serial, q, sortBy, priceMin, priceMax, noPrice, datePreset };
-        const { data: created, error } = await supabase.from("saved_views").insert({ name, payload }).select("id, name, payload").single();
-        if (error) { toast("Couldn't save view: " + error.message); return; }
-        savedViews.push(created);
-        galleryPayload.savedViews = savedViews;
-        renderSmartShelves();
-        showSaved(); toast("View saved");
       }
     });
 
@@ -2912,7 +2704,7 @@ async function renderGallery(view, caps, opts = {}) {
       // rows (read before the upsert), so Undo restores cleanly.
       const priorCost = new Map();
       if (costVal !== undefined) {
-        const { data: pc } = await supabase.from("item_costs").select("item_id, cost_price").in("item_id", ids);
+        const { data: pc } = await retiredMutationPath.from("item_costs").select("item_id, cost_price").in("item_id", ids);
         for (const r of pc || []) priorCost.set(r.item_id, r.cost_price);
       }
       const colKeys = Object.keys(col);
@@ -2926,11 +2718,11 @@ async function renderGallery(view, caps, opts = {}) {
       sh.close();
       try {
         if (Object.keys(col).length) {
-          const { error } = await supabase.from("items").update(col).in("id", ids);
+          const { error } = await retiredMutationPath.from("items").update(col).in("id", ids);
           if (error) throw error;
         }
         if (costVal !== undefined) {
-          const { error } = await supabase.from("item_costs")
+          const { error } = await retiredMutationPath.from("item_costs")
             .upsert(ids.map((id) => ({ item_id: id, cost_price: costVal })), { onConflict: "item_id" });
           if (error) throw error;
         }
@@ -2942,7 +2734,7 @@ async function renderGallery(view, caps, opts = {}) {
         if (Object.keys(attrChanges).length) {
           for (const it of items) {
             const merged = { ...(it.attributes || {}), ...attrChanges };
-            const { error } = await supabase.from("items").update({ attributes: merged }).eq("id", it.id);
+            const { error } = await retiredMutationPath.from("items").update({ attributes: merged }).eq("id", it.id);
             if (error) { console.error("bulk attr update failed", it.id, error); attrFailed.push(it.id); }
           }
         }
@@ -2962,15 +2754,15 @@ async function renderGallery(view, caps, opts = {}) {
                 const upd = { ...s.col };
                 if (attrKeys.length) upd.attributes = s.attributes;
                 if (Object.keys(upd).length) {
-                  const { error: uErr } = await supabase.from("items").update(upd).eq("id", s.id);
+                  const { error: uErr } = await retiredMutationPath.from("items").update(upd).eq("id", s.id);
                   if (uErr) throw uErr;
                 }
               }
               if (costVal !== undefined) {
                 const noPrior = editUndoSnapshot.filter((s) => s.cost == null).map((s) => s.id);
                 const hadPrior = editUndoSnapshot.filter((s) => s.cost != null);
-                if (noPrior.length) await supabase.from("item_costs").delete().in("item_id", noPrior);
-                if (hadPrior.length) await supabase.from("item_costs")
+                if (noPrior.length) await retiredMutationPath.from("item_costs").delete().in("item_id", noPrior);
+                if (hadPrior.length) await retiredMutationPath.from("item_costs")
                   .upsert(hadPrior.map((s) => ({ item_id: s.id, cost_price: s.cost })), { onConflict: "item_id" });
               }
               const undoChanges = new Map([...changesByItem].map(([id, arr]) =>
@@ -3006,7 +2798,7 @@ async function renderGallery(view, caps, opts = {}) {
     const workers = Array.from({ length: Math.min(6, rows.length) }, async () => {
       while (cursor < rows.length) {
         const row = rows[cursor++];
-        const { error } = await supabase.from("items").update({ confidence: row[valueKey] }).eq("id", row.id);
+        const { error } = await retiredMutationPath.from("items").update({ confidence: row[valueKey] }).eq("id", row.id);
         if (error) failed.push({ row, error });
         else successful.push(row);
       }
@@ -3095,7 +2887,7 @@ async function renderGallery(view, caps, opts = {}) {
         readiness.blockers.some((b) => b.issue === "price")
       );
       const action = hasPriceBlocker
-        ? { label: "Price items", onClick: () => { if (selectionMode) exitSelection(); openGuidedPricing(caps, refresh, { itemIds: ids }); } }
+        ? { label: "Price items", onClick: () => { if (selectionMode) exitSelection(); openRailwayPricing(caps, refresh, { itemIds: ids }); } }
         : null;
       toast(`Can't approve: ${reasons}.`, action);
       return;
@@ -3149,7 +2941,7 @@ async function renderGallery(view, caps, opts = {}) {
     }
 
     const prior = approveIds.map((id) => ({ id, status: byId[id]?.status }));
-    const { error } = await supabase.from("items").update({ status: "approved" }).in("id", approveIds);
+    const { error } = await retiredMutationPath.from("items").update({ status: "approved" }).in("id", approveIds);
     if (error) { toast("Approve failed: " + error.message); return; }
     // Optimistic: the write already succeeded, so reflect it locally and redraw
     // at once (no full network re-fetch). The activity log is fire-and-forget so
@@ -3176,7 +2968,7 @@ async function renderGallery(view, caps, opts = {}) {
         const byStatus = {};
         for (const p of prior) if (p.status) (byStatus[p.status] ||= []).push(p.id);
         for (const [st, sids] of Object.entries(byStatus)) {
-          const { error: uErr } = await supabase.from("items").update({ status: st }).in("id", sids);
+          const { error: uErr } = await retiredMutationPath.from("items").update({ status: st }).in("id", sids);
           if (uErr) { toast("Undo failed: " + uErr.message); return; }
         }
         for (const p of prior) if (byId[p.id]) byId[p.id].status = p.status;
@@ -3228,7 +3020,7 @@ async function renderGallery(view, caps, opts = {}) {
           const ids = [...selected];
           sh.close();
           exitSelection();
-          openGuidedPricing(caps, refresh, { itemIds: ids });
+          openRailwayPricing(caps, refresh, { itemIds: ids });
           return;
         }
         if (e.target.closest("[data-clearsel]")) { sh.close(); clearSel(); return; }
@@ -3264,9 +3056,9 @@ async function renderGallery(view, caps, opts = {}) {
           }
           sh.close();
           const paths = ids.map((id) => byId[id]?.image_path).filter(Boolean);
-          const { error } = await supabase.from("items").delete().in("id", ids);
+          const { error } = await retiredMutationPath.from("items").delete().in("id", ids);
           if (error) { toast("Delete failed: " + error.message); return; }
-          if (paths.length) await supabase.storage.from("product-images").remove(paths);
+          if (paths.length) await retiredMutationPath.storage.from("product-images").remove(paths);
           toast(`Deleted ${ids.length} item${ids.length === 1 ? "" : "s"}`);
           refresh();
         }

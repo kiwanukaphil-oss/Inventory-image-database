@@ -1,7 +1,4 @@
-import { supabase } from "./db.js";
-import { resolveFields, normalizeValue, normalizeAttributeValue, categoryPath } from "./data.js";
-import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
-import { diffItemValues, logItemActivity } from "./activity.js";
+import { resolveFields, categoryPath } from "./data.js";
 import { esc, trapFocus, isTopOverlay } from "./ui.js";
 import { extractCatalogItemWithAi } from "./catalogAi.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
@@ -13,13 +10,6 @@ import { canRunCatalogAi } from "./lib/railway-catalog-ui.js";
 // overwritten; every change is audited and carries a confidence dot.
 
 const CONCURRENCY = 2; // keep Anthropic vision calls below overload-prone bursts
-const AI_PLACEHOLDER = new Set(["unknown", "n/a", "na", "none", "null", "-", "--", "not visible", "not specified", "unspecified"]);
-
-function cleanAiVisibleText(value) {
-  const text = String(value || "").trim();
-  return text && !AI_PLACEHOLDER.has(text.toLowerCase()) ? text : "";
-}
-
 /**
  * Open the bulk-AI modal for the given items.
  * @param {Array} items  item rows (need id, category_id, attributes, brand, image_path, status)
@@ -145,88 +135,17 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
         branchId: it.branch_id,
       });
 
-      if (isRailwayCatalogMode) {
-        const appliedCount = data.applied_fields?.length || 0;
-        if (appliedCount > 0) {
-          filled++;
-          logLine(`âœ“ ${label} â€” filled ${appliedCount} field${appliedCount === 1 ? "" : "s"}`);
-        } else {
-          skipped++;
-          logLine(`Â· ${label} â€” nothing to fill`);
-        }
-        return;
-      }
-
-      // Vocab map for normalization.
-      const vocabByKey = { brand: "brand" };
-      const typeByKey = {};
-      for (const d of defs) { if (d.vocab) vocabByKey[d.key] = d.vocab; typeByKey[d.key] = d.type; }
-
-      const attributes = { ...(it.attributes || {}) };
-      const confidence = { ...(it.confidence || {}) };
-      let changed = 0;
-      let newBrand = it.brand;
-      let newName = it.name;
-
-      for (const [key, raw] of Object.entries(data.values || {})) {
-        if (raw === null || raw === undefined || raw === "") continue;
-        if (AI_PLACEHOLDER.has(String(raw).trim().toLowerCase())) continue;
-        let val = String(raw);
-        if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
-
-        if (key === "brand") {
-          if (onlyEmpty && it.brand) continue;
-          if (val !== (it.brand || "")) { newBrand = val; changed++; }
-          if (data.confidence?.brand) confidence.brand = data.confidence.brand;
-          continue;
-        }
-        if (key === "name") {
-          if (onlyEmpty && it.name) continue;
-          if (val !== (it.name || "")) { newName = val; changed++; }
-          if (data.confidence?.name) confidence.name = data.confidence.name;
-          continue;
-        }
-        const existing = attributes[key];
-        if (onlyEmpty && existing !== undefined && existing !== null && existing !== "") continue;
-        val = normalizeAttributeValue(it.category_id, key, val);
-        const finalVal = typeByKey[key] === "number" ? Number(val) : val;
-        if (finalVal !== existing) {
-          attributes[key] = finalVal;
-          if (data.confidence?.[key]) confidence[key] = data.confidence[key];
-          changed++;
-        }
-      }
-
-      const visibleText = cleanAiVisibleText(data.visible_text);
-      if (changed > 0 || visibleText) {
-        const update = { attributes, confidence, brand: newBrand, name: newName };
-        if (visibleText) update.ai_visible_text = visibleText;
-        // Surface freshly AI-touched drafts for review.
-        if (changed > 0 && it.status === "draft") update.status = "needs-review";
-        const { error: upErr } = await supabase.from("items").update(update).eq("id", it.id);
-        if (upErr) throw upErr;
-        if (changed > 0) {
-          await logItemActivity(
-            it.id,
-            "ai_fill",
-            "ai",
-            diffItemValues(it, { ...it, ...update }),
-            `AI filled ${changed} field${changed === 1 ? "" : "s"}`
-          );
-          filled++;
-          logLine(`✓ ${label} — filled ${changed} field${changed === 1 ? "" : "s"}`);
-        } else {
-          skipped++;
-          logLine(`· ${label} — saved AI text`);
-        }
+      const appliedCount = data.applied_fields?.length || 0;
+      if (appliedCount > 0) {
+        filled++;
+        logLine(`âœ“ ${label} â€” filled ${appliedCount} field${appliedCount === 1 ? "" : "s"}`);
       } else {
         skipped++;
-        logLine(`· ${label} — nothing to fill`);
+        logLine(`Â· ${label} â€” nothing to fill`);
       }
-      await clearItemJobFailures(it.id, "ai_fill");
     } catch (e) {
       failed++;
-      await recordItemJobFailure(it.id, "ai_fill", e, (it.latest_ai_job?.attempt_count || 0) + 1);
+      console.error("Railway catalog AI fill failed", it.id, e);
       logLine(`<span style="color:var(--flag-txt)">✕ ${label} — ${esc(e?.message || e)}</span>`);
     } finally {
       done++;

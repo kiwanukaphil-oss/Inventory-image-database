@@ -1,32 +1,18 @@
-name: Keep Supabase awake
+name: Retired database keepalive
 
-# Supabase's free tier pauses a project after ~7 days with no activity. This
-# scheduled job pings the project's REST API every 3 days so it never sleeps.
-# Reuses the same repo secrets as the deploy workflow.
+# CANDIDATE FOR REMOVAL: retained for one review phase as migration evidence.
+# It has no schedule, credentials, network request, or runnable job.
 
 on:
-  schedule:
-    - cron: "0 6 */3 * *" # 06:00 UTC, every 3rd day
-  workflow_dispatch: # allow manual runs
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  ping:
+  retired:
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Ping Supabase REST API
-        env:
-          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-        run: |
-          code=$(curl -sS -o /dev/null -w "%{http_code}" \
-            "$SUPABASE_URL/rest/v1/" \
-            -H "apikey: $SUPABASE_ANON_KEY")
-          echo "Supabase REST responded: $code"
-          # Any HTTP response means the project handled a request (kept awake).
-          if [ -z "$code" ] || [ "$code" = "000" ]; then
-            echo "No response from Supabase"; exit 1
-          fi
+      - run: echo "Legacy keepalive retired; Railway services use platform health checks."

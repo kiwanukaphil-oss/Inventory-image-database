@@ -1,18 +1,15 @@
-// Best-effort client error reporting (audit P4). Sends browser errors to the
-// Supabase `client_errors` table so field failures on phones aren't invisible.
+// Best-effort client error reporting. Until the Railway API exposes a dedicated
+// telemetry endpoint, errors remain local to browser diagnostics.
 //
 // Hard rule: logging must NEVER cause an error itself — every send is wrapped
 // and swallowed. A session-bounded cap + dedupe stop a render loop from
 // flooding the table.
-import { supabase } from "./db.js";
-
 const MAX_PER_SESSION = 25;
 const seenKeys = new Set(); // dedupe identical context+message
 let sentCount = 0;
 
-// Never persist query strings or fragments. Supabase auth callbacks and other
-// integrations can place short-lived credentials there, and telemetry must not
-// become a second credential store.
+// Never retain query strings or fragments because integrations can place
+// short-lived credentials there.
 export function safeTelemetryUrl(value = globalThis.location?.href) {
   if (!value) return null;
   try {
@@ -24,24 +21,19 @@ export function safeTelemetryUrl(value = globalThis.location?.href) {
 }
 
 // Insert one report, respecting the per-session cap and dedupe. Never throws.
-async function postError({ context, message, stack, severity = "error" }) {
+function postError({ context, message, stack, severity = "error" }) {
   if (sentCount >= MAX_PER_SESSION) return;
   const key = `${context}|${message}`.slice(0, 200);
   if (seenKeys.has(key)) return;
   seenKeys.add(key);
   sentCount++;
-  try {
-    await supabase.from("client_errors").insert({
-      context: context || null,
-      message: (message || "").slice(0, 2000),
-      stack: stack ? String(stack).slice(0, 8000) : null,
-      url: safeTelemetryUrl(),
-      user_agent: navigator.userAgent,
-      severity,
-    });
-  } catch {
-    /* never let logging surface an error */
-  }
+  console.error("Catalog client error", {
+    context: context || null,
+    message: (message || "").slice(0, 2000),
+    stack: stack ? String(stack).slice(0, 8000) : null,
+    url: safeTelemetryUrl(),
+    severity,
+  });
 }
 
 // Report a caught error from a known site (e.g. the app's top-level catch).
