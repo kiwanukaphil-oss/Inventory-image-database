@@ -8,13 +8,6 @@ export default defineConfig(() => ({
   build: {
     outDir: "dist",
     sourcemap: false,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes("node_modules/@supabase/")) return "supabase";
-        },
-      },
-    },
   },
   server: { port: 5173, host: true }, // host:true exposes on LAN for phone testing
   plugins: [
@@ -57,16 +50,15 @@ export default defineConfig(() => ({
       workbox: {
         // A tiny extra SW script receives the share POST (see public/sw-share.js).
         importScripts: ["/sw-share.js"],
-        // Precache the app shell only. Supabase REST/Auth/Storage calls are XHR
-        // (not navigations) and are never matched here, so live data is always
-        // fetched fresh — exactly what we want.
+        // Precache the app shell only. Railway API calls are never cached, so
+        // authenticated catalog data is always fetched fresh.
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         // Inter ships Latin/Cyrillic/Greek/Vietnamese subsets; this app is Latin
         // only, so keep just latin (+latin-ext) in the offline precache. The
         // browser still only requests the subset a glyph needs at runtime.
         globIgnores: ["**/inter-cyrillic*", "**/inter-greek*", "**/inter-vietnamese*"],
         navigateFallback: "index.html",
-        navigateFallbackDenylist: [/^\/api/, /supabase\.co/, /^\/share-target/],
+        navigateFallbackDenylist: [/^\/api/, /^\/share-target/],
         cleanupOutdatedCaches: true,
       },
     }),

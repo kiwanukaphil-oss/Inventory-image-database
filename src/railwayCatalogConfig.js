@@ -7,7 +7,8 @@
 
 const configuredApiUrl = String(import.meta.env.VITE_CATALOG_API_URL || "").trim();
 
-export const isRailwayCatalogMode = Boolean(configuredApiUrl);
+export const isRailwayCatalogMode = true;
+export const isRailwayCatalogConfigured = Boolean(configuredApiUrl);
 export const railwayCatalogApiUrl = configuredApiUrl.replace(/\/+$/, "");
 export const railwayCatalogTokenKey = "kline.catalog.pos-token";
 export const railwayCatalogUserKey = "kline.catalog.pos-user";

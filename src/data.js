@@ -1,12 +1,4 @@
-import { supabase } from "./db.js";
 import { requestRailwayCatalog } from "./railwayCatalogApi.js";
-import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
-import {
-  branchVariantKey,
-  defaultPosBranchId,
-  mergeBranchMirror,
-  storedPosBranchId,
-} from "./posbranches.js";
 
 // Loads and caches the reference data that drives the UI: the category tree,
 // per-category field definitions (with inheritance), and the controlled
@@ -17,60 +9,21 @@ let cache = null;
 
 export async function loadRefData(force = false) {
   if (cache && !force) return cache;
-  if (isRailwayCatalogMode) {
-    const payload = await requestRailwayCatalog("/catalog/reference-data");
-    const categories = payload.data?.categories || [];
-    const fields = payload.data?.fields || [];
-    const vocabByField = {};
-    for (const vocabulary of payload.data?.vocabularies || []) {
-      if (vocabulary.active === false) continue;
-      (vocabByField[vocabulary.field] ||= []).push(vocabulary);
-    }
-    cache = {
-      categories,
-      byId: Object.fromEntries(categories.map((category) => [category.id, category])),
-      fields,
-      vocabByField,
-      settings: payload.data?.settings || {},
-    };
-    return cache;
-  }
-  // Explicit cap so ref-data never silently truncates at PostgREST's 1,000-row
-  // default — a shop with >1,000 categories/fields/vocab would otherwise load
-  // incomplete data with no warning.
-  const REF_DATA_LIMIT = 10000;
-  const [cats, fields, vocab, settings] = await Promise.all([
-    supabase.from("categories").select("id, slug, name, parent_id, sort, sku_token").limit(REF_DATA_LIMIT),
-    supabase
-      .from("category_fields")
-      .select("category_id, key, label, type, options, vocab, required, inherit, sort")
-      .limit(REF_DATA_LIMIT),
-    supabase.from("vocabularies").select("field, canonical, aliases, active").limit(REF_DATA_LIMIT),
-    supabase.from("app_settings").select("key, value").limit(REF_DATA_LIMIT),
-  ]);
-
-  // Ref data is load-bearing (cards/editor render blank without it). Keep the
-  // graceful `|| []` fallback below, but surface a failure instead of a silent
-  // degraded UI (Q3). app_settings can legitimately be missing on older DBs.
-  if (cats.error) console.warn("ref data: categories failed —", cats.error.message);
-  if (fields.error) console.warn("ref data: category_fields failed —", fields.error.message);
-  if (vocab.error) console.warn("ref data: vocabularies failed —", vocab.error.message);
-  if (settings.error) console.warn("ref data: app_settings failed —", settings.error.message);
-
-  const categories = cats.data || [];
-  const byId = Object.fromEntries(categories.map((c) => [c.id, c]));
-
-  // Group vocab by field name.
+  const payload = await requestRailwayCatalog("/catalog/reference-data");
+  const categories = payload.data?.categories || [];
+  const fields = payload.data?.fields || [];
   const vocabByField = {};
-  for (const v of vocab.data || []) {
-    if (v.active === false) continue;
-    (vocabByField[v.field] ||= []).push(v);
+  for (const vocabulary of payload.data?.vocabularies || []) {
+    if (vocabulary.active === false) continue;
+    (vocabByField[vocabulary.field] ||= []).push(vocabulary);
   }
-
-  // Shop-wide settings (empty if the table isn't there yet).
-  const settingsMap = Object.fromEntries((settings.data || []).map((s) => [s.key, s.value]));
-
-  cache = { categories, byId, fields: fields.data || [], vocabByField, settings: settingsMap };
+  cache = {
+    categories,
+    byId: Object.fromEntries(categories.map((category) => [category.id, category])),
+    fields,
+    vocabByField,
+    settings: payload.data?.settings || {},
+  };
   return cache;
 }
 
@@ -87,65 +40,19 @@ export function getSetting(key, def = "") {
  * migration 0018 isn't applied yet, so every caller degrades gracefully.
  */
 export async function loadPosMirror() {
-  if (isRailwayCatalogMode) {
-    // POS data is already live in the shared Railway database. The dedicated
-    // direct-stock read model belongs to the publication slice; return a neutral
-    // structure here so the Phase B gallery never consults Supabase mirrors.
-    return {
-      branches: [],
-      branchRows: [],
-      globalRows: [],
-      globalByVariant: new Map(),
-      byBranchVariant: new Map(),
-      byVariant: new Map(),
-      defaultBranchId: null,
-      selectedBranchId: null,
-      forBranch: () => new Map(),
-      lastMirror: null,
-    };
-  }
-  const [mirror, branchStock, branchesResult, run] = await Promise.all([
-    // select(*) so the call survives column additions that the deployed app
-    // predates (e.g. the 0019 window columns) — callers default missing keys.
-    supabase
-      .from("pos_stock_mirror")
-      .select("*"),
-    supabase
-      .from("pos_branch_stock")
-      .select("*"),
-    supabase
-      .from("pos_branches")
-      .select("pos_branch_id, code, name, status, is_default, is_enabled, timezone, mirrored_at")
-      .order("is_default", { ascending: false })
-      .order("code", { ascending: true }),
-    supabase
-      .from("pos_sync_runs")
-      .select("finished_at, ok, error")
-      .eq("kind", "mirror")
-      .order("started_at", { ascending: false })
-      .limit(1),
-  ]);
-  const globalRows = mirror.data || [];
-  const branchRows = branchStock.data || [];
-  const branches = branchesResult.data || [];
-  const globalByVariant = new Map(globalRows.map((r) => [r.pos_variant_id, r]));
-  const byBranchVariant = new Map(
-    branchRows.map((r) => [branchVariantKey(r.pos_branch_id, r.pos_variant_id), r])
-  );
-  const defaultBranchId = defaultPosBranchId(branches);
-  const selectedBranchId = storedPosBranchId(branches) || defaultBranchId;
-  const byVariant = mergeBranchMirror(globalRows, branchRows, selectedBranchId);
+  // Stock distribution is returned with each Railway catalog item. Preserve
+  // this neutral legacy-shaped value for shared display helpers.
   return {
-    branches,
-    branchRows,
-    globalRows,
-    globalByVariant,
-    byBranchVariant,
-    byVariant,
-    defaultBranchId,
-    selectedBranchId,
-    forBranch: (branchId) => mergeBranchMirror(globalRows, branchRows, branchId || defaultBranchId),
-    lastMirror: (run.data || [])[0] || null,
+    branches: [],
+    branchRows: [],
+    globalRows: [],
+    globalByVariant: new Map(),
+    byBranchVariant: new Map(),
+    byVariant: new Map(),
+    defaultBranchId: null,
+    selectedBranchId: null,
+    forBranch: () => new Map(),
+    lastMirror: null,
   };
 }
 

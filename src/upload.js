@@ -1,4 +1,3 @@
-import { supabase } from "./db.js";
 import { loadRefData, loadPosMirror, resolveFields, categoryPath, vocabSuggestions, normalizeValue, normalizeAttributeValue } from "./data.js";
 import { enabledBranches, storedPosBranchId, storePosBranchId } from "./posbranches.js";
 import { compressImage } from "./imageCompress.js";
@@ -7,15 +6,12 @@ import {
   clearQueuedPhotos,
   deleteQueuedAiTask,
   deleteQueuedPhoto,
-  isExistingStorageObjectError,
   loadQueuedAiTasks,
   loadQueuedPhotos,
   preferredUploadConcurrency,
   saveQueuedAiTask,
   saveQueuedPhoto,
 } from "./uploadQueue.js";
-import { clearItemJobFailures, recordItemJobFailure } from "./joblog.js";
-import { diffItemValues, logItemActivity } from "./activity.js";
 import { dHash, hammingHex } from "./imagehash.js";
 import { esc, toast, trapFocus, ICON } from "./ui.js";
 import { extractCatalogItemWithAi } from "./catalogAi.js";
@@ -72,11 +68,6 @@ function clearUploadDefaults() {
   try { localStorage.removeItem(UPLOAD_DEFAULTS_KEY); } catch {}
 }
 
-function cleanAiVisibleText(value) {
-  const text = String(value || "").trim();
-  return text && !["unknown", "n/a", "none", "null", "-", "--"].includes(text.toLowerCase()) ? text : "";
-}
-
 // Pick up any photos shared into the app via the PWA share target (stashed in a
 // Cache by public/sw-share.js), hand them to the Add flow, then clear the cache
 // so a later visit doesn't re-import them. Safe no-op when nothing was shared.
@@ -103,82 +94,20 @@ async function consumeSharedMedia(addFiles) {
 // Run the vision extractor on a freshly-uploaded item and fill any fields that
 // are still empty (never overrides the batch-common values the user set).
 async function aiFillItem(id, common) {
-  const defs = [
-    { key: "brand", label: "Brand" },
-    { key: "name", label: "Product name" },
-    ...resolveFields(common.categoryId).map((f) => ({ key: f.key, label: f.label, type: f.type, options: f.options, vocab: f.vocab })),
-  ];
   const data = await extractCatalogItemWithAi({
     itemId: id,
-    category: categoryPath(common.categoryId),
-    fields: defs,
     branchId: common.posBranchId,
   });
   if (!data?.values) throw new Error("AI returned no values.");
-
-  if (isRailwayCatalogMode) {
-    return {
-      brand: data.item?.brand || common.brand || null,
-      name: data.item?.name || null,
-      filled: data.applied_fields?.length || 0,
-      confidence: data.item?.confidence || data.confidence || {},
-      stockQuantity: Number(data.item?.stock_quantity) || 1,
-      stockDistribution: data.item?.stock_distribution || null,
-      stockDistributionSource: data.item?.stock_distribution_source || null,
-    };
-  }
-
-  const vocabByKey = { brand: "brand" };
-  const typeByKey = {};
-  for (const d of defs) { if (d.vocab) vocabByKey[d.key] = d.vocab; typeByKey[d.key] = d.type; }
-
-  const attributes = { ...common.attributes };
-  const confidence = {};
-  let brand = common.brand;
-  let name = null;
-  let filled = 0; // fields the AI actually set (drives the needs-review promotion)
-  for (const [key, raw] of Object.entries(data.values)) {
-    if (raw === null || raw === undefined || raw === "") continue;
-    let val = String(raw);
-    if (vocabByKey[key]) val = normalizeValue(vocabByKey[key], val);
-    if (key === "brand") { if (!brand) { brand = val; filled++; } if (data.confidence?.brand) confidence.brand = data.confidence.brand; continue; }
-    if (key === "name") { if (!name) { name = val; filled++; } if (data.confidence?.name) confidence.name = data.confidence.name; continue; }
-    if (attributes[key] !== undefined && attributes[key] !== "") continue; // keep batch-common values
-    val = normalizeAttributeValue(common.categoryId, key, val);
-    attributes[key] = typeByKey[key] === "number" ? Number(val) : val;
-    if (data.confidence?.[key]) confidence[key] = data.confidence[key];
-    filled++;
-  }
-  const update = { brand, name, attributes, confidence };
-  const visibleText = cleanAiVisibleText(data.visible_text);
-  if (visibleText) update.ai_visible_text = visibleText;
-  // Same rule as bulk AI-fill: an AI-touched draft surfaces in Review rather
-  // than sitting silently as a confident-but-unchecked draft.
-  if (filled && common.status === "draft") update.status = "needs-review";
-  const before = {
-    id,
-    category_id: common.categoryId,
-    brand: common.brand,
-    name: null,
-    attributes: common.attributes || {},
-    confidence: {},
-    status: common.status,
-    stock_quantity: 1,
+  return {
+    brand: data.item?.brand || common.brand || null,
+    name: data.item?.name || null,
+    filled: data.applied_fields?.length || 0,
+    confidence: data.item?.confidence || data.confidence || {},
+    stockQuantity: Number(data.item?.stock_quantity) || 1,
+    stockDistribution: data.item?.stock_distribution || null,
+    stockDistributionSource: data.item?.stock_distribution_source || null,
   };
-  const { error: upErr } = await supabase.from("items").update(update).eq("id", id);
-  if (upErr) throw upErr;
-  if (filled) {
-    await logItemActivity(
-      id,
-      "ai_fill",
-      "ai",
-      diffItemValues(before, { ...before, ...update }),
-      `AI filled ${filled} field${filled === 1 ? "" : "s"} after upload`
-    );
-  }
-  await clearItemJobFailures(id, "ai_fill");
-  // Return what the AI read so live surfaces (burst filmstrip) can show it.
-  return { brand, name, filled, confidence };
 }
 
 // Leaf categories (no children) are where items actually go.
@@ -802,13 +731,7 @@ export async function renderUpload(view, caps, onDone) {
       if (!s) return;
       if (!s.id) { if (s.url) URL.revokeObjectURL(s.url); return; } // not uploaded yet
       try {
-        if (isRailwayCatalogMode) {
-          await requestRailwayCatalog(`/catalog/items/${encodeURIComponent(s.id)}`, { method: "DELETE" });
-        } else {
-          const { error } = await supabase.from("items").delete().eq("id", s.id);
-          if (error) throw error;
-          if (s.path) await supabase.storage.from("product-images").remove([s.path]);
-        }
+        await requestRailwayCatalog(`/catalog/items/${encodeURIComponent(s.id)}`, { method: "DELETE" });
         if (s.url) URL.revokeObjectURL(s.url); // free the thumb only once the row is really gone
       } catch (e) {
         // R3: the unit is still in the DB — re-surfacing it keeps the captured
@@ -938,7 +861,7 @@ export async function renderUpload(view, caps, onDone) {
         } catch (error) {
           failedIds.push(task.itemId);
           if (!firstError) firstError = error?.message || String(error);
-          await recordItemJobFailure(task.itemId, "ai_fill", error);
+          console.error("Railway queued AI fill failed", task.itemId, error);
           await deleteQueuedAiTask(task.itemId).catch(() => {});
           console.error("queued ai-fill failed", task.itemId, error);
         } finally {
@@ -1015,130 +938,55 @@ export async function renderUpload(view, caps, onDone) {
     }
     const id = entry.itemId || uuid();
     const ext = prepared.ext;
-    const path = `${common.slug}/${id}.${ext}`;
-    if (isRailwayCatalogMode) {
-      const formData = new FormData();
-      formData.append("id", id);
-      formData.append("category_id", common.categoryId);
-      formData.append("status", common.status);
-      formData.append("brand", common.brand || "");
-      formData.append("attributes", JSON.stringify(common.attributes || {}));
-      formData.append(
-        "image",
-        prepared.blob,
-        entry.originalName || entry.file.name || `${id}.${ext}`
-      );
-      const payload = await requestRailwayCatalog("/catalog/items", {
-        method: "POST",
-        body: formData,
-        branchId: common.posBranchId,
-      });
-      const storedItem = payload.data;
-      if (!storedItem?.id || !storedItem?.image_path) {
-        throw new Error("Catalog service returned an incomplete upload result.");
-      }
-      onUploaded?.(storedItem.id);
-      if (common.ai) {
-        try {
-          const ai = await aiFillItem(storedItem.id, common);
-          return {
-            id: storedItem.id,
-            path: storedItem.image_path,
-            aiFailed: false,
-            aiError: "",
-            ai,
-          };
-        } catch (error) {
-          console.error("Railway AI fill failed after catalog intake", error);
-          return {
-            id: storedItem.id,
-            path: storedItem.image_path,
-            aiFailed: true,
-            aiError: error?.message || String(error),
-            ai: null,
-          };
-        }
-      }
-      return {
-        id: storedItem.id,
-        path: storedItem.image_path,
-        aiFailed: false,
-        aiError: "",
-        ai: null,
-      };
+    const formData = new FormData();
+    formData.append("id", id);
+    formData.append("category_id", common.categoryId);
+    formData.append("status", common.status);
+    formData.append("brand", common.brand || "");
+    formData.append("attributes", JSON.stringify(common.attributes || {}));
+    formData.append(
+      "image",
+      prepared.blob,
+      entry.originalName || entry.file.name || `${id}.${ext}`
+    );
+    const payload = await requestRailwayCatalog("/catalog/items", {
+      method: "POST",
+      body: formData,
+      branchId: common.posBranchId,
+    });
+    const storedItem = payload.data;
+    if (!storedItem?.id || !storedItem?.image_path) {
+      throw new Error("Catalog service returned an incomplete upload result.");
     }
-    const existingLookup = await supabase
-      .from("items")
-      .select("id,image_path")
-      .eq("id", id)
-      .maybeSingle();
-    if (existingLookup.error) throw existingLookup.error;
-    let existingItem = existingLookup.data;
-    let insertedItem = false;
-    let createdStorageObject = false;
-
-    if (!existingItem) {
-      const uploadResult = await supabase.storage.from("product-images")
-        .upload(path, prepared.blob, {
-          contentType: prepared.blob.type || "image/webp",
-          upsert: false,
-        });
-      if (uploadResult.error && !isExistingStorageObjectError(uploadResult.error)) {
-        throw uploadResult.error;
-      }
-      createdStorageObject = !uploadResult.error;
-
-      const insertResult = await supabase.from("items").insert({
-        id, category_id: common.categoryId, brand: common.brand,
-        attributes: common.attributes, status: common.status,
-        image_path: path, original_filename: entry.originalName || entry.file.name,
-        // One photo = one unit (workflow rule): every physical unit gets its own
-        // photo as evidence, so the receipt quantity is always 1 — never a total.
-        stock_quantity: 1,
-        pos_branch_id: common.posBranchId,
-      });
-      if (insertResult.error) {
-        const retryLookup = await supabase
-          .from("items")
-          .select("id,image_path")
-          .eq("id", id)
-          .maybeSingle();
-        existingItem = retryLookup.data;
-        if (!existingItem) {
-          if (createdStorageObject) {
-            await supabase.storage.from("product-images").remove([path]).catch(() => {});
-          }
-          throw insertResult.error;
-        }
-      } else {
-        insertedItem = true;
-      }
-    }
-
-    if (existingItem?.image_path && existingItem.image_path !== path) {
-      throw new Error("The recovered upload ID points to a different stored image.");
-    }
-    if (insertedItem) {
-      try {
-        await logItemActivity(id, "upload", "upload", [], "Uploaded product photo");
-      } catch (error) {
-        console.error("upload activity logging failed", error);
-      }
-    }
-    onUploaded?.(id);
-    // Opt-in: read the photo and fill any still-empty fields. Soft-fails — the
-    // photo is already saved, so an AI hiccup never fails the upload.
+    onUploaded?.(storedItem.id);
     if (common.ai) {
       try {
-        const ai = await aiFillItem(id, common);
-        return { id, path, aiFailed: false, aiError: "", ai };
-      } catch (e) {
-        await recordItemJobFailure(id, "ai_fill", e);
-        console.error("ai-fill failed", e);
-        return { id, path, aiFailed: true, aiError: e?.message || String(e), ai: null };
+        const ai = await aiFillItem(storedItem.id, common);
+        return {
+          id: storedItem.id,
+          path: storedItem.image_path,
+          aiFailed: false,
+          aiError: "",
+          ai,
+        };
+      } catch (error) {
+        console.error("Railway AI fill failed after catalog intake", error);
+        return {
+          id: storedItem.id,
+          path: storedItem.image_path,
+          aiFailed: true,
+          aiError: error?.message || String(error),
+          ai: null,
+        };
       }
     }
-    return { id, path, aiFailed: false, aiError: "", ai: null };
+    return {
+      id: storedItem.id,
+      path: storedItem.image_path,
+      aiFailed: false,
+      aiError: "",
+      ai: null,
+    };
   }
 
   const barFill = $("#barFill");
@@ -1203,7 +1051,7 @@ export async function renderUpload(view, caps, onDone) {
               aiFailedIds.push(result.id);
               const queueError = new Error("AI fill could not be saved for background processing.");
               if (!firstAiError) firstAiError = queueError.message;
-              await recordItemJobFailure(result.id, "ai_fill", queueError);
+              console.error("Railway AI task persistence failed", result.id, queueError);
               console.error("ai task persistence failed", error);
             }
           }
