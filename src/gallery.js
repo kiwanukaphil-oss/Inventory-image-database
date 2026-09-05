@@ -34,6 +34,7 @@ import { parsePrice, stripPriceGrouping } from "./lib/price.js";
 import { classifyVerificationRisk, verificationRiskRank } from "./lib/review-risk.js";
 import { fetchBoundedRailwayCatalog } from "./lib/railway-catalog-pagination.js";
 import { catalogItemNeedsRetailPrice } from "./lib/catalog-pricing-plan.js";
+import { catalogPriceRange } from './lib/pricing-workspace.js';
 import {
   DEFAULT_GALLERY_RENDER_BATCH_SIZE,
   initialGalleryRenderLimit,
@@ -702,6 +703,14 @@ async function fetchGalleryPayload(caps) {
   return fetchRailwayGalleryPayload(caps);
 }
 
+/** Photo cards summarize sellable prices and expose any remaining size gaps. */
+function fmtItemPrice(item) {
+  const range = catalogPriceRange(item);
+  if (range.min === null) return 'Missing price';
+  const label = range.min === range.max ? fmtPrice(range.min) : `${fmtPrice(range.min)}–${fmtPrice(range.max)}`;
+  return `${label}${range.missing ? ` · ${range.missing} unpriced` : ''}`;
+}
+
 async function loadGalleryPayload(caps, { force = false } = {}) {
   const key = galleryCacheKey(caps);
   const fresh = galleryPayloadCache
@@ -805,7 +814,7 @@ async function openCatalogItem(id, caps, onSave) {
           ${catalogDetailRowHtml({ label: "Category", value: categoryPath(item.category_id) || item.categories?.name || "Uncategorized", missing: false })}
           ${catalogDetailRowHtml({ label: "Branch", value: item.branch_code || catalogBranchLabel(caps, item.branch_id), missing: false })}
           ${catalogDetailRowHtml({ label: "Status", value: statusLabel(item.status), missing: false })}
-          ${catalogDetailRowHtml({ label: "Pricing", value: `${pricedVariantCount}/${variantCount} variants priced${item.price == null ? "" : ` · default ${fmtPrice(item.price)}`}`, missing: pricedVariantCount < variantCount })}
+          ${catalogDetailRowHtml({ label: "Pricing", value: `${fmtItemPrice(item)} · ${pricedVariantCount}/${variantCount} variants priced`, missing: pricedVariantCount < variantCount })}
         </div>
       </section>
       <section class="catalog-detail-section">
@@ -1559,7 +1568,7 @@ async function renderGallery(view, caps, opts = {}) {
         ${verificationDetailsHtml(it)}
         ${missingDetailsHtml(it)}
         <div class="cmeta">
-          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
+          <span class="${catalogPriceRange(it).min === null ? 'noprice' : 'cprice'}">${fmtItemPrice(it)}</span>
           <span class="cdate">${fmtDate(it.created_at)}</span>
         </div>
       </div>
@@ -1589,7 +1598,7 @@ async function renderGallery(view, caps, opts = {}) {
       <div class="row-main">
         <div class="row-top">
           <span class="row-title"><span class="row-brand">${esc(brand)}</span>${cat ? `<span class="row-cat">${esc(cat)}</span>` : ""}</span>
-          ${it.price != null ? `<span class="cprice">${fmtPrice(it.price)}</span>` : `<span class="noprice">Missing price</span>`}
+          <span class="${catalogPriceRange(it).min === null ? 'noprice' : 'cprice'}">${fmtItemPrice(it)}</span>
         </div>
         ${variant ? `<div class="row-sub"><span class="row-attr">${variant}</span></div>` : ""}
         ${lotSummary ? `<div class="row-sub catalog-lot-summary">${esc(lotSummary)}</div>` : ""}
@@ -1887,7 +1896,7 @@ async function renderGallery(view, caps, opts = {}) {
           ${activityBadgesHtml(it)}
           ${posChipHtml(it)}
         </div>
-        <div class="preview-price">${it.price != null ? fmtPrice(it.price) : "Missing price"}</div>
+        <div class="preview-price">${fmtItemPrice(it)}</div>
         <div class="preview-readiness ${tone}">
           <div><b>${esc(title)}</b><span>${esc(readiness.primary?.action || "Review item")}</span></div>
           <ul>${previewIssueList(readiness)}</ul>
@@ -2223,11 +2232,9 @@ async function renderGallery(view, caps, opts = {}) {
     if (!cta) return;
     if (cta.dataset.cta === "noprice") { noPrice = true; priceMin = ""; priceMax = ""; draw(); pills(); }
     else if (cta.dataset.cta === "setprices") {
-      // One model everywhere: guided pricing. In Review it opens scoped to the
-      // items on screen (selection mode); elsewhere it starts at the category
-      // picker. The table tool stays reachable inside guided.
-      if (review) openRailwayPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
-      else openRailwayPricing(caps, refresh);
+      // Carry the visible merchandise into pricing in both Catalog and Review.
+      // Guided rules and the group table share this exact selection.
+      openRailwayPricing(caps, refresh, { itemIds: filtered.map((it) => it.id) });
     }
     else if (cta.dataset.cta === "swipe") openSwipeReview(filtered, caps, { onChanged: refresh });
     else if (cta.dataset.cta === "retryai") {
@@ -3374,7 +3381,7 @@ async function renderToday(view, caps, actions = {}) {
 
   function todayThumbHtml(it, url) {
     const title = todayItemTitle(it);
-    const sub = [it.categories?.name, it.price != null ? fmtPrice(it.price) : "Missing price"].filter(Boolean).join(" / ");
+    const sub = [it.categories?.name, fmtItemPrice(it)].filter(Boolean).join(" / ");
     return `<button class="today-thumb" data-today-open="${esc(it.id)}" title="${esc(title)}">
       ${url ? `<img src="${esc(url)}" alt="${esc(title)}">` : `<span>No image</span>`}
       <span><b>${esc(title)}</b><small>${esc(sub)}</small></span>

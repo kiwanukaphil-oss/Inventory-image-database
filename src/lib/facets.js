@@ -5,6 +5,7 @@
 // and gallery.js keeps thin wrappers that bind its live state.
 
 import { parsePrice } from "./price.js";
+import { pricingLines } from './pricing-workspace.js';
 
 // One mutually-exclusive shop state per item, from the sync columns + a mirror
 // lookup (mirrorOf: item -> mirror row | undefined). Used verbatim as the "shop"
@@ -88,8 +89,11 @@ export function matchesItem(it, criteria, ctx, excludeKey) {
   if (noPrice && !hasMissingPrice) return false;
   const min = (priceMin ?? "") !== "" ? parsePrice(priceMin) : null;
   const max = (priceMax ?? "") !== "" ? parsePrice(priceMax) : null;
-  if (min !== null && (it.price == null || it.price < min)) return false;
-  if (max !== null && (it.price == null || it.price > max)) return false;
+  if (min !== null || max !== null) {
+    const lines = pricingLines(it).filter(line => Number(line.quantity) > 0);
+    const prices = lines.length ? lines.map(line => line.effective_price ?? line.price_override ?? it.price) : [it.price];
+    if (!prices.some(price => price != null && (min === null || Number(price) >= min) && (max === null || Number(price) <= max))) return false;
+  }
   if (cutoff && (!it.created_at || new Date(it.created_at) < cutoff)) return false;
   for (const k in active) {
     if (k === excludeKey) continue;
