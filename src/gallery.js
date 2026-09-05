@@ -34,7 +34,6 @@ import { parsePrice, stripPriceGrouping } from "./lib/price.js";
 import { classifyVerificationRisk, verificationRiskRank } from "./lib/review-risk.js";
 import { fetchBoundedRailwayCatalog } from "./lib/railway-catalog-pagination.js";
 import { catalogItemNeedsRetailPrice } from "./lib/catalog-pricing-plan.js";
-import { catalogPriceRange } from './lib/pricing-workspace.js';
 import {
   DEFAULT_GALLERY_RENDER_BATCH_SIZE,
   initialGalleryRenderLimit,
