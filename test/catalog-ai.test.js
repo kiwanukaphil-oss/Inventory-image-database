@@ -64,7 +64,10 @@ describe("catalog AI adapter", () => {
             success: false,
             message: "AI service is temporarily unavailable. Please try again.",
           }),
-          { status: 503, headers: { "Content-Type": "application/json" } }
+          {
+            status: 503,
+            headers: { "Content-Type": "application/json", "Retry-After": "12" },
+          }
         )
       )
     );
@@ -75,6 +78,7 @@ describe("catalog AI adapter", () => {
     ).rejects.toMatchObject({
       message: "AI service is temporarily unavailable. Please try again.",
       status: 503,
+      retryAfterMs: 12_000,
     });
   });
 });

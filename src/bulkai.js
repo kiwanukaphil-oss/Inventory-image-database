@@ -3,6 +3,10 @@ import { esc, trapFocus, isTopOverlay } from "./ui.js";
 import { extractCatalogItemWithAi } from "./catalogAi.js";
 import { isRailwayCatalogMode } from "./railwayCatalogConfig.js";
 import { canRunCatalogAi } from "./lib/railway-catalog-ui.js";
+import {
+  isRetryableCatalogAiError,
+  runCatalogAiWithRetry,
+} from "./lib/catalog-ai-retry.js";
 
 // Bulk AI fill: run the active catalog AI backend across a set of items (the
 // gallery's currently-filtered rows), filling empty fields with AI suggestions.
@@ -10,6 +14,8 @@ import { canRunCatalogAi } from "./lib/railway-catalog-ui.js";
 // overwritten; every change is audited and carries a confidence dot.
 
 const CONCURRENCY = 2; // keep Anthropic vision calls below overload-prone bursts
+const CIRCUIT_BREAKER_FAILURE_LIMIT = 2;
+
 /**
  * Open the bulk-AI modal for the given items.
  * @param {Array} items  item rows (need id, category_id, attributes, brand, image_path, status)
@@ -92,10 +98,15 @@ export function openBulkAi(items, caps, onDone) {
   };
 }
 
+// Run a bounded worker queue while coordinating retry and circuit-breaker state.
+// Item-level content errors remain isolated, while repeated exhausted connection
+// errors pause the shared queue so a short outage cannot consume every item.
 async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
   const total = items.length;
   let done = 0, filled = 0, skipped = 0, failed = 0;
   let stopped = false;
+  let circuitBreakerOpen = false;
+  let consecutiveConnectionFailures = 0;
 
   const bar = modal.querySelector("#barFill");
   const statsEl = modal.querySelector("#stats");
@@ -118,6 +129,9 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
   }
   paint();
 
+  // Each item receives bounded retries for transport and temporary service
+  // failures. Success resets the shared outage streak; two exhausted retryable
+  // items open the circuit breaker and preserve the rest of the queue.
   async function processItem(it) {
     const label = esc(it.brand || it.name || it.id.slice(0, 6));
     try {
@@ -128,13 +142,20 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
           key: f.key, label: f.label, type: f.type, options: f.options, vocab: f.vocab,
         })),
       ];
-      const data = await extractCatalogItemWithAi({
+      const data = await runCatalogAiWithRetry(() => extractCatalogItemWithAi({
         itemId: it.id,
         category: categoryPath(it.category_id),
         fields: defs,
         branchId: it.branch_id,
+      }), {
+        shouldContinue: () => !stopped && !circuitBreakerOpen,
+        onRetry: ({ attempt, delayMs, error, maxAttempts }) => {
+          const waitSeconds = Math.max(1, Math.ceil(delayMs / 1000));
+          logLine(`<span style="color:var(--review-txt)">Retrying ${label}: ${esc(error?.message || error)}; attempt ${attempt + 1}/${maxAttempts} in ${waitSeconds}s</span>`);
+        },
       });
 
+      consecutiveConnectionFailures = 0;
       const appliedCount = data.applied_fields?.length || 0;
       if (appliedCount > 0) {
         filled++;
@@ -144,8 +165,22 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
         logLine(`Â· ${label} â€” nothing to fill`);
       }
     } catch (e) {
+      if (e?.catalogAiRetryCancelled && (stopped || circuitBreakerOpen)) {
+        logLine(`Retry paused for ${label}`);
+        return;
+      }
+
       failed++;
       console.error("Railway catalog AI fill failed", it.id, e);
+      if (isRetryableCatalogAiError(e)) {
+        consecutiveConnectionFailures++;
+        if (consecutiveConnectionFailures >= CIRCUIT_BREAKER_FAILURE_LIMIT) {
+          circuitBreakerOpen = true;
+          logLine(`<b style="color:var(--review-txt)">Connection is still unavailable. Batch paused; remaining items were not attempted.</b>`);
+        }
+      } else {
+        consecutiveConnectionFailures = 0;
+      }
       logLine(`<span style="color:var(--flag-txt)">✕ ${label} — ${esc(e?.message || e)}</span>`);
     } finally {
       done++;
@@ -156,13 +191,13 @@ async function runBatch(modal, items, onlyEmpty, onDone, close, onFinished) {
   // Concurrency-limited queue.
   const queue = [...items];
   async function worker() {
-    while (queue.length && !stopped) await processItem(queue.shift());
+    while (queue.length && !stopped && !circuitBreakerOpen) await processItem(queue.shift());
   }
   await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
   onFinished?.(); // the modal may be dismissed again (and will refresh on close)
-  modal.querySelector("#runStep h2").textContent = stopped ? "Stopped" : "Done";
-  if (!stopped) navigator.vibrate?.([12, 40, 12]); // affirmative "batch done" buzz
+  modal.querySelector("#runStep h2").textContent = circuitBreakerOpen ? "Paused" : stopped ? "Stopped" : "Done";
+  if (!stopped && !circuitBreakerOpen) navigator.vibrate?.([12, 40, 12]); // affirmative "batch done" buzz
   stopBtn.style.display = "none";
   closeBtn.style.display = "inline-block";
   closeBtn.onclick = () => { close(); onDone?.(); };

@@ -12,12 +12,21 @@ import {
 } from "./railwayCatalogConfig.js";
 
 export class RailwayCatalogApiError extends Error {
-  constructor(message, status, details) {
+  constructor(message, status, details, retryAfterMs = 0) {
     super(message);
     this.name = "RailwayCatalogApiError";
     this.status = status;
     this.details = details;
+    this.retryAfterMs = retryAfterMs;
   }
+}
+
+function retryAfterMilliseconds(headerValue) {
+  if (!headerValue) return 0;
+  const seconds = Number(headerValue);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const retryTime = Date.parse(headerValue);
+  return Number.isFinite(retryTime) ? Math.max(0, retryTime - Date.now()) : 0;
 }
 
 /**
@@ -57,7 +66,8 @@ export async function requestRailwayCatalog(path, options = {}) {
     throw new RailwayCatalogApiError(
       payload.message || `Catalog request failed (${response.status}).`,
       response.status,
-      payload.details
+      payload.details,
+      retryAfterMilliseconds(response.headers.get("Retry-After"))
     );
   }
   return payload;
